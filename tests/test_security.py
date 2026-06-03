@@ -10,10 +10,10 @@ import config
 from fastapi import HTTPException
 from starlette.requests import Request
 
-from src.auth import UsersFileStore, authenticate
+from src.auth import AuthenticatedUser, UsersFileStore, authenticate
 from src.codebuddy_api_client import codebuddy_api_client
 from src.codebuddy_auth_router import get_auth_poll_headers, get_auth_start_headers, get_codebuddy_auth_state_endpoint
-from src.codebuddy_router import CodeBuddyStreamService, RequestProcessor
+from src.codebuddy_router import CodeBuddyStreamService, RequestProcessor, list_v1_models
 from src.codebuddy_token_manager import CodeBuddyTokenManager, CodeBuddyTokenManagerRegistry
 from src.password_hashing import create_password_hash, verify_password
 
@@ -222,6 +222,48 @@ class SecurityTests(unittest.TestCase):
 
         self.assertEqual(payload["model"], "glm-5.1")
 
+    def test_prepare_payload_forces_deepseek_v4_reasoning(self):
+        payload = RequestProcessor.prepare_payload({
+            "model": "deepseek-v4-pro",
+            "reasoning_effort": "low",
+            "thinking": {"type": "disabled"},
+            "messages": [{"role": "user", "content": "test"}],
+        })
+
+        self.assertEqual(payload["reasoning_effort"], "max")
+        self.assertEqual(payload["thinking"], {"type": "enabled"})
+
+    def test_prepare_payload_forces_namespaced_deepseek_v4_reasoning(self):
+        payload = RequestProcessor.prepare_payload({
+            "model": "codebuddy/deepseek-v4-flash",
+            "messages": [{"role": "user", "content": "test"}],
+        })
+
+        self.assertEqual(payload["reasoning_effort"], "max")
+        self.assertEqual(payload["thinking"], {"type": "enabled"})
+
+    def test_prepare_payload_forces_glm_5_1_reasoning(self):
+        payload = RequestProcessor.prepare_payload({
+            "model": "glm-5.1",
+            "reasoning_effort": "low",
+            "thinking": {"type": "disabled"},
+            "messages": [{"role": "user", "content": "test"}],
+        })
+
+        self.assertEqual(payload["reasoning_effort"], "max")
+        self.assertEqual(payload["thinking"], {"type": "enabled", "clear_thinking": False})
+
+    def test_prepare_payload_does_not_force_reasoning_for_other_models(self):
+        payload = RequestProcessor.prepare_payload({
+            "model": "lite",
+            "reasoning_effort": "low",
+            "thinking": {"type": "disabled"},
+            "messages": [{"role": "user", "content": "test"}],
+        })
+
+        self.assertEqual(payload["reasoning_effort"], "low")
+        self.assertEqual(payload["thinking"], {"type": "disabled"})
+
     def _request(self, authorization: str) -> Request:
         return Request({
             "type": "http",
@@ -259,29 +301,52 @@ class _FakeHttpClient:
 
 
 class StreamingFormatTests(unittest.IsolatedAsyncioTestCase):
-    async def test_stream_response_uses_openai_sse_event_boundaries(self):
-        chunks = [
-            'data: {"choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}\n'
-            "data: [DONE]\n"
-        ]
-
+    async def _render_stream_body(self, chunks, model="glm-5.1"):
         async def fake_get_http_client():
             return _FakeHttpClient(chunks)
 
         with mock.patch("src.codebuddy_router.get_http_client", fake_get_http_client):
             response = await CodeBuddyStreamService().handle_stream_response(
-                {"model": "glm-5.1"},
+                {"model": model},
                 {},
             )
             body_parts = []
             async for part in response.body_iterator:
                 body_parts.append(part.decode("utf-8") if isinstance(part, bytes) else part)
 
-        body = "".join(body_parts)
+        return "".join(body_parts)
+
+    def _stream_payloads(self, body):
+        events = [event for event in body.split("\n\n") if event]
+        return [
+            json.loads(event[6:])
+            for event in events
+            if event.startswith("data: ") and event != "data: [DONE]"
+        ]
+
+    async def test_model_list_returns_minimal_openai_model_objects(self):
+        with mock.patch("src.codebuddy_router.get_available_models_list", lambda: ["deepseek-v4-pro", "glm-5.1"]):
+            response = await list_v1_models(AuthenticatedUser(username="admin", source="users_file"))
+
+        models = {item["id"]: item for item in response["data"]}
+
+        self.assertEqual(models["deepseek-v4-pro"]["object"], "model")
+        self.assertEqual(models["deepseek-v4-pro"]["owned_by"], "codebuddy")
+        self.assertIsInstance(models["deepseek-v4-pro"]["created"], int)
+        self.assertNotIn("reasoning", models["deepseek-v4-pro"])
+        self.assertNotIn("limit", models["glm-5.1"])
+
+    async def test_stream_response_uses_openai_sse_event_boundaries(self):
+        chunks = [
+            'data: {"choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}\n'
+            "data: [DONE]\n"
+        ]
+
+        body = await self._render_stream_body(chunks)
         events = [event for event in body.split("\n\n") if event]
 
-        self.assertEqual(len(events), 2)
-        self.assertEqual(events[1], "data: [DONE]")
+        self.assertEqual(len(events), 3)
+        self.assertEqual(events[2], "data: [DONE]")
         self.assertTrue(events[0].startswith("data: "))
 
         payload = json.loads(events[0][6:])
@@ -289,7 +354,50 @@ class StreamingFormatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["model"], "glm-5.1")
         self.assertIn("id", payload)
         self.assertIn("created", payload)
-        self.assertEqual(payload["choices"][0]["delta"]["content"], "hi")
+        self.assertEqual(payload["choices"][0]["delta"], {"role": "assistant"})
+
+        content_payload = json.loads(events[1][6:])
+        self.assertEqual(content_payload["id"], payload["id"])
+        self.assertEqual(content_payload["created"], payload["created"])
+        self.assertEqual(content_payload["choices"][0]["delta"]["content"], "hi")
+
+    async def test_stream_response_normalizes_reasoning_chunks_for_opencode(self):
+        chunks = [
+            'data: {"id":"upstream-1","created":1,"model":"wrong","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"我","content":""},"finish_reason":null}]}\n'
+            'data: {"id":"upstream-2","created":2,"model":"wrong","choices":[{"index":0,"delta":{"role":"","reasoning_content":"需要","content":null},"finish_reason":null}]}\n'
+            'data: {"id":"upstream-3","created":3,"model":"wrong","choices":[{"index":0,"delta":{"role":"","reasoning_content":"先","content":""},"finish_reason":null}]}\n'
+            'data: {"id":"upstream-4","created":4,"model":"wrong","choices":[{"index":0,"delta":{"role":"","content":"结论"},"finish_reason":null}]}\n'
+            "data: [DONE]\n"
+        ]
+
+        body = await self._render_stream_body(chunks)
+        payloads = self._stream_payloads(body)
+
+        self.assertEqual([payload["choices"][0]["delta"] for payload in payloads], [
+            {"role": "assistant"},
+            {"reasoning_content": "我"},
+            {"reasoning_content": "需要"},
+            {"reasoning_content": "先"},
+            {"content": "结论"},
+        ])
+        self.assertEqual(len({payload["id"] for payload in payloads}), 1)
+        self.assertEqual(len({payload["created"] for payload in payloads}), 1)
+        self.assertEqual({payload["model"] for payload in payloads}, {"glm-5.1"})
+
+    async def test_stream_response_splits_mixed_reasoning_and_content_delta(self):
+        chunks = [
+            'data: {"choices":[{"index":0,"delta":{"reasoning_content":"先想","content":"再答"},"finish_reason":null}]}\n'
+            "data: [DONE]\n"
+        ]
+
+        body = await self._render_stream_body(chunks)
+        payloads = self._stream_payloads(body)
+
+        self.assertEqual([payload["choices"][0]["delta"] for payload in payloads], [
+            {"role": "assistant"},
+            {"reasoning_content": "先想"},
+            {"content": "再答"},
+        ])
 
 
 if __name__ == "__main__":

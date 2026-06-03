@@ -22,6 +22,29 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+DEEPSEEK_V4_REASONING_MODELS = {"deepseek-v4-pro", "deepseek-v4-flash"}
+GLM_REASONING_MODELS = {"glm-5.1"}
+FORCED_REASONING_MODELS = DEEPSEEK_V4_REASONING_MODELS | GLM_REASONING_MODELS
+
+def normalize_model_id(model: Any) -> str:
+    return str(model or "").strip().lower().split("/")[-1]
+
+
+def should_force_model_reasoning(model: Any) -> bool:
+    return normalize_model_id(model) in FORCED_REASONING_MODELS
+
+
+def should_force_deepseek_v4_reasoning(model: Any) -> bool:
+    model_id = str(model or "").strip().lower().split("/")[-1]
+    return model_id in DEEPSEEK_V4_REASONING_MODELS
+
+
+def forced_reasoning_thinking_options(model: Any) -> Dict[str, Any]:
+    options: Dict[str, Any] = {"type": "enabled"}
+    if normalize_model_id(model) in GLM_REASONING_MODELS:
+        options["clear_thinking"] = False
+    return options
+
 def get_codebuddy_api_url() -> str:
     """动态加载 CodeBuddy API URL，确保安全白名单即时生效。"""
     from config import get_codebuddy_api_endpoint
@@ -134,12 +157,87 @@ def ensure_openai_stream_chunk_fields(
         return chunk_data
 
     converted_chunk = chunk_data.copy()
-    converted_chunk.setdefault("id", stream_id)
-    converted_chunk.setdefault("object", "chat.completion.chunk")
-    converted_chunk.setdefault("created", created)
+    converted_chunk["id"] = stream_id
+    converted_chunk["object"] = "chat.completion.chunk"
+    converted_chunk["created"] = created
     if model:
-        converted_chunk.setdefault("model", model)
+        converted_chunk["model"] = model
     return converted_chunk
+
+class OpenAIStreamNormalizer:
+    """规范化流式 delta，避免客户端把每个 reasoning token 识别成独立块。"""
+
+    def __init__(self):
+        self.role_sent = False
+
+    def normalize(self, chunk_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        choices = chunk_data.get("choices")
+        if not choices or not isinstance(choices, list):
+            return [chunk_data]
+
+        choice = choices[0]
+        delta = choice.get("delta", {})
+        if not isinstance(delta, dict):
+            return [chunk_data]
+
+        delta = delta.copy()
+        finish_reason = choice.get("finish_reason")
+        outgoing_chunks: List[Dict[str, Any]] = []
+
+        role = delta.pop("role", None)
+        if not self.role_sent and (role in ("assistant", "") or self._has_assistant_delta(delta)):
+            outgoing_chunks.append(self._copy_with_delta(chunk_data, {"role": "assistant"}, None))
+            self.role_sent = True
+
+        delta = self._remove_empty_delta_fields(delta)
+
+        if not delta:
+            if finish_reason is None and not chunk_data.get("usage"):
+                return outgoing_chunks
+            outgoing_chunks.append(self._copy_with_delta(chunk_data, {}, finish_reason))
+            return outgoing_chunks
+
+        if "reasoning_content" in delta and "content" in delta:
+            reasoning_delta = {key: value for key, value in delta.items() if key != "content"}
+            content_delta = {key: value for key, value in delta.items() if key != "reasoning_content"}
+            if reasoning_delta:
+                outgoing_chunks.append(self._copy_with_delta(chunk_data, reasoning_delta, None))
+            if content_delta:
+                outgoing_chunks.append(self._copy_with_delta(chunk_data, content_delta, finish_reason))
+            return outgoing_chunks
+
+        outgoing_chunks.append(self._copy_with_delta(chunk_data, delta, finish_reason))
+        return outgoing_chunks
+
+    @staticmethod
+    def _has_assistant_delta(delta: Dict[str, Any]) -> bool:
+        return any(key in delta for key in ("reasoning_content", "content", "tool_calls"))
+
+    @staticmethod
+    def _remove_empty_delta_fields(delta: Dict[str, Any]) -> Dict[str, Any]:
+        normalized_delta = delta.copy()
+        if normalized_delta.get("reasoning_content") in ("", None):
+            normalized_delta.pop("reasoning_content", None)
+        if normalized_delta.get("content") in ("", None):
+            normalized_delta.pop("content", None)
+        if normalized_delta.get("tool_calls") in ([], None):
+            normalized_delta.pop("tool_calls", None)
+        return normalized_delta
+
+    @staticmethod
+    def _copy_with_delta(
+        chunk_data: Dict[str, Any],
+        delta: Dict[str, Any],
+        finish_reason: Optional[str],
+    ) -> Dict[str, Any]:
+        copied_chunk = chunk_data.copy()
+        copied_choices = list(copied_chunk.get("choices", []))
+        copied_choice = copied_choices[0].copy()
+        copied_choice["delta"] = delta
+        copied_choice["finish_reason"] = finish_reason
+        copied_choices[0] = copied_choice
+        copied_chunk["choices"] = copied_choices
+        return copied_chunk
 
 class OpenAICompatibilityConverter:
     """将CodeBuddy格式转换为OpenAI兼容格式"""
@@ -467,6 +565,7 @@ class CodeBuddyStreamService:
                 fallback_stream_id = f"chatcmpl-{uuid.uuid4().hex}"
                 fallback_created = int(time.time())
                 fallback_model = str(payload.get("model") or "unknown")
+                stream_normalizer = OpenAIStreamNormalizer()
 
                 async for chunk in response.aiter_text(chunk_size=8192):
                     if not chunk:
@@ -502,7 +601,8 @@ class CodeBuddyStreamService:
                             )
                             
                             # 重新格式化为SSE格式并发送
-                            yield format_sse_event(converted_chunk)
+                            for outgoing_chunk in stream_normalizer.normalize(converted_chunk):
+                                yield format_sse_event(outgoing_chunk)
                 
                 # 处理缓冲区中剩余的数据
                 if buffer.strip():
@@ -522,7 +622,8 @@ class CodeBuddyStreamService:
                             fallback_created,
                             fallback_model,
                         )
-                        yield format_sse_event(converted_chunk)
+                        for outgoing_chunk in stream_normalizer.normalize(converted_chunk):
+                            yield format_sse_event(outgoing_chunk)
         
         async def stream_with_retry():
             async for chunk in self.connection_manager.stream_with_retry(stream_core):
@@ -585,6 +686,13 @@ class RequestProcessor:
                 (model for model in get_available_models() if model),
                 DEFAULT_CODEBUDDY_MODELS[0],
             )
+        if should_force_model_reasoning(payload.get("model")):
+            payload["reasoning_effort"] = "max"
+            thinking = payload.get("thinking") if isinstance(payload.get("thinking"), dict) else {}
+            payload["thinking"] = {
+                **thinking,
+                **forced_reasoning_thinking_options(payload.get("model")),
+            }
         payload["stream"] = True  # CodeBuddy 只支持流式请求
         
         # 处理消息长度要求：CodeBuddy要求至少2条消息
