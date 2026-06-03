@@ -9,7 +9,7 @@ COPY requirements.txt .
 
 # 安装依赖
 # --no-cache-dir 选项可以减小镜像体积
-RUN pip install --no-cache-dir -r requirements.txt
+RUN python3 -m pip install --no-cache-dir -r requirements.txt
 
 # 将项目的所有文件复制到工作目录中
 COPY . .
@@ -27,6 +27,10 @@ ENTRYPOINT ["entrypoint.sh"]
 
 # 创建一个非root用户来运行应用
 RUN useradd -m -u 1001 appuser
+
+# 创建运行时挂载目录。secrets 目录只用于挂载只读用户文件。
+RUN mkdir -p /app/config /app/.codebuddy_creds /app/secrets && \
+    chown -R appuser:appuser /app/config /app/.codebuddy_creds
 
 # 声明容器将要监听的端口
 # 这个端口应该与您在配置中设置的 CODEBUDDY_PORT 一致

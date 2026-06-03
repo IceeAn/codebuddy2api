@@ -1178,9 +1178,17 @@
                 CodeBuddy2API
             </div>
             <div class="login-subtitle">
-                请输入管理密码以访问控制面板
+                请输入用户名和密码以访问控制面板
             </div>
             <form class="login-form" onsubmit="handleLogin(event)">
+                <input
+                    type="text"
+                    id="loginUsername"
+                    class="login-input"
+                    placeholder="请输入用户名"
+                    required
+                    autocomplete="username"
+                >
                 <input
                     type="password"
                     id="loginPassword"
@@ -1514,7 +1522,7 @@
                     </div>
                     <h4 style="margin-bottom: 1rem; color: var(--primary-color);">curl 示例:</h4>
                     <div class="code-block">curl -X POST "http://127.0.0.1:8001/codebuddy/v1/chat/completions" \
-      -H "Authorization: Bearer YOUR_PASSWORD" \
+      -u "admin:your_password" \
       -H "Content-Type: application/json" \
       -d '{
         "model": "auto-chat",
@@ -1527,7 +1535,7 @@
                     <div class="code-block">import openai
 
     client = openai.OpenAI(
-        api_key="YOUR_PASSWORD",
+        api_key="admin:your_password",
         base_url="http://127.0.0.1:8001/codebuddy/v1"
     )
 
@@ -1574,6 +1582,7 @@
     <script>
         // 全局变量
         let currentTheme = 'light';
+        let serviceUsername = '';
         let servicePassword = '';
         let currentAuthData = null;
         let authPollingInterval = null;
@@ -1590,16 +1599,11 @@
                 sessionStorage.setItem('serviceStartTime', Date.now().toString());
             }
             
-            // 检查是否已经登录
-            const savedPassword = sessionStorage.getItem('servicePassword');
-            if (savedPassword) {
-                servicePassword = savedPassword;
-                isAuthenticated = true;
-                showDashboardPage();
-                loadDashboard();
-            } else {
-                showLoginPage();
+            const savedUsername = sessionStorage.getItem('serviceUsername') || '';
+            if (savedUsername) {
+                serviceUsername = savedUsername;
             }
+            showLoginPage();
 
             // 添加键盘快捷键支持
             document.addEventListener('keydown', handleKeyboardShortcuts);
@@ -1671,12 +1675,12 @@
             
             let actionHTML = '';
             if (action) {
-                actionHTML = `<button onclick="${action.callback}" style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: inherit; padding: 0.25rem 0.75rem; border-radius: 0.25rem; margin-left: 1rem; cursor: pointer;">${action.text}</button>`;
+                actionHTML = `<button onclick="${action.callback}" style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: inherit; padding: 0.25rem 0.75rem; border-radius: 0.25rem; margin-left: 1rem; cursor: pointer;">${escapeHtml(action.text)}</button>`;
             }
             
             notification.innerHTML = `
                 <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <div>${message}</div>
+                    <div>${escapeHtml(message)}</div>
                     <div style="display: flex; align-items: center;">
                         ${actionHTML}
                         <button onclick="hideNotification()" style="background: none; border: none; color: inherit; cursor: pointer; padding: 0; margin-left: 1rem;">
@@ -1772,7 +1776,7 @@
             notification.className = `notification ${type}`;
             notification.innerHTML = `
                 <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-                    <div>${message}</div>
+                    <div>${escapeHtml(message)}</div>
                     <button onclick="hideNotification()" style="background: none; border: none; color: inherit; cursor: pointer; padding: 0; margin-left: 1rem;">
                         <i class="fas fa-times"></i>
                     </button>
@@ -1795,7 +1799,8 @@
         function showLoginPage() {
             document.getElementById('loginPage').classList.remove('hidden');
             document.getElementById('dashboardPage').classList.add('hidden');
-            document.getElementById('loginPassword').focus();
+            document.getElementById('loginUsername').value = serviceUsername;
+            document.getElementById('loginUsername').focus();
         }
 
         function showDashboardPage() {
@@ -1805,9 +1810,15 @@
 
         async function handleLogin(event) {
             event.preventDefault();
+            const username = document.getElementById('loginUsername').value.trim();
             const password = document.getElementById('loginPassword').value;
             const loginButton = document.getElementById('loginButton');
             const loginError = document.getElementById('loginError');
+
+            if (!username) {
+                showLoginError('请输入用户名');
+                return;
+            }
 
             if (!password) {
                 showLoginError('请输入密码');
@@ -1820,22 +1831,28 @@
 
             try {
                 const testResponse = await fetch('/codebuddy/v1/credentials', {
-                    headers: { 'Authorization': `Bearer ${password}` }
+                    headers: getAuthHeadersFor(username, password)
                 });
 
-                if (testResponse.status !== 403) {
+                if (testResponse.ok) {
+                    serviceUsername = username;
                     servicePassword = password;
                     isAuthenticated = true;
-                    sessionStorage.setItem('servicePassword', password);
+                    sessionStorage.setItem('serviceUsername', username);
                     
                     showDashboardPage();
                     loadDashboard();
                     showNotification('登录成功！', 'success');
                 } else {
-                    throw new Error('密码错误');
+                    let errorMessage = '登录失败';
+                    try {
+                        const errorData = await testResponse.json();
+                        errorMessage = errorData.detail || errorMessage;
+                    } catch (e) {}
+                    throw new Error(errorMessage);
                 }
             } catch (error) {
-                showLoginError('密码错误，请重试');
+                showLoginError(error.message || '登录失败，请重试');
             } finally {
                 loginButton.disabled = false;
                 loginButton.innerHTML = '<i class="fas fa-sign-in-alt"></i> 登录';
@@ -1849,19 +1866,56 @@
         }
         
         function logout() {
+            serviceUsername = '';
             servicePassword = '';
             isAuthenticated = false;
-            sessionStorage.removeItem('servicePassword');
+            sessionStorage.removeItem('serviceUsername');
+            document.getElementById('loginPassword').value = '';
             showLoginPage();
             showNotification('已退出登录', 'info');
         }
 
         // 获取认证头
         function getAuthHeaders() {
+            return getAuthHeadersFor(serviceUsername, servicePassword);
+        }
+
+        function getAuthHeadersFor(username, password) {
             return {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${servicePassword}`
+                'Authorization': `Basic ${base64Encode(`${username}:${password}`)}`
             };
+        }
+
+        function base64Encode(value) {
+            const bytes = new TextEncoder().encode(value);
+            let binary = '';
+            bytes.forEach(byte => {
+                binary += String.fromCharCode(byte);
+            });
+            return btoa(binary);
+        }
+
+        function escapeHtml(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function safeExternalUrl(value) {
+            try {
+                const rawValue = String(value ?? '').trim();
+                if (!rawValue) {
+                    return '#';
+                }
+                const url = new URL(rawValue);
+                return ['http:', 'https:'].includes(url.protocol) ? url.href : '#';
+            } catch (e) {
+                return '#';
+            }
         }
 
         // 仪表板相关功能
@@ -2050,10 +2104,10 @@
                     credentialsList.innerHTML = '<div class="status status-error">认证失败，请重新登录</div>';
                     logout();
                 } else {
-                    credentialsList.innerHTML = `<div class="status status-error">加载失败: ${response.status}</div>`;
+                    credentialsList.innerHTML = `<div class="status status-error">加载失败: ${escapeHtml(response.status)}</div>`;
                 }
             } catch (error) {
-                credentialsList.innerHTML = `<div class="status status-error">网络错误: ${error.message}</div>`;
+                credentialsList.innerHTML = `<div class="status status-error">网络错误: ${escapeHtml(error.message)}</div>`;
             }
         }
 
@@ -2084,6 +2138,11 @@
             let statusHtml = '';
             let statusClass = '';
             let statusIcon = '';
+            const safeFilename = escapeHtml(data.filename);
+            const safeUserId = escapeHtml(data.user_id);
+            const safeIndex = Number.isInteger(data.index) ? data.index + 1 : '-';
+            const safeRotationCount = escapeHtml(data.rotation_count);
+            const safeUsageCount = escapeHtml(data.usage_count);
 
             switch(data.status) {
                 case 'manual_selected':
@@ -2094,8 +2153,8 @@
                             <i class="${statusIcon}"></i> 手动选择模式
                         </div>
                         <div style="margin-top: 0.5rem; font-size: 0.9rem;">
-                            当前使用: <strong>${data.filename}</strong> (凭证 #${data.index + 1})
-                            ${data.user_id !== 'unknown' ? `<br>用户ID: ${data.user_id}` : ''}
+                            当前使用: <strong>${safeFilename}</strong> (凭证 #${safeIndex})
+                            ${data.user_id !== 'unknown' ? `<br>用户ID: ${safeUserId}` : ''}
                         </div>
                     `;
                     break;
@@ -2107,9 +2166,9 @@
                             <i class="${statusIcon}"></i> 自动轮换已关闭
                         </div>
                         <div style="margin-top: 0.5rem; font-size: 0.9rem;">
-                            固定使用: <strong>${data.filename}</strong> (凭证 #${data.index + 1})
-                            <br>轮换次数: ${data.rotation_count}
-                            ${data.user_id !== 'unknown' ? `<br>用户ID: ${data.user_id}` : ''}
+                            固定使用: <strong>${safeFilename}</strong> (凭证 #${safeIndex})
+                            <br>轮换次数: ${safeRotationCount}
+                            ${data.user_id !== 'unknown' ? `<br>用户ID: ${safeUserId}` : ''}
                         </div>
                     `;
                     break;
@@ -2121,9 +2180,9 @@
                             <i class="${statusIcon}"></i> 轮换次数为0
                         </div>
                         <div style="margin-top: 0.5rem; font-size: 0.9rem;">
-                            固定使用: <strong>${data.filename}</strong> (凭证 #${data.index + 1})
+                            固定使用: <strong>${safeFilename}</strong> (凭证 #${safeIndex})
                             <br>轮换次数设为0，不进行轮换
-                            ${data.user_id !== 'unknown' ? `<br>用户ID: ${data.user_id}` : ''}
+                            ${data.user_id !== 'unknown' ? `<br>用户ID: ${safeUserId}` : ''}
                         </div>
                     `;
                     break;
@@ -2135,9 +2194,9 @@
                             <i class="${statusIcon}"></i> 自动轮换模式
                         </div>
                         <div style="margin-top: 0.5rem; font-size: 0.9rem;">
-                            当前使用: <strong>${data.filename}</strong> (凭证 #${data.index + 1})
-                            <br>使用次数: ${data.usage_count}/${data.rotation_count}
-                            ${data.user_id !== 'unknown' ? `<br>用户ID: ${data.user_id}` : ''}
+                            当前使用: <strong>${safeFilename}</strong> (凭证 #${safeIndex})
+                            <br>使用次数: ${safeUsageCount}/${safeRotationCount}
+                            ${data.user_id !== 'unknown' ? `<br>用户ID: ${safeUserId}` : ''}
                         </div>
                     `;
                     break;
@@ -2195,20 +2254,21 @@
 
                 const groupKeys = Object.keys(groups).sort((a, b) => a.localeCompare(b));
                 let html = '';
-                groupKeys.forEach(key => {
-                    const items = groups[key];
-                    const label = key === 'unknown' ? '未知用户' : (key.includes('@') ? key : `ID: ${key}`);
-                    const icon = key.includes('@') ? 'fas fa-envelope' : 'fas fa-user';
-                    
-                    html += `
-                        <div class="credential-group">
-                            <div class="credential-group-header">
-                                <div class="credential-group-title">
-                                    <i class="${icon}"></i>
-                                    ${label}
+                    groupKeys.forEach(key => {
+                        const items = groups[key];
+                        const label = key === 'unknown' ? '未知用户' : (key.includes('@') ? key : `ID: ${key}`);
+                        const icon = key.includes('@') ? 'fas fa-envelope' : 'fas fa-user';
+                        const safeLabel = escapeHtml(label);
+
+                        html += `
+                            <div class="credential-group">
+                                <div class="credential-group-header">
+                                    <div class="credential-group-title">
+                                        <i class="${icon}"></i>
+                                        ${safeLabel}
+                                    </div>
+                                    <div class="credential-group-badge">${items.length} 个凭证</div>
                                 </div>
-                                <div class="credential-group-badge">${items.length} 个凭证</div>
-                            </div>
                             <div class="credential-group-list">
                     `;
 
@@ -2230,10 +2290,14 @@
                         const selectedBadge = isSelected ? '<span class="credential-selected-badge">当前使用</span>' : '';
 
                         // 格式化时间信息
-                        const expiryInfo = cred.expires_at ? new Date(cred.expires_at * 1000).toLocaleDateString() : '永不过期';
-                        const remainingTime = cred.time_remaining_str || '未知';
+                            const expiryInfo = cred.expires_at ? new Date(cred.expires_at * 1000).toLocaleDateString() : '永不过期';
+                            const remainingTime = cred.time_remaining_str || '未知';
+                            const safeUserId = escapeHtml(cred.user_id);
+                            const safeFilename = escapeHtml(cred.filename);
+                            const safeExpiryInfo = escapeHtml(expiryInfo);
+                            const safeRemainingTime = escapeHtml(remainingTime);
 
-                        return `
+                            return `
                             <div class="credential-item${selectedClass}">
                                 <div class="credential-avatar ${avatarClass}">${avatarText}</div>
                                 <div class="credential-info">
@@ -2241,23 +2305,23 @@
                                         <div class="credential-title">凭证 #${index + 1}</div>
                                         ${selectedBadge}
                                     </div>
-                                    <div class="credential-meta">
-                                        ${cred.user_id && cred.user_id !== 'unknown' ? 
-                                            `<div class="credential-meta-item">
-                                                <i class="fas fa-user"></i> ${cred.user_id}
-                                            </div>` : ''
-                                        }
-                                        <div class="credential-meta-item">
-                                            <i class="fas fa-calendar"></i> 过期: ${expiryInfo}
-                                        </div>
-                                        <div class="credential-meta-item">
-                                            <i class="fas fa-clock"></i> 剩余: ${remainingTime}
-                                        </div>
-                                        ${cred.filename ? 
-                                            `<div class="credential-meta-item">
-                                                <i class="fas fa-file"></i> ${cred.filename}
-                                            </div>` : ''
-                                        }
+                                        <div class="credential-meta">
+                                            ${cred.user_id && cred.user_id !== 'unknown' ?
+                                                `<div class="credential-meta-item">
+                                                    <i class="fas fa-user"></i> ${safeUserId}
+                                                </div>` : ''
+                                            }
+                                            <div class="credential-meta-item">
+                                                <i class="fas fa-calendar"></i> 过期: ${safeExpiryInfo}
+                                            </div>
+                                            <div class="credential-meta-item">
+                                                <i class="fas fa-clock"></i> 剩余: ${safeRemainingTime}
+                                            </div>
+                                            ${cred.filename ?
+                                                `<div class="credential-meta-item">
+                                                    <i class="fas fa-file"></i> ${safeFilename}
+                                                </div>` : ''
+                                            }
                                     </div>
                                 </div>
                                 <div class="credential-actions">
@@ -2293,8 +2357,11 @@
             }
 
             credentialsList.innerHTML = '<div class="credential-list">' +
-                credentialsCache.map((cred, index) => {
-                    let statusIcon = '';
+                    credentialsCache.map((cred, index) => {
+                        const safeUserId = escapeHtml(cred.user_id);
+                        const safeTokenPreview = escapeHtml(cred.token_preview);
+                        const safeTimeRemaining = escapeHtml(cred.time_remaining_str || 'null');
+                        let statusIcon = '';
                     switch(cred.status) {
                         case 'valid':
                             statusIcon = `<i class="fas fa-check-circle" style="color: var(--success-color); font-size: 1.5rem;" title="有效"></i>`;
@@ -2310,14 +2377,14 @@
                     <div class="credential-item">
                         <div class="credential-status-icon">${statusIcon}</div>
                         <div class="credential-info">
-                            <div class="credential-id">凭证 #${index + 1}</div>
-                            <div class="credential-details">
-                                ${cred.user_id ? `用户ID: ${cred.user_id}<br>` : ''}
-                                ${cred.token_preview ? `Token: ${cred.token_preview}<br>` : ''}
-                                ${cred.created_at ? `创建时间: ${new Date(cred.created_at * 1000).toLocaleString()}<br>` : ''}
-                                过期时间: ${cred.expires_at != null ? new Date(cred.expires_at * 1000).toLocaleString() : 'null'}<br>
-                                剩余: ${cred.time_remaining_str || 'null'}
-                            </div>
+                                <div class="credential-id">凭证 #${index + 1}</div>
+                                <div class="credential-details">
+                                    ${cred.user_id ? `用户ID: ${safeUserId}<br>` : ''}
+                                    ${cred.token_preview ? `Token: ${safeTokenPreview}<br>` : ''}
+                                    ${cred.created_at ? `创建时间: ${new Date(cred.created_at * 1000).toLocaleString()}<br>` : ''}
+                                    过期时间: ${cred.expires_at != null ? new Date(cred.expires_at * 1000).toLocaleString() : 'null'}<br>
+                                    剩余: ${safeTimeRemaining}
+                                </div>
                         </div>
                         <div class="credential-actions">
                             <button class="btn btn-warning" onclick="selectCredential(${index})" title="手动选择此凭证">
@@ -2567,7 +2634,7 @@
                 return;
             }
 
-            resultDiv.innerHTML = '正在发送请求...\n';
+            resultDiv.textContent = '正在发送请求...\n';
 
             try {
                 const response = await fetch('/codebuddy/v1/chat/completions', {
@@ -2583,7 +2650,7 @@
                 if (stream) {
                     const reader = response.body.getReader();
                     const decoder = new TextDecoder();
-                    resultDiv.innerHTML = '';
+                    resultDiv.textContent = '';
 
                     while (true) {
                         const { done, value } = await reader.read();
@@ -2596,12 +2663,12 @@
                             if (line.startsWith('data: ')) {
                                 const data = line.slice(6);
                                 if (data.trim() === '[DONE]') {
-                                    resultDiv.innerHTML += '\n\n[流结束]';
+                                    resultDiv.textContent += '\n\n[流结束]';
                                     continue;
                                 }
                                 try {
                                     const parsed = JSON.parse(data);
-                                    resultDiv.innerHTML += JSON.stringify(parsed, null, 2) + '\n\n';
+                                    resultDiv.textContent += JSON.stringify(parsed, null, 2) + '\n\n';
                                 } catch (e) {
                                     // 忽略解析错误
                                 }
@@ -2611,7 +2678,7 @@
                     }
                 } else {
                     const data = await response.json();
-                    resultDiv.innerHTML = JSON.stringify(data, null, 2);
+                    resultDiv.textContent = JSON.stringify(data, null, 2);
                 }
 
                 if (!response.ok) {
@@ -2620,7 +2687,7 @@
                     showNotification('API 测试成功！', 'success');
                 }
             } catch (error) {
-                resultDiv.innerHTML = `错误: ${error.message}`;
+                resultDiv.textContent = `错误: ${error.message}`;
                 showNotification(`测试失败: ${error.message}`, 'error');
             }
         }
@@ -2642,7 +2709,10 @@
             }
             
             try {
-                const response = await fetch('/codebuddy/auth/start', { method: 'GET' });
+                const response = await fetch('/codebuddy/auth/start', {
+                    method: 'GET',
+                    headers: getAuthHeaders()
+                });
                 const data = await response.json();
                 
                 // 修正：检查正确的响应字段 `verification_uri_complete`
@@ -2653,7 +2723,7 @@
                     };
 
                     // 修正：使用正确的字段来设置输入框的值，并显示该区域
-                    document.getElementById('authUrlInput').value = data.verification_uri_complete;
+                    document.getElementById('authUrlInput').value = safeExternalUrl(data.verification_uri_complete);
                     const section = document.getElementById('authUrlSection');
                     section.classList.remove('hidden');
                     section.style.display = 'block';
@@ -2688,7 +2758,12 @@
 
         function openAuthUrl() {
             const url = document.getElementById('authUrlInput').value;
-            window.open(url, '_blank');
+            const safeUrl = safeExternalUrl(url);
+            if (safeUrl === '#') {
+                showNotification('认证链接无效', 'error');
+                return;
+            }
+            window.open(safeUrl, '_blank', 'noopener,noreferrer');
             showNotification('已在新窗口打开认证页面，请完成登录', 'info');
         }
 
@@ -2742,9 +2817,7 @@
                 try {
                     const response = await fetch('/codebuddy/auth/poll', {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
+                        headers: getAuthHeaders(),
                         body: JSON.stringify({
                             auth_state: currentAuthData.auth_state // 修正：发送auth_state
                         })
@@ -2809,6 +2882,11 @@
         }
 
         function showManualInstructions(instructions) {
+            const safeSteps = Array.isArray(instructions.steps)
+                ? instructions.steps.map(step => `<li>${escapeHtml(step)}</li>`).join('')
+                : '';
+            const safeAlternativeUrl = escapeHtml(safeExternalUrl(instructions.alternative_url));
+
             // 创建一个模态框显示手动获取指导
             const modal = document.createElement('div');
             modal.style.cssText = `
@@ -2843,13 +2921,13 @@
             content.innerHTML = `
                 <h3 style="margin-bottom: 1rem; color: var(--primary-color);">手动获取 Bearer Token</h3>
                 <ol style="line-height: 1.8; margin-bottom: 1.5rem;">
-                    ${instructions.steps.map(step => `<li>${step}</li>`).join('')}
+                    ${safeSteps}
                 </ol>
                 <div style="text-align: right;">
                     <button class="btn btn-secondary" onclick="this.closest('div').parentElement.remove()">
                         <i class="fas fa-times"></i> 关闭
                     </button>
-                    <a href="${instructions.alternative_url}" target="_blank" class="btn btn-primary" style="margin-left: 0.5rem;">
+                    <a href="${safeAlternativeUrl}" target="_blank" rel="noopener noreferrer" class="btn btn-primary" style="margin-left: 0.5rem;">
                         <i class="fas fa-external-link-alt"></i> 打开 CodeBuddy
                     </a>
                 </div>
@@ -2890,7 +2968,7 @@
             // 在通知中显示详细步骤，或者在页面上显示
             let stepsHtml = '<div style="margin-top: 1rem;"><h4>详细操作步骤：</h4><ol>';
             steps.forEach(step => {
-                stepsHtml += `<li>${step}</li>`;
+                stepsHtml += `<li>${escapeHtml(step)}</li>`;
             });
             stepsHtml += '</ol></div>';
             
@@ -3006,7 +3084,7 @@
                 }
 
             } catch (error) {
-                settingsForm.innerHTML = `<div class="status status-error">加载配置失败: ${error.message}</div>`;
+                settingsForm.innerHTML = `<div class="status status-error">加载配置失败: ${escapeHtml(error.message)}</div>`;
             }
         }
 
@@ -3052,11 +3130,11 @@
 
            // Populate Model Usage Table
            if (model_usage && Object.keys(model_usage).length > 0) {
-               const sortedModels = Object.entries(model_usage).sort((a, b) => b[1] - a[1]);
-               sortedModels.forEach(([model, count]) => {
-                   const row = `<tr><td>${model}</td><td>${count}</td></tr>`;
-                   modelTableBody.innerHTML += row;
-               });
+                   const sortedModels = Object.entries(model_usage).sort((a, b) => b[1] - a[1]);
+                   sortedModels.forEach(([model, count]) => {
+                       const row = `<tr><td>${escapeHtml(model)}</td><td>${escapeHtml(count)}</td></tr>`;
+                       modelTableBody.innerHTML += row;
+                   });
            } else {
                modelTableBody.innerHTML = '<tr><td colspan="2" style="text-align: center;">暂无模型使用数据</td></tr>';
            }
@@ -3064,11 +3142,11 @@
            // Populate Credential Usage Table
            if (credential_usage && Object.keys(credential_usage).length > 0) {
                const sortedCredentials = Object.entries(credential_usage).sort((a, b) => b[1] - a[1]);
-               sortedCredentials.forEach(([path, count]) => {
-                   const filename = path.split('/').pop().split('\\').pop();
-                   const row = `<tr><td>${filename}</td><td>${count}</td></tr>`;
-                   credentialTableBody.innerHTML += row;
-               });
+                   sortedCredentials.forEach(([path, count]) => {
+                       const filename = path.split('/').pop().split('\\').pop();
+                       const row = `<tr><td>${escapeHtml(filename)}</td><td>${escapeHtml(count)}</td></tr>`;
+                       credentialTableBody.innerHTML += row;
+                   });
            } else {
                credentialTableBody.innerHTML = '<tr><td colspan="2" style="text-align: center;">暂无凭证使用数据</td></tr>';
            }

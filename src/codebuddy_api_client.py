@@ -186,7 +186,7 @@ class CodeBuddyAPIClient:
             'X-Requested-With': 'XMLHttpRequest',
             'x-stainless-arch': 'x64',
             'x-stainless-lang': 'js',
-            'x-stainless-os': 'Windows',
+            'x-stainless-os': 'Linux',
             'x-stainless-package-version': '5.10.1',
             'x-stainless-retry-count': '0',
             'x-stainless-runtime': 'node',

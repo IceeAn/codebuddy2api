@@ -2,7 +2,6 @@
 CodeBuddy Authentication Router
 基于真实CodeBuddy API的认证实现
 """
-import hashlib
 import secrets
 import httpx
 import base64
@@ -12,9 +11,9 @@ import time
 from typing import Dict, Any, Optional
 from fastapi.responses import JSONResponse
 from fastapi import APIRouter, HTTPException, Depends, Body
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-from config import get_server_password
+from config import get_ssl_verify
+from .auth import AuthenticatedUser, authenticate
 import logging
 
 logger = logging.getLogger(__name__)
@@ -24,34 +23,11 @@ CODEBUDDY_BASE_URL = 'https://www.codebuddy.ai'
 CODEBUDDY_AUTH_TOKEN_ENDPOINT = f'{CODEBUDDY_BASE_URL}/v2/plugin/auth/token'
 CODEBUDDY_AUTH_STATE_ENDPOINT = f'{CODEBUDDY_BASE_URL}/v2/plugin/auth/state'
 _last_auth_state: Optional[str] = None
+_auth_state_owners: Dict[str, Dict[str, Any]] = {}
+_AUTH_STATE_TTL_SECONDS = 1800
 
 # --- Router Setup ---
 router = APIRouter()
-security = HTTPBearer()
-
-# --- JWT Authentication ---
-import jwt
-
-def get_jwt_secret():
-    """基于服务密码生成JWT密钥"""
-    password = get_server_password()
-    if not password:
-        return "fallback-secret-for-development-only"
-    return hashlib.sha256(password.encode()).hexdigest()
-
-JWT_SECRET = get_jwt_secret()
-ALGORITHM = "HS256"
-
-def authenticate(credentials = Depends(security)) -> str:
-    """基于服务密码的认证"""
-    password = get_server_password()
-    if not password:
-        raise HTTPException(status_code=500, detail="CODEBUDDY_PASSWORD is not configured on the server.")
-    
-    token = credentials.credentials
-    if token != password:
-        raise HTTPException(status_code=403, detail="Invalid password")
-    return token
 
 # --- Helper Functions ---
 def generate_auth_state() -> str:
@@ -80,6 +56,42 @@ def get_auth_start_headers() -> Dict[str, str]:
         'X-Product': 'SaaS',
         'X-Request-ID': request_id,
     }
+
+
+def remember_auth_state(auth_state: str, user: AuthenticatedUser):
+    """记录 auth_state 所属用户，防止跨用户轮询截取 token。"""
+    _cleanup_expired_auth_states()
+    _auth_state_owners[auth_state] = {
+        "username": user.username,
+        "created_at": int(time.time()),
+    }
+
+
+def validate_auth_state_owner(auth_state: str, user: AuthenticatedUser) -> bool:
+    """验证 auth_state 是否属于当前用户。"""
+    _cleanup_expired_auth_states()
+    state_info = _auth_state_owners.get(auth_state)
+    if not state_info:
+        return False
+    if state_info.get("username") != user.username:
+        return False
+    return True
+
+
+def forget_auth_state(auth_state: str):
+    """认证完成或失败后清理 auth_state。"""
+    _auth_state_owners.pop(auth_state, None)
+
+
+def _cleanup_expired_auth_states():
+    current_time = int(time.time())
+    expired_states = [
+        state
+        for state, state_info in _auth_state_owners.items()
+        if current_time - int(state_info.get("created_at", 0)) > _AUTH_STATE_TTL_SECONDS
+    ]
+    for state in expired_states:
+        _auth_state_owners.pop(state, None)
 
 def get_auth_poll_headers() -> Dict[str, str]:
     """生成轮询认证(/token)所需的请求头"""
@@ -115,7 +127,7 @@ async def start_codebuddy_auth() -> Dict[str, Any]:
         headers = get_auth_start_headers()
         
         # 调用 /v2/plugin/auth/state 获取认证状态和URL
-        async with httpx.AsyncClient(verify=False) as client:
+        async with httpx.AsyncClient(verify=get_ssl_verify()) as client:
             # 为避免上游/中间层缓存，添加随机nonce参数，确保每次请求唯一
             nonce = secrets.token_hex(8)
             state_url = f"{CODEBUDDY_AUTH_STATE_ENDPOINT}?platform=CLI&nonce={nonce}"
@@ -138,7 +150,7 @@ async def start_codebuddy_auth() -> Dict[str, Any]:
                                 nonce2 = secrets.token_hex(8)
                                 state_url2 = f"{CODEBUDDY_AUTH_STATE_ENDPOINT}?platform=CLI&nonce={nonce2}"
                                 payload2 = {"nonce": nonce2}
-                                async with httpx.AsyncClient(verify=False) as client2:
+                                async with httpx.AsyncClient(verify=get_ssl_verify()) as client2:
                                     response2 = await client2.post(state_url2, json=payload2, headers=headers, timeout=30)
                                 if response2.status_code == 200:
                                     result2 = response2.json()
@@ -189,7 +201,7 @@ async def poll_codebuddy_auth_status(auth_state: str) -> Dict[str, Any]:
         headers = get_auth_poll_headers()
         url = f"{CODEBUDDY_AUTH_TOKEN_ENDPOINT}?state={auth_state}"
         
-        async with httpx.AsyncClient(verify=False) as client:
+        async with httpx.AsyncClient(verify=get_ssl_verify()) as client:
             response = await client.get(url, headers=headers, timeout=30)
             
             if response.status_code == 200:
@@ -242,10 +254,10 @@ async def poll_codebuddy_auth_status(auth_state: str) -> Dict[str, Any]:
             "message": f"轮询失败: {str(e)}"
         }
 
-async def save_codebuddy_token(token_data: Dict[str, Any]) -> bool:
+async def save_codebuddy_token(token_data: Dict[str, Any], owner_user: AuthenticatedUser) -> bool:
     """保存CodeBuddy token到文件"""
     try:
-        from .codebuddy_token_manager import codebuddy_token_manager
+        from .codebuddy_token_manager import get_token_manager_for_user
         
         # 添加创建时间
         token_data["created_at"] = int(time.time())
@@ -335,8 +347,9 @@ async def save_codebuddy_token(token_data: Dict[str, Any]) -> bool:
         safe_user_id = "".join(c for c in user_id if c.isalnum() or c in "._-")[:20]
         filename = f"codebuddy_{safe_user_id}_{timestamp}.json"
         
-        # 使用token管理器保存
-        success = codebuddy_token_manager.add_credential_with_data(
+        # 保存到当前本系统用户专属的 CodeBuddy 凭证目录
+        token_manager = get_token_manager_for_user(owner_user)
+        success = token_manager.add_credential_with_data(
             credential_data=credential_data,
             filename=filename
         )
@@ -352,7 +365,7 @@ async def save_codebuddy_token(token_data: Dict[str, Any]) -> bool:
 
 # --- API Endpoints ---
 @router.get("/auth/start", summary="Start CodeBuddy Authentication")
-async def start_device_auth():
+async def start_device_auth(_user: AuthenticatedUser = Depends(authenticate)):
     """启动CodeBuddy认证流程"""
     try:
         logger.info("开始启动CodeBuddy认证流程...")
@@ -361,6 +374,8 @@ async def start_device_auth():
         real_auth_result = await start_codebuddy_auth()
         
         if real_auth_result.get('success'):
+            if real_auth_result.get('auth_state'):
+                remember_auth_state(real_auth_result.get('auth_state'), _user)
             logger.info("真实CodeBuddy认证API启动成功!")
             return real_auth_result
         else:
@@ -379,13 +394,15 @@ async def start_device_auth():
 async def poll_for_token(
     device_code: str = Body(None, embed=True),
     code_verifier: str = Body(None, embed=True),
-    auth_state: str = Body(None, embed=True)
+    auth_state: str = Body(None, embed=True),
+    _user: AuthenticatedUser = Depends(authenticate)
 ):
     """轮询CodeBuddy token端点"""
-    from .codebuddy_token_manager import codebuddy_token_manager
-    
     # 如果有auth_state，说明是真实的CodeBuddy认证流程
     if auth_state:
+        if not validate_auth_state_owner(auth_state, _user):
+            raise HTTPException(status_code=403, detail="Invalid or expired auth_state")
+
         logger.info(f"轮询真实CodeBuddy认证状态: {auth_state}")
         poll_result = await poll_codebuddy_auth_status(auth_state)
         
@@ -397,7 +414,8 @@ async def poll_for_token(
                 bearer_token = token_data.get('access_token') or token_data.get('bearer_token')
                 if bearer_token:
                     # 保存token
-                    token_saved = await save_codebuddy_token(token_data)
+                    token_saved = await save_codebuddy_token(token_data, _user)
+                    forget_auth_state(auth_state)
                     return JSONResponse(content={
                         "access_token": bearer_token,
                         "token_type": token_data.get('token_type', 'Bearer'),

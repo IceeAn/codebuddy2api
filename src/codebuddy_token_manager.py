@@ -3,13 +3,24 @@ CodeBuddy Token Manager - 管理CodeBuddy认证token
 """
 import os
 import glob
+import hashlib
 import json
 import time
 import logging
+import re
 from typing import Dict, Optional, List, Any
+from .auth import AuthenticatedUser
 from .usage_stats_manager import usage_stats_manager
 
 logger = logging.getLogger(__name__)
+
+
+def build_user_credentials_dirname(username: str) -> str:
+    """为本系统用户生成稳定且安全的凭证目录名。"""
+    normalized = re.sub(r"[^A-Za-z0-9._-]", "_", str(username or "").strip())[:48]
+    normalized = normalized.strip("._-") or "user"
+    digest = hashlib.sha256(str(username or "").encode("utf-8")).hexdigest()[:12]
+    return f"{normalized}_{digest}"
 
 
 class CodeBuddyTokenManager:
@@ -20,7 +31,7 @@ class CodeBuddyTokenManager:
             from config import get_codebuddy_creds_dir, get_rotation_count
             creds_dir = get_codebuddy_creds_dir()
         
-        self.creds_dir = os.path.join(os.path.dirname(__file__), '..', creds_dir)
+        self.creds_dir = os.path.realpath(os.path.join(os.path.dirname(__file__), '..', creds_dir))
         self.state_file = os.path.join(self.creds_dir, 'manager_state.json')
         self.credentials = []
         self.current_index = 0  # Start from the first credential
@@ -38,21 +49,33 @@ class CodeBuddyTokenManager:
         logger.info(f"Loading CodeBuddy credentials from: {self.creds_dir}")
         
         if not os.path.exists(self.creds_dir):
-            os.makedirs(self.creds_dir)
+            os.makedirs(self.creds_dir, exist_ok=True)
             logger.warning(f"Credentials directory created at {self.creds_dir}. No credentials found.")
             return
         
-        token_files = glob.glob(os.path.join(self.creds_dir, '*.json'))
+        token_files = sorted(glob.glob(os.path.join(self.creds_dir, '*.json')))
         for file_path in token_files:
             try:
-                with open(file_path, 'r', encoding='utf-8') as f:
+                if os.path.basename(file_path) == os.path.basename(self.state_file):
+                    continue
+
+                if os.path.islink(file_path):
+                    logger.warning(f"Skipping symlink credential file: {os.path.basename(file_path)}")
+                    continue
+
+                real_file_path = os.path.realpath(file_path)
+                if not self._is_path_inside_creds_dir(real_file_path):
+                    logger.warning(f"Skipping credential outside credentials directory: {os.path.basename(file_path)}")
+                    continue
+
+                with open(real_file_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     if 'bearer_token' in data:
                         self.credentials.append({
-                            'file_path': file_path,
+                            'file_path': real_file_path,
                             'data': data
                         })
-                        logger.info(f"Successfully loaded credential: {os.path.basename(file_path)}")
+                        logger.info(f"Successfully loaded credential: {os.path.basename(real_file_path)}")
                     else:
                         logger.warning(f"Skipping invalid credential file (missing bearer_token): {os.path.basename(file_path)}")
             except Exception as e:
@@ -64,6 +87,10 @@ class CodeBuddyTokenManager:
         """加载管理器状态"""
         try:
             if os.path.exists(self.state_file):
+                if os.path.islink(self.state_file) or not self._is_path_inside_creds_dir(os.path.realpath(self.state_file)):
+                    logger.warning("Skipping unsafe manager state file")
+                    return
+
                 with open(self.state_file, 'r', encoding='utf-8') as f:
                     state = json.load(f)
                     
@@ -99,7 +126,7 @@ class CodeBuddyTokenManager:
         try:
             # 确保目录存在
             if not os.path.exists(self.creds_dir):
-                os.makedirs(self.creds_dir)
+                os.makedirs(self.creds_dir, exist_ok=True)
             
             state = {
                 'auto_rotation_enabled': self.auto_rotation_enabled,
@@ -115,8 +142,7 @@ class CodeBuddyTokenManager:
                     self.credentials[self.manual_selected_index]['file_path']
                 )
             
-            with open(self.state_file, 'w', encoding='utf-8') as f:
-                json.dump(state, f, indent=2, ensure_ascii=False)
+            self._write_json_file(self.state_file, state, indent=2)
                 
             logger.debug(f"Manager state saved to {self.state_file}")
         except Exception as e:
@@ -129,7 +155,7 @@ class CodeBuddyTokenManager:
             expires_in = credential_data.get('expires_in')
             
             if not created_at or not expires_in:
-                # 如果没有过期信息，假设未过期（向后兼容）
+                # 如果没有过期信息，按未过期处理。
                 return False
             
             current_time = int(time.time())
@@ -270,8 +296,7 @@ class CodeBuddyTokenManager:
                 'scope': data.get('scope'),
                 'domain': data.get('domain'),
                 'has_refresh_token': bool(data.get('refresh_token')),
-                'session_state': data.get('session_state'),
-                'file_path': cred['file_path']
+                'session_state': data.get('session_state')
             }
             
             credentials_info.append(info)
@@ -279,12 +304,9 @@ class CodeBuddyTokenManager:
         return credentials_info
     
     def add_credential(self, bearer_token: str, user_id: str = None, filename: str = None) -> bool:
-        """添加新的凭证（简化版本，向后兼容）"""
+        """添加新的凭证。"""
         if not filename:
             filename = f"codebuddy_token_{len(self.credentials) + 1}.json"
-        
-        if not filename.endswith('.json'):
-            filename += '.json'
         
         credential_data = {
             "bearer_token": bearer_token,
@@ -302,10 +324,8 @@ class CodeBuddyTokenManager:
             safe_user_id = "".join(c for c in str(user_id) if c.isalnum() or c in "._-")[:20]
             filename = f"codebuddy_{safe_user_id}_{timestamp}.json"
         
-        if not filename.endswith('.json'):
-            filename += '.json'
-        
-        file_path = os.path.join(self.creds_dir, filename)
+        filename = self._sanitize_filename(filename)
+        file_path = self._resolve_credential_path(filename)
         
         # 确保必要字段存在
         if 'created_at' not in credential_data:
@@ -314,10 +334,9 @@ class CodeBuddyTokenManager:
         try:
             # 确保目录存在
             if not os.path.exists(self.creds_dir):
-                os.makedirs(self.creds_dir)
+                os.makedirs(self.creds_dir, exist_ok=True)
             
-            with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(credential_data, f, indent=4, ensure_ascii=False)
+            self._write_json_file(file_path, credential_data, indent=4)
             
             logger.info(f"Added new credential: {filename}")
             self.load_all_tokens()  # 重新加载
@@ -325,6 +344,46 @@ class CodeBuddyTokenManager:
         except Exception as e:
             logger.error(f"Failed to save credential: {e}")
             return False
+
+    def _sanitize_filename(self, filename: str) -> str:
+        """清理凭证文件名，禁止路径穿越和特殊路径。"""
+        filename = os.path.basename(str(filename).strip())
+        filename = re.sub(r"[^A-Za-z0-9._-]", "_", filename)
+        if not filename or filename in (".", ".."):
+            filename = f"codebuddy_token_{int(time.time())}.json"
+        if not filename.endswith(".json"):
+            filename += ".json"
+        return filename
+
+    def _resolve_credential_path(self, filename: str) -> str:
+        """解析凭证路径，并确保目标仍在凭证目录内。"""
+        file_path = os.path.realpath(os.path.join(self.creds_dir, filename))
+        if not self._is_path_inside_creds_dir(file_path):
+            raise ValueError("Credential filename resolves outside credentials directory")
+        return file_path
+
+    def _is_path_inside_creds_dir(self, file_path: str) -> bool:
+        """判断真实文件路径是否位于凭证目录内。"""
+        real_file_path = os.path.realpath(file_path)
+        creds_dir_with_sep = self.creds_dir + os.sep
+        return real_file_path != self.creds_dir and real_file_path.startswith(creds_dir_with_sep)
+
+    def _write_json_file(self, file_path: str, data: Dict[str, Any], indent: int):
+        """以 0600 权限写 JSON 文件，并避免跟随符号链接。"""
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+
+        fd = os.open(file_path, flags, 0o600)
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                fd = None
+                json.dump(data, f, indent=indent, ensure_ascii=False)
+            os.chmod(file_path, 0o600)
+        except Exception:
+            if fd is not None:
+                os.close(fd)
+            raise
 
     def delete_credential_by_index(self, index: int) -> bool:
         """删除指定索引的凭证文件，并重新加载列表"""
@@ -449,5 +508,30 @@ class CodeBuddyTokenManager:
             }
 
 
-# 全局token管理器实例
-codebuddy_token_manager = CodeBuddyTokenManager()
+class CodeBuddyTokenManagerRegistry:
+    """按本系统用户隔离 CodeBuddy 凭证管理器。"""
+
+    def __init__(self):
+        self._managers: Dict[str, CodeBuddyTokenManager] = {}
+
+    def for_user(self, user: AuthenticatedUser) -> CodeBuddyTokenManager:
+        return self.for_username(user.username)
+
+    def for_username(self, username: str) -> CodeBuddyTokenManager:
+        owner_dirname = build_user_credentials_dirname(username)
+        manager = self._managers.get(owner_dirname)
+        if manager is None:
+            from config import get_codebuddy_creds_dir
+
+            user_creds_dir = os.path.join(get_codebuddy_creds_dir(), "users", owner_dirname)
+            manager = CodeBuddyTokenManager(creds_dir=user_creds_dir)
+            self._managers[owner_dirname] = manager
+        return manager
+
+
+codebuddy_token_managers = CodeBuddyTokenManagerRegistry()
+
+
+def get_token_manager_for_user(user: AuthenticatedUser) -> CodeBuddyTokenManager:
+    """获取当前本系统用户专属的 CodeBuddy 凭证管理器。"""
+    return codebuddy_token_managers.for_user(user)

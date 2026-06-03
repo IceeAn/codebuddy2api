@@ -104,6 +104,8 @@ celerybeat.pid
 # Environments
 .env
 config.json
+config/
+secrets/users.txt
 .venv
 env/
 venv/

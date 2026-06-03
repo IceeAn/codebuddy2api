@@ -13,34 +13,24 @@ import httpx
 from fastapi import APIRouter, HTTPException, Depends, Request, Header
 from fastapi.responses import StreamingResponse
 
-from .auth import authenticate
+from .auth import AuthenticatedUser, authenticate
 from .codebuddy_api_client import codebuddy_api_client
-from .codebuddy_token_manager import codebuddy_token_manager
+from .codebuddy_token_manager import get_token_manager_for_user
 from .usage_stats_manager import usage_stats_manager
 from .keyword_replacer import apply_keyword_replacement_to_system_message
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# --- 延迟加载配置常量 - 避免循环导入 ---
-_codebuddy_api_url: Optional[str] = None
-_available_models: Optional[List[str]] = None
-
 def get_codebuddy_api_url() -> str:
-    """延迟加载 CodeBuddy API URL"""
-    global _codebuddy_api_url
-    if _codebuddy_api_url is None:
-        from config import get_codebuddy_api_endpoint
-        _codebuddy_api_url = f"{get_codebuddy_api_endpoint()}/v2/chat/completions"
-    return _codebuddy_api_url
+    """动态加载 CodeBuddy API URL，确保安全白名单即时生效。"""
+    from config import get_codebuddy_api_endpoint
+    return f"{get_codebuddy_api_endpoint()}/v2/chat/completions"
 
 def get_available_models_list() -> List[str]:
-    """延迟加载可用模型列表"""
-    global _available_models
-    if _available_models is None:
-        from config import get_available_models
-        _available_models = get_available_models()
-    return _available_models
+    """动态加载可用模型列表，支持设置热更新。"""
+    from config import get_available_models
+    return get_available_models()
 
 # --- 配置管理 ---
 class SecurityConfig:
@@ -48,15 +38,11 @@ class SecurityConfig:
     
     @staticmethod
     def get_ssl_verify() -> bool:
-        """获取SSL验证设置 - 默认关闭，可通过环境变量启用"""
-        import os
-        # 默认关闭SSL验证，只有明确设置为true时才启用
-        ssl_verify_env = os.getenv("CODEBUDDY_SSL_VERIFY", "false").lower()
-        ssl_verify = ssl_verify_env == "true"
-        
+        """获取SSL验证设置，生产默认启用。"""
+        from config import get_ssl_verify
+        ssl_verify = get_ssl_verify()
         if not ssl_verify:
-            logger.warning("⚠️  SSL验证已禁用 - 仅在开发环境使用！生产环境请设置 CODEBUDDY_SSL_VERIFY=true")
-        
+            logger.warning("SSL验证已禁用，仅应在受控调试环境使用。")
         return ssl_verify
 
 # --- HTTP 客户端配置 ---
@@ -113,10 +99,7 @@ lifecycle_manager = AppLifecycleManager()
 # --- 标准响应头 ---
 SSE_HEADERS = {
     "Cache-Control": "no-cache",
-    "Connection": "keep-alive",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "*"
+    "Connection": "keep-alive"
 }
 
 # --- 辅助函数 ---
@@ -597,10 +580,10 @@ class CredentialManager:
     """凭证管理器 - 线程安全的凭证获取"""
     
     @staticmethod
-    def get_valid_credential() -> Dict[str, Any]:
+    def get_valid_credential(token_manager) -> Dict[str, Any]:
         """获取有效凭证，包含错误处理"""
         try:
-            credential = codebuddy_token_manager.get_next_credential()
+            credential = token_manager.get_next_credential()
             if not credential:
                 raise HTTPException(status_code=401, detail="没有可用的CodeBuddy凭证")
             
@@ -622,7 +605,7 @@ async def chat_completions(
     x_conversation_request_id: Optional[str] = Header(None, alias="X-Conversation-Request-ID"),
     x_conversation_message_id: Optional[str] = Header(None, alias="X-Conversation-Message-ID"),
     x_request_id: Optional[str] = Header(None, alias="X-Request-ID"),
-    _token: str = Depends(authenticate)
+    _user: AuthenticatedUser = Depends(authenticate)
 ):
     """CodeBuddy V1 聊天完成API - 重构后的简洁版本"""
     try:
@@ -637,7 +620,8 @@ async def chat_completions(
         RequestProcessor.validate_request(request_body)
         
         # 获取有效凭证
-        credential = CredentialManager.get_valid_credential()
+        token_manager = get_token_manager_for_user(_user)
+        credential = CredentialManager.get_valid_credential(token_manager)
         
         # 生成请求头
         headers = codebuddy_api_client.generate_codebuddy_headers(
@@ -669,7 +653,7 @@ async def chat_completions(
         raise HTTPException(status_code=500, detail=f"内部服务器错误: {str(e)}")
 
 @router.get("/v1/models")
-async def list_v1_models(_token: str = Depends(authenticate)):
+async def list_v1_models(_user: AuthenticatedUser = Depends(authenticate)):
     """获取CodeBuddy V1模型列表"""
     try:
         return {
@@ -687,13 +671,14 @@ async def list_v1_models(_token: str = Depends(authenticate)):
         raise HTTPException(status_code=500, detail="获取模型列表失败")
 
 @router.get("/v1/credentials", summary="List all available credentials")
-async def list_credentials(_token: str = Depends(authenticate)):
+async def list_credentials(_user: AuthenticatedUser = Depends(authenticate)):
     """列出所有可用凭证的详细信息，包括过期状态"""
     try:
-        credentials_info = codebuddy_token_manager.get_credentials_info()
+        token_manager = get_token_manager_for_user(_user)
+        credentials_info = token_manager.get_credentials_info()
         safe_credentials = []
         
-        credentials = codebuddy_token_manager.get_all_credentials()
+        credentials = token_manager.get_all_credentials()
         
         for info in credentials_info:
             bearer_token = credentials[info['index']].get("bearer_token", "") if info['index'] < len(credentials) else ""
@@ -724,7 +709,7 @@ async def list_credentials(_token: str = Depends(authenticate)):
 @router.post("/v1/credentials", summary="Add a new credential")
 async def add_credential(
     request: Request,
-    _token: str = Depends(authenticate)
+    _user: AuthenticatedUser = Depends(authenticate)
 ):
     """添加一个新的认证凭证"""
     try:
@@ -732,10 +717,10 @@ async def add_credential(
         if not data.get("bearer_token"):
             raise HTTPException(status_code=422, detail="bearer_token is required")
 
-        success = codebuddy_token_manager.add_credential(
+        token_manager = get_token_manager_for_user(_user)
+        success = token_manager.add_credential(
             data.get("bearer_token"),
-            data.get("user_id"),
-            data.get("filename")
+            data.get("user_id")
         )
         if not success:
             raise HTTPException(status_code=500, detail="Failed to save credential file")
@@ -750,7 +735,7 @@ async def add_credential(
 @router.post("/v1/credentials/select", summary="Manually select a credential")
 async def select_credential(
     request: Request,
-    _token: str = Depends(authenticate)
+    _user: AuthenticatedUser = Depends(authenticate)
 ):
     """手动选择指定的凭证"""
     try:
@@ -759,7 +744,8 @@ async def select_credential(
         if index is None:
             raise HTTPException(status_code=422, detail="index is required")
 
-        if not codebuddy_token_manager.set_manual_credential(index):
+        token_manager = get_token_manager_for_user(_user)
+        if not token_manager.set_manual_credential(index):
             raise HTTPException(status_code=400, detail="Invalid credential index")
         
         return {"message": f"Credential #{index + 1} selected successfully"}
@@ -770,10 +756,11 @@ async def select_credential(
 
 
 @router.post("/v1/credentials/auto", summary="Resume automatic credential rotation")
-async def resume_auto_rotation(_token: str = Depends(authenticate)):
+async def resume_auto_rotation(_user: AuthenticatedUser = Depends(authenticate)):
     """恢复自动凭证轮换"""
     try:
-        codebuddy_token_manager.clear_manual_selection()
+        token_manager = get_token_manager_for_user(_user)
+        token_manager.clear_manual_selection()
         return {"message": "Resumed automatic credential rotation"}
 
     except Exception as e:
@@ -782,10 +769,11 @@ async def resume_auto_rotation(_token: str = Depends(authenticate)):
 
 
 @router.post("/v1/credentials/toggle-rotation", summary="Toggle automatic credential rotation")
-async def toggle_auto_rotation(_token: str = Depends(authenticate)):
+async def toggle_auto_rotation(_user: AuthenticatedUser = Depends(authenticate)):
     """切换自动轮换开关"""
     try:
-        is_enabled = codebuddy_token_manager.toggle_auto_rotation()
+        token_manager = get_token_manager_for_user(_user)
+        is_enabled = token_manager.toggle_auto_rotation()
         status = "enabled" if is_enabled else "disabled"
         message = f"Auto rotation {status}"
         return {
@@ -799,10 +787,11 @@ async def toggle_auto_rotation(_token: str = Depends(authenticate)):
 
 
 @router.get("/v1/credentials/current", summary="Get current credential info")
-async def get_current_credential(_token: str = Depends(authenticate)):
+async def get_current_credential(_user: AuthenticatedUser = Depends(authenticate)):
     """获取当前使用的凭证信息"""
     try:
-        info = codebuddy_token_manager.get_current_credential_info()
+        token_manager = get_token_manager_for_user(_user)
+        info = token_manager.get_current_credential_info()
         return info
 
     except Exception as e:
@@ -811,7 +800,7 @@ async def get_current_credential(_token: str = Depends(authenticate)):
 
 
 @router.post("/v1/credentials/delete", summary="Delete a credential by index")
-async def delete_credential(request: Request, _token: str = Depends(authenticate)):
+async def delete_credential(request: Request, _user: AuthenticatedUser = Depends(authenticate)):
     """删除一个凭证文件（通过索引）并从列表中移除"""
     try:
         data = await request.json()
@@ -819,7 +808,8 @@ async def delete_credential(request: Request, _token: str = Depends(authenticate
         if index is None or not isinstance(index, int):
             raise HTTPException(status_code=422, detail="Valid integer index is required")
 
-        if not codebuddy_token_manager.delete_credential_by_index(index):
+        token_manager = get_token_manager_for_user(_user)
+        if not token_manager.delete_credential_by_index(index):
             raise HTTPException(status_code=400, detail="Invalid index or failed to delete credential")
 
         return {"message": f"Credential #{index + 1} deleted successfully"}

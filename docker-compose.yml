@@ -13,12 +13,12 @@ services:
       - "8001:8001"
     # 数据卷挂载，用于持久化配置和凭证
     volumes:
-      # 将本地的 config.json 文件挂载到容器内，实现配置持久化
-      # 注意：在首次运行前，请确保本地存在一个空的 config.json 文件
-      # 注意：现在挂载的是整个config目录
+      # 将本地的 config 目录挂载到容器内，实现热更新配置持久化
       - ./config:/app/config
       # 将本地的凭证目录挂载到容器内，实现凭证持久化
       - ./.codebuddy_creds:/app/.codebuddy_creds
+      # 将多用户认证文件以只读方式挂载到容器内
+      - ./secrets/users.txt:/app/secrets/users.txt:ro
     # 加载 .env 文件中的环境变量
     env_file:
       - .env

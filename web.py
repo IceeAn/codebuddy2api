@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 # Import the routers
 from src.codebuddy_router import router as codebuddy_router, lifecycle_manager
@@ -14,7 +15,7 @@ from src.codebuddy_auth_router import router as codebuddy_auth_router
 from src.settings_router import router as settings_router
 from src.frontend_router import router as frontend_router
 
-from config import get_server_host, get_server_port, get_log_level
+from config import get_server_host, get_server_port, get_log_level, get_allowed_origins, get_allowed_hosts
 
 # 配置日志
 logging.basicConfig(
@@ -46,14 +47,24 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS中间件
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Host 头校验，公网部署时请通过 CODEBUDDY_ALLOWED_HOSTS 配置域名
+allowed_hosts = get_allowed_hosts()
+if allowed_hosts:
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=allowed_hosts,
+    )
+
+# CORS中间件：默认不开跨域，只有显式配置 CODEBUDDY_ALLOWED_ORIGINS 时才启用
+allowed_origins = get_allowed_origins()
+if allowed_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allowed_origins,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-Conversation-ID", "X-Conversation-Request-ID", "X-Conversation-Message-ID", "X-Request-ID"],
+    )
 
 # 挂载前端路由
 app.include_router(
@@ -130,8 +141,8 @@ if __name__ == "__main__":
     logger.info(f"   Credentials: GET http://{host}:{port}/codebuddy/v1/credentials")
     logger.info("=" * 60)
     logger.info("Authentication:")
-    logger.info("   Set CODEBUDDY_PASSWORD environment variable")
-    logger.info("   Use Bearer token in Authorization header")
+    logger.info("   Mount secrets/users.txt for multi-user authentication")
+    logger.info("   Use Basic auth or Bearer username:password in Authorization header")
     logger.info("=" * 60)
 
     config = Config()
