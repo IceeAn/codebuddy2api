@@ -13,7 +13,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Depends, Request, Header
 from fastapi.responses import StreamingResponse
 
-from .auth import AuthenticatedUser, authenticate
+from .auth import AuthenticatedUser, authenticate, require_session_user
 from .codebuddy_api_client import codebuddy_api_client
 from .codebuddy_token_manager import get_token_manager_for_user
 from .usage_stats_manager import usage_stats_manager
@@ -824,7 +824,7 @@ async def list_v1_models(_user: AuthenticatedUser = Depends(authenticate)):
         raise HTTPException(status_code=500, detail="获取模型列表失败")
 
 @router.get("/v1/credentials", summary="List all available credentials")
-async def list_credentials(_user: AuthenticatedUser = Depends(authenticate)):
+async def list_credentials(_user: AuthenticatedUser = Depends(require_session_user)):
     """列出所有可用凭证的详细信息，包括过期状态"""
     try:
         token_manager = get_token_manager_for_user(_user)
@@ -862,7 +862,7 @@ async def list_credentials(_user: AuthenticatedUser = Depends(authenticate)):
 @router.post("/v1/credentials", summary="Add a new credential")
 async def add_credential(
     request: Request,
-    _user: AuthenticatedUser = Depends(authenticate)
+    _user: AuthenticatedUser = Depends(require_session_user)
 ):
     """添加一个新的认证凭证"""
     try:
@@ -888,7 +888,7 @@ async def add_credential(
 @router.post("/v1/credentials/select", summary="Manually select a credential")
 async def select_credential(
     request: Request,
-    _user: AuthenticatedUser = Depends(authenticate)
+    _user: AuthenticatedUser = Depends(require_session_user)
 ):
     """手动选择指定的凭证"""
     try:
@@ -909,7 +909,7 @@ async def select_credential(
 
 
 @router.post("/v1/credentials/auto", summary="Resume automatic credential rotation")
-async def resume_auto_rotation(_user: AuthenticatedUser = Depends(authenticate)):
+async def resume_auto_rotation(_user: AuthenticatedUser = Depends(require_session_user)):
     """恢复自动凭证轮换"""
     try:
         token_manager = get_token_manager_for_user(_user)
@@ -922,7 +922,7 @@ async def resume_auto_rotation(_user: AuthenticatedUser = Depends(authenticate))
 
 
 @router.post("/v1/credentials/toggle-rotation", summary="Toggle automatic credential rotation")
-async def toggle_auto_rotation(_user: AuthenticatedUser = Depends(authenticate)):
+async def toggle_auto_rotation(_user: AuthenticatedUser = Depends(require_session_user)):
     """切换自动轮换开关"""
     try:
         token_manager = get_token_manager_for_user(_user)
@@ -940,7 +940,7 @@ async def toggle_auto_rotation(_user: AuthenticatedUser = Depends(authenticate))
 
 
 @router.get("/v1/credentials/current", summary="Get current credential info")
-async def get_current_credential(_user: AuthenticatedUser = Depends(authenticate)):
+async def get_current_credential(_user: AuthenticatedUser = Depends(require_session_user)):
     """获取当前使用的凭证信息"""
     try:
         token_manager = get_token_manager_for_user(_user)
@@ -953,7 +953,7 @@ async def get_current_credential(_user: AuthenticatedUser = Depends(authenticate
 
 
 @router.post("/v1/credentials/delete", summary="Delete a credential by index")
-async def delete_credential(request: Request, _user: AuthenticatedUser = Depends(authenticate)):
+async def delete_credential(request: Request, _user: AuthenticatedUser = Depends(require_session_user)):
     """删除一个凭证文件（通过索引）并从列表中移除"""
     try:
         data = await request.json()

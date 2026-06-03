@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 from fastapi import APIRouter, HTTPException, Depends, Body
 
 from config import get_codebuddy_api_endpoint, get_codebuddy_api_host, get_ssl_verify
-from .auth import AuthenticatedUser, authenticate
+from .auth import AuthenticatedUser, require_session_user
 import logging
 
 logger = logging.getLogger(__name__)
@@ -371,7 +371,7 @@ async def save_codebuddy_token(token_data: Dict[str, Any], owner_user: Authentic
 
 # --- API Endpoints ---
 @router.get("/auth/start", summary="Start CodeBuddy Authentication")
-async def start_device_auth(_user: AuthenticatedUser = Depends(authenticate)):
+async def start_device_auth(_user: AuthenticatedUser = Depends(require_session_user)):
     """启动CodeBuddy认证流程"""
     try:
         logger.info("开始启动CodeBuddy认证流程...")
@@ -401,7 +401,7 @@ async def poll_for_token(
     device_code: str = Body(None, embed=True),
     code_verifier: str = Body(None, embed=True),
     auth_state: str = Body(None, embed=True),
-    _user: AuthenticatedUser = Depends(authenticate)
+    _user: AuthenticatedUser = Depends(require_session_user)
 ):
     """轮询CodeBuddy token端点"""
     # 如果有auth_state，说明是真实的CodeBuddy认证流程

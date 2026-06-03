@@ -1,20 +1,20 @@
 """
 Authentication module for CodeBuddy2API
 """
-import base64
-import binascii
+import json
 import logging
+import os
 import secrets
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
 
-from config import get_users_file_path
-from .password_hashing import verify_password
+from config import get_codebuddy_creds_dir, get_users_file_path
+from .password_hashing import create_password_hash, verify_password
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -23,6 +23,7 @@ router = APIRouter()
 _DUMMY_PASSWORD_HASH = "pbkdf2_sha256$390000$Q2ZpaYeWHUv958nZM_Zl6A$Z7iHCysOlsWDVbFAIt2uxSfhQTD5qYNehS1W65K4DHY"
 SESSION_COOKIE_NAME = "codebuddy2api_session"
 SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
+API_KEY_PREFIX = "sk-"
 _sessions: Dict[str, Dict[str, Any]] = {}
 
 
@@ -37,6 +38,11 @@ class LoginRequest(BaseModel):
     """管理页登录请求。"""
     username: str
     password: str
+
+
+class ApiKeyCreateRequest(BaseModel):
+    """API Key 创建请求。"""
+    name: str = ""
 
 
 class UsersFileStore:
@@ -111,27 +117,163 @@ class UsersFileStore:
         return username in self._users
 
 
-def _parse_basic_credentials(auth_value: str) -> Optional[Tuple[str, str]]:
-    try:
-        encoded = auth_value.split(" ", 1)[1].strip()
-        decoded = base64.b64decode(encoded).decode("utf-8")
-        username, separator, password = decoded.partition(":")
-        if not separator:
-            return None
-        return username, password
-    except (IndexError, UnicodeDecodeError, binascii.Error):
-        return None
-
-
-def _parse_bearer_credentials(auth_value: str) -> Tuple[Optional[str], str]:
-    token = auth_value.split(" ", 1)[1].strip()
-    username, separator, password = token.partition(":")
-    if separator:
-        return username, password
-    return None, token
-
-
 _users_store = UsersFileStore()
+
+
+class ApiKeyStore:
+    """管理用户生成的 sk- API Key。"""
+
+    def __init__(self):
+        self._keys: List[Dict[str, Any]] = []
+        self._loaded_path: Optional[Path] = None
+        self._loaded_mtime: Optional[float] = None
+
+    def _resolve_api_keys_file(self) -> Path:
+        creds_dir = Path(get_codebuddy_creds_dir())
+        if not creds_dir.is_absolute():
+            creds_dir = Path.cwd() / creds_dir
+        return creds_dir / "api_keys.json"
+
+    def _load_if_needed(self) -> None:
+        api_keys_file = self._resolve_api_keys_file()
+        try:
+            stat_result = api_keys_file.stat()
+        except FileNotFoundError:
+            self._keys = []
+            self._loaded_path = api_keys_file
+            self._loaded_mtime = None
+            return
+
+        if api_keys_file.is_symlink() or not api_keys_file.is_file():
+            self._keys = []
+            self._loaded_path = api_keys_file
+            self._loaded_mtime = None
+            logger.warning("Configured API keys file is not a regular file: %s", api_keys_file)
+            return
+
+        current_mtime = stat_result.st_mtime
+        if self._loaded_path == api_keys_file and self._loaded_mtime == current_mtime:
+            return
+
+        try:
+            with api_keys_file.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            logger.error("Failed to load API keys file %s: %s", api_keys_file, e)
+            data = {}
+
+        keys = data.get("keys", []) if isinstance(data, dict) else []
+        self._keys = [key for key in keys if isinstance(key, dict)]
+        self._loaded_path = api_keys_file
+        self._loaded_mtime = current_mtime
+
+    def _save(self) -> None:
+        api_keys_file = self._resolve_api_keys_file()
+        api_keys_file.parent.mkdir(parents=True, exist_ok=True)
+
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+
+        fd = os.open(api_keys_file, flags, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                fd = None
+                json.dump({"keys": self._keys}, f, indent=2, ensure_ascii=False)
+            os.chmod(api_keys_file, 0o600)
+            self._loaded_path = api_keys_file
+            self._loaded_mtime = api_keys_file.stat().st_mtime
+        except Exception:
+            if fd is not None:
+                os.close(fd)
+            raise
+
+    @staticmethod
+    def _safe_key_name(name: str) -> str:
+        return str(name or "").strip()[:80] or "API Key"
+
+    @staticmethod
+    def _preview(api_key: str) -> str:
+        return f"{api_key[:10]}...{api_key[-4:]}"
+
+    def create_key(self, username: str, name: str = "") -> Dict[str, Any]:
+        self._load_if_needed()
+        api_key = f"{API_KEY_PREFIX}{secrets.token_urlsafe(32)}"
+        created_at = int(time.time())
+        key_record = {
+            "id": f"key_{secrets.token_urlsafe(12)}",
+            "username": username,
+            "name": self._safe_key_name(name),
+            "key_hash": create_password_hash(api_key),
+            "preview": self._preview(api_key),
+            "created_at": created_at,
+            "last_used_at": None,
+        }
+        self._keys.append(key_record)
+        self._save()
+        return {
+            "id": key_record["id"],
+            "name": key_record["name"],
+            "api_key": api_key,
+            "preview": key_record["preview"],
+            "created_at": created_at,
+            "last_used_at": None,
+        }
+
+    def verify(self, api_key: str) -> Optional[AuthenticatedUser]:
+        if not api_key.startswith(API_KEY_PREFIX):
+            verify_password(api_key, _DUMMY_PASSWORD_HASH)
+            return None
+
+        self._load_if_needed()
+        matched_key: Optional[Dict[str, Any]] = None
+        for key_record in self._keys:
+            key_hash = key_record.get("key_hash")
+            if isinstance(key_hash, str) and verify_password(api_key, key_hash):
+                matched_key = key_record
+                break
+
+        if not matched_key:
+            verify_password(api_key, _DUMMY_PASSWORD_HASH)
+            return None
+
+        username = str(matched_key.get("username") or "")
+        if not username or not _users_store.has_username(username):
+            return None
+
+        matched_key["last_used_at"] = int(time.time())
+        self._save()
+        return AuthenticatedUser(username=username, source="api_key")
+
+    def list_keys(self, username: str) -> List[Dict[str, Any]]:
+        self._load_if_needed()
+        return [
+            {
+                "id": key_record.get("id"),
+                "name": key_record.get("name"),
+                "preview": key_record.get("preview"),
+                "created_at": key_record.get("created_at"),
+                "last_used_at": key_record.get("last_used_at"),
+            }
+            for key_record in self._keys
+            if key_record.get("username") == username
+        ]
+
+    def delete_key(self, username: str, key_id: str) -> bool:
+        self._load_if_needed()
+        original_count = len(self._keys)
+        self._keys = [
+            key_record
+            for key_record in self._keys
+            if not (key_record.get("username") == username and key_record.get("id") == key_id)
+        ]
+        if len(self._keys) == original_count:
+            return False
+        self._save()
+        return True
+
+
+api_key_store = ApiKeyStore()
 
 
 def _cleanup_expired_sessions() -> None:
@@ -179,7 +321,7 @@ def _invalidate_session(session_id: Optional[str]) -> None:
 
 
 def authenticate(request: Request) -> AuthenticatedUser:
-    """验证用户身份，支持 Basic、Bearer username:password 和管理页会话 cookie。"""
+    """验证用户身份，支持 Bearer sk- API Key 和管理页会话 cookie。"""
     auth_value = request.headers.get("Authorization", "")
     scheme = auth_value.split(" ", 1)[0].lower() if auth_value else ""
 
@@ -189,19 +331,11 @@ def authenticate(request: Request) -> AuthenticatedUser:
             detail="No authentication users configured. Mount secrets/users.txt.",
         )
 
-    if scheme == "basic":
-        parsed = _parse_basic_credentials(auth_value)
-        if not parsed:
-            raise _auth_error()
-        username, password = parsed
-        if _users_store.verify(username, password):
-            return AuthenticatedUser(username=username, source="users_file")
-        raise _auth_error()
-
     if scheme == "bearer":
-        username, password = _parse_bearer_credentials(auth_value)
-        if username and _users_store.verify(username, password):
-            return AuthenticatedUser(username=username, source="users_file")
+        api_key = auth_value.split(" ", 1)[1].strip() if " " in auth_value else ""
+        api_key_user = api_key_store.verify(api_key)
+        if api_key_user:
+            return api_key_user
 
         raise _auth_error()
 
@@ -215,14 +349,28 @@ def authenticate(request: Request) -> AuthenticatedUser:
 def _auth_error() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid username or password",
-        headers={"WWW-Authenticate": "Basic"},
+        detail="Invalid authentication credentials",
+        headers={"WWW-Authenticate": "Bearer"},
     )
 
 
 def _is_secure_request(request: Request) -> bool:
     forwarded_proto = request.headers.get("X-Forwarded-Proto", "").split(",", 1)[0].strip().lower()
     return request.url.scheme == "https" or forwarded_proto == "https"
+
+
+def require_session_user(request: Request) -> AuthenticatedUser:
+    """仅允许管理页会话用户访问。"""
+    if not _users_store.has_users_file():
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="No authentication users configured. Mount secrets/users.txt.",
+        )
+
+    session_user = _get_session_user(request.cookies.get(SESSION_COOKIE_NAME))
+    if session_user:
+        return session_user
+    raise _auth_error()
 
 
 @router.post("/auth/login")
@@ -263,10 +411,33 @@ async def logout(request: Request, response: Response):
 
 
 @router.get("/auth/session")
-async def get_session(_user: AuthenticatedUser = Depends(authenticate)):
+async def get_session(_user: AuthenticatedUser = Depends(require_session_user)):
     """返回当前管理页会话状态。"""
     return {
         "authenticated": True,
         "username": _user.username,
         "source": _user.source,
     }
+
+
+@router.get("/auth/api-keys")
+async def list_api_keys(_user: AuthenticatedUser = Depends(require_session_user)):
+    """列出当前用户创建的 API Key。"""
+    return {"api_keys": api_key_store.list_keys(_user.username)}
+
+
+@router.post("/auth/api-keys")
+async def create_api_key(
+    request_body: ApiKeyCreateRequest,
+    _user: AuthenticatedUser = Depends(require_session_user),
+):
+    """创建新的 API Key，明文只在本次响应中返回。"""
+    return api_key_store.create_key(_user.username, request_body.name)
+
+
+@router.delete("/auth/api-keys/{key_id}")
+async def delete_api_key(key_id: str, _user: AuthenticatedUser = Depends(require_session_user)):
+    """删除当前用户的 API Key。"""
+    if not api_key_store.delete_key(_user.username, key_id):
+        raise HTTPException(status_code=404, detail="API key not found")
+    return {"deleted": True}

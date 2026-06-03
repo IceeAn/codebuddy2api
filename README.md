@@ -115,11 +115,10 @@ docker compose up -d --build
 
 ### 认证
 
-所有对本服务的 API 请求都需要认证。Web 管理页使用登录接口签发的 `HttpOnly` 会话 Cookie，刷新页面后会自动恢复登录态；OpenAI SDK 这类只支持 API key 的客户端，可以把 API key 写成 `用户名:密码`，本服务会识别 Bearer `username:password`。直接调用 API 时仍支持 Basic Auth。
+所有对本服务的 API 请求都需要认证。Web 管理页使用登录接口签发的 `HttpOnly` 会话 Cookie，刷新页面后会自动恢复登录态；外部客户端必须在 Web 管理页的「API 密钥」中生成 `sk-...` API Key，并通过 Bearer 方式传入。本服务不再接受 Basic Auth 或 Bearer `用户名:密码` 作为 API 认证。
 
 ```http
-Authorization: Basic base64(username:password)
-Authorization: Bearer username:password
+Authorization: Bearer sk-your_api_key
 ```
 
 ### 客户端集成示例
@@ -131,7 +130,7 @@ Authorization: Bearer username:password
 import openai
 
 client = openai.OpenAI(
-    api_key="admin:your_password",
+    api_key="sk-your_api_key",
     base_url="http://127.0.0.1:8001/codebuddy/v1"
 )
 
@@ -161,7 +160,7 @@ for chunk in stream:
 ```bash
 # 非流式请求
 curl -X POST "http://127.0.0.1:8001/codebuddy/v1/chat/completions" \
-  -u "admin:your_password" \
+  -H "Authorization: Bearer sk-your_api_key" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "glm-5.1",
@@ -172,7 +171,7 @@ curl -X POST "http://127.0.0.1:8001/codebuddy/v1/chat/completions" \
 
 # 流式请求
 curl -X POST "http://127.0.0.1:8001/codebuddy/v1/chat/completions" \
-  -u "admin:your_password" \
+  -H "Authorization: Bearer sk-your_api_key" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "glm-5.1",
@@ -189,6 +188,8 @@ curl -X POST "http://127.0.0.1:8001/codebuddy/v1/chat/completions" \
 - `GET /codebuddy/v1/models`: 获取在 `.env` 文件中配置的模型列表。
 - `GET /codebuddy/v1/credentials`: （需要认证）在 Web UI 中用于列出所有凭证。
 - `POST /codebuddy/v1/credentials`: （需要认证）在 Web UI 中用于添加新凭证。
+- `GET /auth/api-keys`: （需要 Web 会话）列出当前用户创建的 API Key。
+- `POST /auth/api-keys`: （需要 Web 会话）生成新的 `sk-...` API Key。
 - `GET /health`: 服务的健康检查端点。
 
 ## 🔧 项目结构
@@ -250,8 +251,8 @@ codebuddy2api/
 - **"API error: 401" / "API error: 403" (来自 CodeBuddy)**:
   - 这通常意味着你的 CodeBuddy `Bearer Token` 无效或已过期。请通过官网重新获取一个新的 Token，并在 Web UI 中更新。
 
-- **"Invalid username or password"**:
-  - 检查 `secrets/users.txt` 中是否存在对应用户，并确认客户端使用的是 Basic 认证或 Bearer `用户名:密码`。
+- **"Invalid authentication credentials"**:
+  - 检查客户端是否使用了 Web 管理页生成的 `sk-...` API Key，并以 `Authorization: Bearer sk-...` 传入。
 
 - **需要查看详细日志**:
   - 在 `.env` 文件中设置 `CODEBUDDY_LOG_LEVEL=DEBUG`，然后重启服务。

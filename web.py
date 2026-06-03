@@ -149,7 +149,8 @@ if __name__ == "__main__":
     logger.info("=" * 60)
     logger.info("Authentication:")
     logger.info("   Mount secrets/users.txt for multi-user authentication")
-    logger.info("   Use Basic auth or Bearer username:password in Authorization header")
+    logger.info("   Web UI uses HttpOnly session cookies")
+    logger.info("   API clients must use Bearer sk-... keys generated in the Web UI")
     logger.info("=" * 60)
 
     config = Config()

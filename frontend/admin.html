@@ -1230,6 +1230,9 @@
                 <button class="nav-tab" onclick="showTab('credentials')">
                     <i class="fas fa-key"></i> 凭证管理
                 </button>
+                <button class="nav-tab" onclick="showTab('api-keys')">
+                    <i class="fas fa-id-card"></i> API 密钥
+                </button>
                 <button class="nav-tab" onclick="showTab('api-test')">
                     <i class="fas fa-flask"></i> API 测试
                 </button>
@@ -1476,6 +1479,48 @@
                 </div>
             </div>
 
+            <!-- API 密钥面板 -->
+            <div id="api-keys" class="tab-panel">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title"><i class="fas fa-id-card"></i> 创建 API 密钥</h3>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="apiKeyName">名称</label>
+                        <input
+                            type="text"
+                            id="apiKeyName"
+                            class="form-input"
+                            placeholder="例如 opencode、本地测试、CI">
+                    </div>
+                    <button class="btn btn-success" onclick="createApiKey()">
+                        <i class="fas fa-plus"></i> 生成 API Key
+                    </button>
+                    <div id="newApiKeySection" class="hidden" style="margin-top: 1.5rem;">
+                        <label class="form-label" for="newApiKeyValue">新 API Key</label>
+                        <input type="text" id="newApiKeyValue" class="form-input" readonly>
+                        <div style="margin-top: 1rem;">
+                            <button class="btn btn-primary" onclick="copyNewApiKey()">
+                                <i class="fas fa-copy"></i> 复制
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title"><i class="fas fa-list"></i> 已创建的 API Key</h3>
+                        <button class="btn btn-primary" onclick="loadApiKeys()">
+                            <i class="fas fa-sync-alt"></i> 刷新列表
+                        </button>
+                    </div>
+                    <div id="apiKeysList" class="loading">
+                        <i class="fas fa-spinner fa-spin"></i>
+                        <div>加载中...</div>
+                    </div>
+                </div>
+            </div>
+
             <!-- API测试面板 -->
             <div id="api-test" class="tab-panel">
                 <div class="card api-test">
@@ -1533,7 +1578,7 @@
                     </div>
                     <h4 style="margin-bottom: 1rem; color: var(--primary-color);">curl 示例:</h4>
                     <div class="code-block">curl -X POST "http://127.0.0.1:8001/codebuddy/v1/chat/completions" \
-      -u "admin:your_password" \
+      -H "Authorization: Bearer sk-your_api_key" \
       -H "Content-Type: application/json" \
       -d '{
         "model": "glm-5.1",
@@ -1546,7 +1591,7 @@
                     <div class="code-block">import openai
 
     client = openai.OpenAI(
-        api_key="admin:your_password",
+        api_key="sk-your_api_key",
         base_url="http://127.0.0.1:8001/codebuddy/v1"
     )
 
@@ -1598,6 +1643,7 @@
         let authPollingInterval = null;
         let isAuthenticated = false;
         let credentialsCache = []; // 用于缓存凭证和其状态
+        let apiKeysCache = [];
 
         // 初始化
         document.addEventListener('DOMContentLoaded', function() {
@@ -1633,7 +1679,7 @@
             // Ctrl/Cmd + 数字键切换标签
             if ((e.ctrlKey || e.metaKey) && e.key >= '1' && e.key <= '4') {
                 e.preventDefault();
-                const tabs = ['dashboard', 'credentials', 'api-test', 'settings'];
+                const tabs = ['dashboard', 'credentials', 'api-keys', 'api-test', 'settings'];
                 const index = parseInt(e.key) - 1;
                 if (tabs[index]) {
                     // 模拟点击标签
@@ -1662,6 +1708,9 @@
                     break;
                 case 'credentials':
                     loadCredentials();
+                    break;
+                case 'api-keys':
+                    loadApiKeys();
                     break;
                 case 'settings':
                     loadSettings();
@@ -1782,6 +1831,8 @@
                 loadDashboard();
             } else if (tabId === 'credentials') {
                 loadCredentials();
+            } else if (tabId === 'api-keys') {
+                loadApiKeys();
             } else if (tabId === 'settings') {
                 loadSettings();
             }
@@ -1954,6 +2005,130 @@
                 return ['http:', 'https:'].includes(url.protocol) ? url.href : '#';
             } catch (e) {
                 return '#';
+            }
+        }
+
+        function formatTimestamp(value) {
+            return value ? new Date(value * 1000).toLocaleString() : '-';
+        }
+
+        // API Key 管理
+        async function loadApiKeys() {
+            const apiKeysList = document.getElementById('apiKeysList');
+            apiKeysList.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i><div>加载中...</div></div>';
+
+            try {
+                const response = await fetch('/auth/api-keys', {
+                    headers: getAuthHeaders()
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    apiKeysCache = data.api_keys || [];
+                    displayApiKeys();
+                } else if (response.status === 401) {
+                    apiKeysList.innerHTML = '<div class="status status-error">认证失败，请重新登录</div>';
+                    logout();
+                } else {
+                    const errorData = await response.json();
+                    apiKeysList.innerHTML = `<div class="status status-error">加载失败: ${escapeHtml(errorData.detail || response.status)}</div>`;
+                }
+            } catch (error) {
+                apiKeysList.innerHTML = `<div class="status status-error">网络错误: ${escapeHtml(error.message)}</div>`;
+            }
+        }
+
+        function displayApiKeys() {
+            const apiKeysList = document.getElementById('apiKeysList');
+            if (!apiKeysCache.length) {
+                apiKeysList.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--secondary-color);">暂无 API Key</div>';
+                return;
+            }
+
+            apiKeysList.innerHTML = '<div class="credential-list">' + apiKeysCache.map(key => `
+                <div class="credential-item">
+                    <div class="credential-avatar valid">
+                        <i class="fas fa-id-card"></i>
+                    </div>
+                    <div class="credential-info">
+                        <div class="credential-header">
+                            <div class="credential-title">${escapeHtml(key.name || 'API Key')}</div>
+                            <span class="status status-success">${escapeHtml(key.preview || '')}</span>
+                        </div>
+                        <div class="credential-meta">
+                            <div class="credential-meta-item">
+                                <i class="fas fa-calendar-plus"></i>
+                                创建: ${escapeHtml(formatTimestamp(key.created_at))}
+                            </div>
+                            <div class="credential-meta-item">
+                                <i class="fas fa-clock"></i>
+                                最近使用: ${escapeHtml(formatTimestamp(key.last_used_at))}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="credential-actions">
+                        <button class="btn btn-danger" onclick="deleteApiKey('${escapeHtml(key.id)}')">
+                            <i class="fas fa-trash"></i> 删除
+                        </button>
+                    </div>
+                </div>
+            `).join('') + '</div>';
+        }
+
+        async function createApiKey() {
+            const nameInput = document.getElementById('apiKeyName');
+            const name = nameInput.value.trim();
+
+            try {
+                const response = await fetch('/auth/api-keys', {
+                    method: 'POST',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({name})
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('newApiKeyValue').value = data.api_key;
+                    document.getElementById('newApiKeySection').classList.remove('hidden');
+                    nameInput.value = '';
+                    showNotification('API Key 已生成', 'success');
+                    loadApiKeys();
+                } else {
+                    const errorData = await response.json();
+                    showNotification(`生成失败: ${errorData.detail || response.status}`, 'error');
+                }
+            } catch (error) {
+                showNotification(`网络错误: ${error.message}`, 'error');
+            }
+        }
+
+        function copyNewApiKey() {
+            const input = document.getElementById('newApiKeyValue');
+            input.select();
+            document.execCommand('copy');
+            showNotification('API Key 已复制', 'success');
+        }
+
+        async function deleteApiKey(keyId) {
+            if (!confirm('确定要删除这个 API Key 吗？')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/auth/api-keys/${encodeURIComponent(keyId)}`, {
+                    method: 'DELETE',
+                    headers: getAuthHeaders()
+                });
+
+                if (response.ok) {
+                    showNotification('API Key 已删除', 'success');
+                    loadApiKeys();
+                } else {
+                    const errorData = await response.json();
+                    showNotification(`删除失败: ${errorData.detail || response.status}`, 'error');
+                }
+            } catch (error) {
+                showNotification(`网络错误: ${error.message}`, 'error');
             }
         }
 

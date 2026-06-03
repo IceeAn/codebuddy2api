@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Dict, Any
 
-from .auth import authenticate
+from .auth import require_session_user
 from config import get_editable_config, update_settings
 from .usage_stats_manager import usage_stats_manager
 
@@ -24,7 +24,7 @@ class Settings(BaseModel):
     settings: Dict[str, Any]
 
 @router.get("/settings", summary="Get all current active settings and labels")
-async def get_settings(_token: str = Depends(authenticate)):
+async def get_settings(_token: str = Depends(require_session_user)):
     """Returns the current config and their Chinese labels."""
     try:
         return {
@@ -36,7 +36,7 @@ async def get_settings(_token: str = Depends(authenticate)):
         raise HTTPException(status_code=500, detail="Could not retrieve settings.")
 
 @router.post("/settings", summary="Save and hot-reload settings")
-async def save_settings(new_settings: Settings, _token: str = Depends(authenticate)):
+async def save_settings(new_settings: Settings, _token: str = Depends(require_session_user)):
     """Saves settings to config.json and hot-reloads them into memory."""
     try:
         update_settings(new_settings.settings)
@@ -46,7 +46,7 @@ async def save_settings(new_settings: Settings, _token: str = Depends(authentica
         raise HTTPException(status_code=500, detail="无法保存设置文件。")
 
 @router.get("/stats", summary="Get usage statistics")
-async def get_usage_stats(_token: str = Depends(authenticate)):
+async def get_usage_stats(_token: str = Depends(require_session_user)):
     """Returns usage statistics for models and credentials."""
     try:
         return usage_stats_manager.get_stats()

@@ -12,12 +12,18 @@ from starlette.requests import Request
 
 from src.auth import (
     SESSION_COOKIE_NAME,
+    ApiKeyCreateRequest,
     AuthenticatedUser,
     LoginRequest,
     UsersFileStore,
     authenticate,
+    api_key_store,
+    create_api_key,
+    delete_api_key,
+    list_api_keys,
     login as service_login,
     logout as service_logout,
+    require_session_user,
 )
 from src.codebuddy_api_client import codebuddy_api_client
 from src.codebuddy_auth_router import get_auth_poll_headers, get_auth_start_headers, get_codebuddy_auth_state_endpoint
@@ -78,14 +84,11 @@ class SecurityTests(unittest.TestCase):
             )
             config._config_cache["CODEBUDDY_USERS_FILE"] = str(users_file)
 
-            user = authenticate(self._request("Bearer admin:secret-password"))
-            self.assertEqual(user.username, "admin")
-
             with self.assertRaises(HTTPException) as context:
-                authenticate(self._request("Bearer secret-password"))
+                authenticate(self._request("Bearer admin:secret-password"))
             self.assertEqual(context.exception.status_code, 401)
 
-    def test_authenticate_accepts_basic_credentials(self):
+    def test_authenticate_rejects_basic_credentials(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             users_file = Path(tmp_dir) / "users.txt"
             users_file.write_text(
@@ -95,9 +98,26 @@ class SecurityTests(unittest.TestCase):
             config._config_cache["CODEBUDDY_USERS_FILE"] = str(users_file)
             token = base64.b64encode(b"admin:secret-password").decode("ascii")
 
-            user = authenticate(self._request(f"Basic {token}"))
+            with self.assertRaises(HTTPException) as context:
+                authenticate(self._request(f"Basic {token}"))
+
+            self.assertEqual(context.exception.status_code, 401)
+
+    def test_authenticate_accepts_generated_api_key(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            users_file = Path(tmp_dir) / "users.txt"
+            users_file.write_text(
+                f"admin:{create_password_hash('secret-password')}\n",
+                encoding="utf-8",
+            )
+            config._config_cache["CODEBUDDY_USERS_FILE"] = str(users_file)
+            config._config_cache["CODEBUDDY_CREDS_DIR"] = tmp_dir
+
+            key_data = api_key_store.create_key("admin", "test")
+            user = authenticate(self._request(f"Bearer {key_data['api_key']}"))
 
             self.assertEqual(user.username, "admin")
+            self.assertEqual(user.source, "api_key")
 
     def test_authenticate_reports_missing_users_file_as_server_error(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -291,6 +311,7 @@ class AuthSessionTests(unittest.IsolatedAsyncioTestCase):
             encoding="utf-8",
         )
         config._config_cache["CODEBUDDY_USERS_FILE"] = str(users_file)
+        config._config_cache["CODEBUDDY_CREDS_DIR"] = self._temp_dir.name
 
     def tearDown(self):
         config._config_cache = self._original_config.copy()
@@ -341,6 +362,40 @@ class AuthSessionTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(HTTPException) as context:
             authenticate(self._request(cookie))
         self.assertEqual(context.exception.status_code, 401)
+
+    async def test_session_user_can_create_list_and_delete_api_key(self):
+        cookie = await self._login_and_get_cookie()
+        user = authenticate(self._request(cookie))
+
+        created = await create_api_key(ApiKeyCreateRequest(name="opencode"), user)
+        self.assertTrue(created["api_key"].startswith("sk-"))
+        self.assertEqual(created["name"], "opencode")
+
+        listed = await list_api_keys(user)
+        self.assertEqual(len(listed["api_keys"]), 1)
+        self.assertEqual(listed["api_keys"][0]["preview"], created["preview"])
+        self.assertNotIn("api_key", listed["api_keys"][0])
+
+        deleted = await delete_api_key(created["id"], user)
+        self.assertTrue(deleted["deleted"])
+        listed_after_delete = await list_api_keys(user)
+        self.assertEqual(listed_after_delete["api_keys"], [])
+
+    async def test_api_key_cannot_manage_api_keys(self):
+        cookie = await self._login_and_get_cookie()
+        session_user = authenticate(self._request(cookie))
+        created = await create_api_key(ApiKeyCreateRequest(name="client"), session_user)
+
+        api_key_request = Request({
+            "type": "http",
+            "method": "GET",
+            "path": "/",
+            "scheme": "http",
+            "headers": [(b"authorization", f"Bearer {created['api_key']}".encode("utf-8"))],
+        })
+
+        with self.assertRaises(HTTPException):
+            require_session_user(api_key_request)
 
 
 class _FakeStreamResponse:
