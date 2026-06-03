@@ -112,7 +112,34 @@ def format_sse_error(message: str, error_type: str = "stream_error") -> str:
             "type": error_type
         }
     }
-    return f'data: {json.dumps(error_data, ensure_ascii=False)}\n\n'
+    return format_sse_event(error_data)
+
+
+def format_sse_event(data: Dict[str, Any]) -> str:
+    """格式化 data-only SSE 事件，OpenAI 兼容客户端依赖空行作为事件边界。"""
+    return f'data: {json.dumps(data, ensure_ascii=False)}\n\n'
+
+
+def format_sse_done() -> str:
+    return "data: [DONE]\n\n"
+
+
+def ensure_openai_stream_chunk_fields(
+    chunk_data: Dict[str, Any],
+    stream_id: str,
+    created: int,
+    model: str,
+) -> Dict[str, Any]:
+    if not isinstance(chunk_data, dict) or "choices" not in chunk_data:
+        return chunk_data
+
+    converted_chunk = chunk_data.copy()
+    converted_chunk.setdefault("id", stream_id)
+    converted_chunk.setdefault("object", "chat.completion.chunk")
+    converted_chunk.setdefault("created", created)
+    if model:
+        converted_chunk.setdefault("model", model)
+    return converted_chunk
 
 class OpenAICompatibilityConverter:
     """将CodeBuddy格式转换为OpenAI兼容格式"""
@@ -437,8 +464,10 @@ class CodeBuddyStreamService:
                 
                 buffer = ""
                 tool_call_index_map = {}  # 用于跟踪工具调用ID到index的映射
-                
-                
+                fallback_stream_id = f"chatcmpl-{uuid.uuid4().hex}"
+                fallback_created = int(time.time())
+                fallback_model = str(payload.get("model") or "unknown")
+
                 async for chunk in response.aiter_text(chunk_size=8192):
                     if not chunk:
                         continue
@@ -455,8 +484,7 @@ class CodeBuddyStreamService:
                         
                         # 检查是否结束
                         if '[DONE]' in line:
-                            
-                            yield line + '\n'
+                            yield format_sse_done()
                             return
                         
                         # 解析SSE数据
@@ -466,25 +494,35 @@ class CodeBuddyStreamService:
                             converted_chunk = OpenAICompatibilityConverter.convert_sse_chunk_to_openai_format(
                                 chunk_data, tool_call_index_map
                             )
+                            converted_chunk = ensure_openai_stream_chunk_fields(
+                                converted_chunk,
+                                fallback_stream_id,
+                                fallback_created,
+                                fallback_model,
+                            )
                             
                             # 重新格式化为SSE格式并发送
-                            converted_line = f"data: {json.dumps(converted_chunk, ensure_ascii=False)}"
-                            yield converted_line + '\n'
-                        else:
-                            # 非数据行直接转发
-                            yield line + '\n'
+                            yield format_sse_event(converted_chunk)
                 
                 # 处理缓冲区中剩余的数据
                 if buffer.strip():
-                    chunk_data = parse_sse_line(buffer.strip())
-                    if chunk_data:
+                    remaining = buffer.strip()
+                    if "[DONE]" in remaining:
+                        yield format_sse_done()
+                    else:
+                        chunk_data = parse_sse_line(remaining)
+                        if not chunk_data:
+                            return
                         converted_chunk = OpenAICompatibilityConverter.convert_sse_chunk_to_openai_format(
                             chunk_data, tool_call_index_map
                         )
-                        converted_line = f"data: {json.dumps(converted_chunk, ensure_ascii=False)}"
-                        yield converted_line + '\n'
-                    else:
-                        yield buffer + '\n'
+                        converted_chunk = ensure_openai_stream_chunk_fields(
+                            converted_chunk,
+                            fallback_stream_id,
+                            fallback_created,
+                            fallback_model,
+                        )
+                        yield format_sse_event(converted_chunk)
         
         async def stream_with_retry():
             async for chunk in self.connection_manager.stream_with_retry(stream_core):

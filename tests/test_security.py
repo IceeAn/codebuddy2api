@@ -13,7 +13,7 @@ from starlette.requests import Request
 from src.auth import UsersFileStore, authenticate
 from src.codebuddy_api_client import codebuddy_api_client
 from src.codebuddy_auth_router import get_auth_poll_headers, get_auth_start_headers, get_codebuddy_auth_state_endpoint
-from src.codebuddy_router import RequestProcessor
+from src.codebuddy_router import CodeBuddyStreamService, RequestProcessor
 from src.codebuddy_token_manager import CodeBuddyTokenManager, CodeBuddyTokenManagerRegistry
 from src.password_hashing import create_password_hash, verify_password
 
@@ -229,6 +229,67 @@ class SecurityTests(unittest.TestCase):
             "path": "/",
             "headers": [(b"authorization", authorization.encode("utf-8"))],
         })
+
+
+class _FakeStreamResponse:
+    def __init__(self, chunks):
+        self.status_code = 200
+        self._chunks = chunks
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def aiter_text(self, chunk_size=None):
+        for chunk in self._chunks:
+            yield chunk
+
+    async def aread(self):
+        return b""
+
+
+class _FakeHttpClient:
+    def __init__(self, chunks):
+        self._chunks = chunks
+
+    def stream(self, *args, **kwargs):
+        return _FakeStreamResponse(self._chunks)
+
+
+class StreamingFormatTests(unittest.IsolatedAsyncioTestCase):
+    async def test_stream_response_uses_openai_sse_event_boundaries(self):
+        chunks = [
+            'data: {"choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}\n'
+            "data: [DONE]\n"
+        ]
+
+        async def fake_get_http_client():
+            return _FakeHttpClient(chunks)
+
+        with mock.patch("src.codebuddy_router.get_http_client", fake_get_http_client):
+            response = await CodeBuddyStreamService().handle_stream_response(
+                {"model": "glm-5.1"},
+                {},
+            )
+            body_parts = []
+            async for part in response.body_iterator:
+                body_parts.append(part.decode("utf-8") if isinstance(part, bytes) else part)
+
+        body = "".join(body_parts)
+        events = [event for event in body.split("\n\n") if event]
+
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[1], "data: [DONE]")
+        self.assertTrue(events[0].startswith("data: "))
+
+        payload = json.loads(events[0][6:])
+        self.assertEqual(payload["object"], "chat.completion.chunk")
+        self.assertEqual(payload["model"], "glm-5.1")
+        self.assertIn("id", payload)
+        self.assertIn("created", payload)
+        self.assertEqual(payload["choices"][0]["delta"]["content"], "hi")
 
 
 if __name__ == "__main__":
