@@ -16,6 +16,23 @@ from urllib.parse import urlsplit, urlunsplit
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_CODEBUDDY_MODELS = (
+    "glm-5.1",
+    "glm-5.0",
+    "glm-5.0-turbo",
+    "glm-5v-turbo",
+    "glm-4.7",
+    "minimax-m2.7",
+    "minimax-m2.5",
+    "kimi-k2.6",
+    "kimi-k2.5",
+    "hy3-preview",
+    "deepseek-v4-pro",
+    "deepseek-v4-flash",
+    "deepseek-v3-2-volc",
+    "lite",
+)
+
 # --- Private State ---
 _config_cache: Dict[str, Any] = {}
 _CONFIG_JSON_PATH = 'config/config.json'  # Use a path inside a directory
@@ -24,14 +41,14 @@ _DEFAULT_CONFIG = {
     "CODEBUDDY_HOST": "127.0.0.1",
     "CODEBUDDY_PORT": 8001,
     "CODEBUDDY_USERS_FILE": "secrets/users.txt",
-    "CODEBUDDY_API_ENDPOINT": "https://www.codebuddy.ai",
-    "CODEBUDDY_ALLOWED_API_ENDPOINTS": "https://www.codebuddy.ai",
+    "CODEBUDDY_API_ENDPOINT": "https://copilot.tencent.com",
+    "CODEBUDDY_ALLOWED_API_ENDPOINTS": "https://copilot.tencent.com,https://www.codebuddy.ai",
     "CODEBUDDY_CREDS_DIR": ".codebuddy_creds",
     "CODEBUDDY_ALLOWED_HOSTS": "localhost,127.0.0.1",
     "CODEBUDDY_ALLOWED_ORIGINS": "",
     "CODEBUDDY_SSL_VERIFY": True,
     "CODEBUDDY_LOG_LEVEL": "INFO",
-    "CODEBUDDY_MODELS": "claude-4.0,claude-3.7,gpt-5,gpt-5-mini,gpt-5-nano,o4-mini,gemini-2.5-flash,gemini-2.5-pro,auto-chat",
+    "CODEBUDDY_MODELS": ",".join(DEFAULT_CODEBUDDY_MODELS),
     "CODEBUDDY_ROTATION_COUNT": 1
 }
 
@@ -178,6 +195,11 @@ def get_codebuddy_api_endpoint() -> str:
         default_endpoint,
     )
     return default_endpoint
+
+
+def get_codebuddy_api_host() -> str:
+    """返回当前 CodeBuddy 上游域名，用于 Host / X-Domain 请求头。"""
+    return urlsplit(get_codebuddy_api_endpoint()).netloc
 
 
 def get_allowed_api_endpoints() -> list:

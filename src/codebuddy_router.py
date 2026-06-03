@@ -541,6 +541,12 @@ class RequestProcessor:
     def prepare_payload(request_body: Dict[str, Any]) -> Dict[str, Any]:
         """准备请求载荷"""
         payload = request_body.copy()
+        if not payload.get("model"):
+            from config import DEFAULT_CODEBUDDY_MODELS, get_available_models
+            payload["model"] = next(
+                (model for model in get_available_models() if model),
+                DEFAULT_CODEBUDDY_MODELS[0],
+            )
         payload["stream"] = True  # CodeBuddy 只支持流式请求
         
         # 处理消息长度要求：CodeBuddy要求至少2条消息
@@ -627,6 +633,7 @@ async def chat_completions(
         headers = codebuddy_api_client.generate_codebuddy_headers(
             bearer_token=credential.get('bearer_token'),
             user_id=credential.get('user_id'),
+            domain=credential.get('domain'),
             conversation_id=x_conversation_id,
             conversation_request_id=x_conversation_request_id,
             conversation_message_id=x_conversation_message_id,

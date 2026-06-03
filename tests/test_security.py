@@ -11,6 +11,9 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from src.auth import UsersFileStore, authenticate
+from src.codebuddy_api_client import codebuddy_api_client
+from src.codebuddy_auth_router import get_auth_poll_headers, get_auth_start_headers, get_codebuddy_auth_state_endpoint
+from src.codebuddy_router import RequestProcessor
 from src.codebuddy_token_manager import CodeBuddyTokenManager, CodeBuddyTokenManagerRegistry
 from src.password_hashing import create_password_hash, verify_password
 
@@ -152,9 +155,72 @@ class SecurityTests(unittest.TestCase):
 
     def test_unsafe_api_endpoint_falls_back_to_default(self):
         config._config_cache["CODEBUDDY_API_ENDPOINT"] = "https://evil.example"
-        config._config_cache["CODEBUDDY_ALLOWED_API_ENDPOINTS"] = "https://www.codebuddy.ai"
+        config._config_cache["CODEBUDDY_ALLOWED_API_ENDPOINTS"] = "https://copilot.tencent.com,https://www.codebuddy.ai"
 
-        self.assertEqual(config.get_codebuddy_api_endpoint(), "https://www.codebuddy.ai")
+        self.assertEqual(config.get_codebuddy_api_endpoint(), "https://copilot.tencent.com")
+
+    def test_codebuddy_headers_follow_configured_china_endpoint(self):
+        config._config_cache["CODEBUDDY_API_ENDPOINT"] = "https://copilot.tencent.com"
+        config._config_cache["CODEBUDDY_ALLOWED_API_ENDPOINTS"] = "https://copilot.tencent.com,https://www.codebuddy.ai"
+
+        headers = codebuddy_api_client.generate_codebuddy_headers("token-value", "user-id")
+
+        self.assertEqual(headers["Host"], "copilot.tencent.com")
+        self.assertEqual(headers["X-Domain"], "copilot.tencent.com")
+
+    def test_codebuddy_headers_use_credential_domain_when_available(self):
+        config._config_cache["CODEBUDDY_API_ENDPOINT"] = "https://copilot.tencent.com"
+        config._config_cache["CODEBUDDY_ALLOWED_API_ENDPOINTS"] = "https://copilot.tencent.com,https://www.codebuddy.ai"
+
+        headers = codebuddy_api_client.generate_codebuddy_headers(
+            "token-value",
+            "user-id",
+            domain="www.codebuddy.cn",
+        )
+
+        self.assertEqual(headers["Host"], "copilot.tencent.com")
+        self.assertEqual(headers["X-Domain"], "www.codebuddy.cn")
+
+    def test_codebuddy_headers_reject_unsafe_credential_domain(self):
+        config._config_cache["CODEBUDDY_API_ENDPOINT"] = "https://copilot.tencent.com"
+        config._config_cache["CODEBUDDY_ALLOWED_API_ENDPOINTS"] = "https://copilot.tencent.com,https://www.codebuddy.ai"
+
+        headers = codebuddy_api_client.generate_codebuddy_headers(
+            "token-value",
+            "user-id",
+            domain="www.codebuddy.cn\r\nX-Evil: true",
+        )
+
+        self.assertEqual(headers["X-Domain"], "copilot.tencent.com")
+
+    def test_codebuddy_auth_endpoint_follows_configured_china_endpoint(self):
+        config._config_cache["CODEBUDDY_API_ENDPOINT"] = "https://copilot.tencent.com"
+        config._config_cache["CODEBUDDY_ALLOWED_API_ENDPOINTS"] = "https://copilot.tencent.com,https://www.codebuddy.ai"
+
+        self.assertEqual(
+            get_codebuddy_auth_state_endpoint(),
+            "https://copilot.tencent.com/v2/plugin/auth/state",
+        )
+        self.assertEqual(get_auth_start_headers()["Host"], "copilot.tencent.com")
+        self.assertEqual(get_auth_poll_headers()["X-Domain"], "copilot.tencent.com")
+
+    def test_default_models_follow_china_endpoint(self):
+        config._config_cache["CODEBUDDY_MODELS"] = ",".join(config.DEFAULT_CODEBUDDY_MODELS)
+
+        models = config.get_available_models()
+
+        self.assertEqual(models[0], "glm-5.1")
+        self.assertIn("deepseek-v4-pro", models)
+        self.assertNotIn("auto-chat", models)
+
+    def test_prepare_payload_uses_first_configured_model_when_missing(self):
+        config._config_cache["CODEBUDDY_MODELS"] = ",".join(config.DEFAULT_CODEBUDDY_MODELS)
+
+        payload = RequestProcessor.prepare_payload({
+            "messages": [{"role": "user", "content": "test"}],
+        })
+
+        self.assertEqual(payload["model"], "glm-5.1")
 
     def _request(self, authorization: str) -> Request:
         return Request({

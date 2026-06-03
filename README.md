@@ -137,7 +137,7 @@ client = openai.OpenAI(
 
 # 非流式请求
 response = client.chat.completions.create(
-    model="auto-chat",
+    model="glm-5.1",
     messages=[
         {"role": "user", "content": "你好，2+2等于几？"}
     ]
@@ -146,7 +146,7 @@ print(response.choices[0].message.content)
 
 # 流式请求
 stream = client.chat.completions.create(
-    model="auto-chat",
+    model="glm-5.1",
     messages=[
         {"role": "user", "content": "写一个Python的Hello World脚本"}
     ],
@@ -164,7 +164,7 @@ curl -X POST "http://127.0.0.1:8001/codebuddy/v1/chat/completions" \
   -u "admin:your_password" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "auto-chat",
+    "model": "glm-5.1",
     "messages": [
       {"role": "user", "content": "Hello, what is 2+2?"}
     ]
@@ -175,7 +175,7 @@ curl -X POST "http://127.0.0.1:8001/codebuddy/v1/chat/completions" \
   -u "admin:your_password" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "auto-chat",
+    "model": "glm-5.1",
     "messages": [
       {"role": "user", "content": "Write a Python hello world script"}
     ],
@@ -231,13 +231,13 @@ codebuddy2api/
 | `CODEBUDDY_USERS_FILE` | `secrets/users.txt` | 多用户认证文件路径。 |
 | `CODEBUDDY_HOST` | `127.0.0.1` | 服务监听的主机地址。 |
 | `CODEBUDDY_PORT` | `8001` | 服务监听的端口。 |
-| `CODEBUDDY_API_ENDPOINT` | `https://www.codebuddy.ai`| CodeBuddy 官方 API 端点，一般无需修改。 |
-| `CODEBUDDY_ALLOWED_API_ENDPOINTS` | `https://www.codebuddy.ai` | 允许转发真实 CodeBuddy Token 的上游端点白名单。 |
+| `CODEBUDDY_API_ENDPOINT` | `https://copilot.tencent.com`| CodeBuddy 官方 API 端点，默认中国站；国际站可改为 `https://www.codebuddy.ai`。 |
+| `CODEBUDDY_ALLOWED_API_ENDPOINTS` | `https://copilot.tencent.com,https://www.codebuddy.ai` | 允许转发真实 CodeBuddy Token 的上游端点白名单。 |
 | `CODEBUDDY_CREDS_DIR` | `.codebuddy_creds` | 存放 CodeBuddy 认证凭证的根目录；实际凭证按本系统用户隔离到 `users/<用户目录>/`。 |
 | `CODEBUDDY_ALLOWED_HOSTS` | `localhost,127.0.0.1` | 允许访问本服务的 Host 头，公网部署必须加入实际域名。 |
 | `CODEBUDDY_ALLOWED_ORIGINS` | 空 | 允许跨域调用的前端 Origin；留空表示不启用跨域。 |
 | `CODEBUDDY_LOG_LEVEL` | `INFO` | 日志级别，可选 `DEBUG`, `INFO`, `WARNING`, `ERROR`。 |
-| `CODEBUDDY_MODELS` | (列表) | 向客户端报告的可用模型列表，用逗号分隔。 |
+| `CODEBUDDY_MODELS` | `glm-5.1,glm-5.0,...` | 向客户端报告的可用模型列表，用逗号分隔。默认按中国站模型配置。 |
 | `CODEBUDDY_SSL_VERIFY` | `true` | 上游 TLS 证书校验开关，公网部署必须保持 `true`。 |
 | `CODEBUDDY_ROTATION_COUNT` | `1` | 凭证轮换计数，每N次请求后切换凭证。 |
 

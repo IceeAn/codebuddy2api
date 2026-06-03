@@ -7,9 +7,20 @@ import uuid
 import secrets
 import httpx
 import logging
+import re
 from typing import Dict, Any, Optional, AsyncGenerator, List
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_domain_header(domain: str, fallback: str) -> str:
+    value = str(domain or "").strip()
+    if not value:
+        return fallback
+    if re.fullmatch(r"[A-Za-z0-9.-]+", value):
+        return value
+    logger.warning("Ignoring unsafe CodeBuddy domain header value")
+    return fallback
 
 
 class CodeBuddyAPIClient:
@@ -170,6 +181,7 @@ class CodeBuddyAPIClient:
         self,
         bearer_token: str,
         user_id: str = None,
+        domain: str = None,
         conversation_id: Optional[str] = None,
         conversation_request_id: Optional[str] = None,
         conversation_message_id: Optional[str] = None,
@@ -179,8 +191,11 @@ class CodeBuddyAPIClient:
         生成CodeBuddy API所需的完整请求头。
         优先使用传入的会话ID，如果未提供则随机生成。
         """
+        from config import get_codebuddy_api_host
+        codebuddy_host = get_codebuddy_api_host()
+        codebuddy_domain = _safe_domain_header(domain, codebuddy_host)
         headers = {
-            'Host': 'www.codebuddy.ai',
+            'Host': codebuddy_host,
             'Accept': 'application/json',
             'Content-Type': 'application/json',
             'X-Requested-With': 'XMLHttpRequest',
@@ -200,7 +215,7 @@ class CodeBuddyAPIClient:
             'X-IDE-Name': 'CLI',
             'X-IDE-Version': '1.0.7',
             'Authorization': f'Bearer {bearer_token}',
-            'X-Domain': 'www.codebuddy.ai',
+            'X-Domain': codebuddy_domain,
             'User-Agent': 'CLI/1.0.7 CodeBuddy/1.0.7',
             'X-Product': 'SaaS',
             'X-User-Id': user_id or 'b5be3a67-237e-4ee6-9b9a-0b9ecd7b454b'

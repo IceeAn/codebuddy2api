@@ -4,6 +4,8 @@ Data models for CodeBuddy2API
 from typing import List, Optional, Dict, Any, Union
 from pydantic import BaseModel, Field
 
+from config import DEFAULT_CODEBUDDY_MODELS
+
 
 class Message(BaseModel):
     role: str
@@ -11,7 +13,7 @@ class Message(BaseModel):
 
 
 class ChatCompletionRequest(BaseModel):
-    model: str = "auto-chat"
+    model: str = DEFAULT_CODEBUDDY_MODELS[0]
     messages: List[Message]
     stream: bool = False
     temperature: Optional[float] = 0.7

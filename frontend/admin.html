@@ -1485,9 +1485,20 @@
                     <div class="form-group">
                         <label class="form-label" for="testModel">模型</label>
                         <select id="testModel" class="form-input">
-                            <option value="auto-chat">auto-chat</option>
-                            <option value="claude-4.0">claude-4.0</option>
-                            <option value="gpt-5">gpt-5</option>
+                            <option value="glm-5.1">glm-5.1</option>
+                            <option value="glm-5.0">glm-5.0</option>
+                            <option value="glm-5.0-turbo">glm-5.0-turbo</option>
+                            <option value="glm-5v-turbo">glm-5v-turbo</option>
+                            <option value="glm-4.7">glm-4.7</option>
+                            <option value="minimax-m2.7">minimax-m2.7</option>
+                            <option value="minimax-m2.5">minimax-m2.5</option>
+                            <option value="kimi-k2.6">kimi-k2.6</option>
+                            <option value="kimi-k2.5">kimi-k2.5</option>
+                            <option value="hy3-preview">hy3-preview</option>
+                            <option value="deepseek-v4-pro">deepseek-v4-pro</option>
+                            <option value="deepseek-v4-flash">deepseek-v4-flash</option>
+                            <option value="deepseek-v3-2-volc">deepseek-v3-2-volc</option>
+                            <option value="lite">lite</option>
                         </select>
                     </div>
                     <div class="form-group">
@@ -1525,7 +1536,7 @@
       -u "admin:your_password" \
       -H "Content-Type: application/json" \
       -d '{
-        "model": "auto-chat",
+        "model": "glm-5.1",
         "messages": [
           {"role": "user", "content": "Hello!"}
         ]
@@ -1540,7 +1551,7 @@
     )
 
     response = client.chat.completions.create(
-        model="auto-chat",
+        model="glm-5.1",
         messages=[
             {"role": "user", "content": "Hello!"}
         ]
@@ -2600,7 +2611,7 @@
                         // 所以这里的测试实际上是测试下一个将被轮换到的token
                         // 为了更精确，理想的后端应该有一个专门的测试接口
                         // 但在当前架构下，这是最好的模拟
-                        model: 'claude-4.0',
+                        model: 'glm-5.1',
                         messages: [{ role: 'user', content: 'test' }],
                         max_tokens: 1
                     })
