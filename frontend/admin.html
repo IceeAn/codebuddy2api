@@ -1594,7 +1594,6 @@
         // 全局变量
         let currentTheme = 'light';
         let serviceUsername = '';
-        let servicePassword = '';
         let currentAuthData = null;
         let authPollingInterval = null;
         let isAuthenticated = false;
@@ -1603,7 +1602,6 @@
         // 初始化
         document.addEventListener('DOMContentLoaded', function() {
             initializeTheme();
-            showTab('dashboard');
             
             // 设置服务启动时间
             if (!sessionStorage.getItem('serviceStartTime')) {
@@ -1614,10 +1612,11 @@
             if (savedUsername) {
                 serviceUsername = savedUsername;
             }
-            showLoginPage();
 
             // 添加键盘快捷键支持
             document.addEventListener('keydown', handleKeyboardShortcuts);
+            showTab('dashboard');
+            initializeAuthSession();
             
             // 定期刷新仪表盘数据
             setInterval(() => {
@@ -1769,7 +1768,14 @@
             document.getElementById(tabId).classList.add('active');
             
             // 激活对应标签
-            event.target.classList.add('active');
+            const tabButton = document.querySelector(`.nav-tab[onclick="showTab('${tabId}')"]`);
+            if (tabButton) {
+                tabButton.classList.add('active');
+            }
+
+            if (!isAuthenticated) {
+                return;
+            }
             
             // 加载对应数据
             if (tabId === 'dashboard') {
@@ -1807,6 +1813,29 @@
         }
 
         // 登录与页面切换
+        async function initializeAuthSession() {
+            try {
+                const response = await fetch('/auth/session', {
+                    credentials: 'same-origin'
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    serviceUsername = data.username || serviceUsername;
+                    isAuthenticated = true;
+                    if (serviceUsername) {
+                        sessionStorage.setItem('serviceUsername', serviceUsername);
+                    }
+                    showDashboardPage();
+                    loadDashboard();
+                    return;
+                }
+            } catch (error) {
+                // 没有可恢复会话时展示登录页。
+            }
+
+            showLoginPage();
+        }
+
         function showLoginPage() {
             document.getElementById('loginPage').classList.remove('hidden');
             document.getElementById('dashboardPage').classList.add('hidden');
@@ -1841,15 +1870,19 @@
             loginError.classList.add('hidden');
 
             try {
-                const testResponse = await fetch('/codebuddy/v1/credentials', {
-                    headers: getAuthHeadersFor(username, password)
+                const testResponse = await fetch('/auth/login', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({username, password})
                 });
 
                 if (testResponse.ok) {
-                    serviceUsername = username;
-                    servicePassword = password;
+                    const data = await testResponse.json();
+                    serviceUsername = data.username || username;
                     isAuthenticated = true;
-                    sessionStorage.setItem('serviceUsername', username);
+                    sessionStorage.setItem('serviceUsername', serviceUsername);
+                    document.getElementById('loginPassword').value = '';
                     
                     showDashboardPage();
                     loadDashboard();
@@ -1876,9 +1909,18 @@
             loginError.classList.remove('hidden');
         }
         
-        function logout() {
+        async function logout() {
+            try {
+                await fetch('/auth/logout', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: {'Content-Type': 'application/json'}
+                });
+            } catch (error) {
+                // 即使服务端登出失败，也清理前端状态。
+            }
+
             serviceUsername = '';
-            servicePassword = '';
             isAuthenticated = false;
             sessionStorage.removeItem('serviceUsername');
             document.getElementById('loginPassword').value = '';
@@ -1888,23 +1930,9 @@
 
         // 获取认证头
         function getAuthHeaders() {
-            return getAuthHeadersFor(serviceUsername, servicePassword);
-        }
-
-        function getAuthHeadersFor(username, password) {
             return {
-                'Content-Type': 'application/json',
-                'Authorization': `Basic ${base64Encode(`${username}:${password}`)}`
+                'Content-Type': 'application/json'
             };
-        }
-
-        function base64Encode(value) {
-            const bytes = new TextEncoder().encode(value);
-            let binary = '';
-            bytes.forEach(byte => {
-                binary += String.fromCharCode(byte);
-            });
-            return btoa(binary);
         }
 
         function escapeHtml(value) {

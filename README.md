@@ -115,7 +115,7 @@ docker compose up -d --build
 
 ### 认证
 
-所有对本服务的 API 请求都需要认证。Web 管理页使用 Basic Auth；OpenAI SDK 这类只支持 API key 的客户端，可以把 API key 写成 `用户名:密码`，本服务会识别 Bearer `username:password`。
+所有对本服务的 API 请求都需要认证。Web 管理页使用登录接口签发的 `HttpOnly` 会话 Cookie，刷新页面后会自动恢复登录态；OpenAI SDK 这类只支持 API key 的客户端，可以把 API key 写成 `用户名:密码`，本服务会识别 Bearer `username:password`。直接调用 API 时仍支持 Basic Auth。
 
 ```http
 Authorization: Basic base64(username:password)

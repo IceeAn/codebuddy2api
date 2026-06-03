@@ -7,10 +7,18 @@ from unittest import mock
 from pathlib import Path
 
 import config
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 from starlette.requests import Request
 
-from src.auth import AuthenticatedUser, UsersFileStore, authenticate
+from src.auth import (
+    SESSION_COOKIE_NAME,
+    AuthenticatedUser,
+    LoginRequest,
+    UsersFileStore,
+    authenticate,
+    login as service_login,
+    logout as service_logout,
+)
 from src.codebuddy_api_client import codebuddy_api_client
 from src.codebuddy_auth_router import get_auth_poll_headers, get_auth_start_headers, get_codebuddy_auth_state_endpoint
 from src.codebuddy_router import CodeBuddyStreamService, RequestProcessor, list_v1_models
@@ -271,6 +279,68 @@ class SecurityTests(unittest.TestCase):
             "path": "/",
             "headers": [(b"authorization", authorization.encode("utf-8"))],
         })
+
+
+class AuthSessionTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self._original_config = config._config_cache.copy()
+        self._temp_dir = tempfile.TemporaryDirectory()
+        users_file = Path(self._temp_dir.name) / "users.txt"
+        users_file.write_text(
+            f"admin:{create_password_hash('secret-password')}\n",
+            encoding="utf-8",
+        )
+        config._config_cache["CODEBUDDY_USERS_FILE"] = str(users_file)
+
+    def tearDown(self):
+        config._config_cache = self._original_config.copy()
+        self._temp_dir.cleanup()
+
+    def _request(self, cookie: str = "") -> Request:
+        headers = []
+        if cookie:
+            headers.append((b"cookie", cookie.encode("utf-8")))
+        return Request({
+            "type": "http",
+            "method": "GET",
+            "path": "/",
+            "scheme": "http",
+            "headers": headers,
+        })
+
+    async def _login_and_get_cookie(self) -> str:
+        response = Response()
+        result = await service_login(
+            self._request(),
+            response,
+            LoginRequest(username="admin", password="secret-password"),
+        )
+
+        self.assertTrue(result["authenticated"])
+        set_cookie = response.headers["set-cookie"]
+        self.assertIn(SESSION_COOKIE_NAME, set_cookie)
+        self.assertIn("HttpOnly", set_cookie)
+        self.assertIn("SameSite=lax", set_cookie)
+        return set_cookie.split(";", 1)[0]
+
+    async def test_login_cookie_authenticates_followup_requests(self):
+        cookie = await self._login_and_get_cookie()
+
+        user = authenticate(self._request(cookie))
+
+        self.assertEqual(user.username, "admin")
+        self.assertEqual(user.source, "session_cookie")
+
+    async def test_logout_invalidates_session_cookie(self):
+        cookie = await self._login_and_get_cookie()
+        response = Response()
+
+        result = await service_logout(self._request(cookie), response)
+
+        self.assertFalse(result["authenticated"])
+        with self.assertRaises(HTTPException) as context:
+            authenticate(self._request(cookie))
+        self.assertEqual(context.exception.status_code, 401)
 
 
 class _FakeStreamResponse:

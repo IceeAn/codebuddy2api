@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 # Import the routers
+from src.auth import router as service_auth_router
 from src.codebuddy_router import router as codebuddy_router, lifecycle_manager
 from src.codebuddy_auth_router import router as codebuddy_auth_router
 from src.settings_router import router as settings_router
@@ -70,6 +71,12 @@ if allowed_origins:
 app.include_router(
     frontend_router,
     tags=["Frontend"]
+)
+
+# 挂载本系统管理页登录会话路由
+app.include_router(
+    service_auth_router,
+    tags=["Service Authentication"]
 )
 
 # 挂载CodeBuddy认证路由
