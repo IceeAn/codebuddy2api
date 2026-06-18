@@ -17,6 +17,7 @@ from urllib.parse import urlsplit, urlunsplit
 logger = logging.getLogger(__name__)
 
 DEFAULT_CODEBUDDY_MODELS = (
+    "glm-5.2",
     "glm-5.1",
     "glm-5.0",
     "glm-5.0-turbo",

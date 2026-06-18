@@ -195,6 +195,13 @@ class SecurityTests(unittest.TestCase):
 
         self.assertEqual(headers["Host"], "copilot.tencent.com")
         self.assertEqual(headers["X-Domain"], "copilot.tencent.com")
+        self.assertEqual(headers["X-IDE-Version"], "2.107.0")
+        self.assertEqual(headers["User-Agent"], "CLI/2.107.0 CodeBuddy/2.107.0")
+        self.assertEqual(headers["x-stainless-package-version"], "6.25.0")
+        self.assertEqual(headers["x-stainless-runtime-version"], "v24.11.1")
+        self.assertEqual(headers["X-Agent-Purpose"], "conversation")
+        self.assertEqual(headers["X-Private-Data"], "false")
+        self.assertEqual(headers["X-CodeBuddy-Request"], "1")
 
     def test_codebuddy_headers_use_credential_domain_when_available(self):
         config._config_cache["CODEBUDDY_API_ENDPOINT"] = "https://copilot.tencent.com"
@@ -237,7 +244,7 @@ class SecurityTests(unittest.TestCase):
 
         models = config.get_available_models()
 
-        self.assertEqual(models[0], "glm-5.1")
+        self.assertEqual(models[0], "glm-5.2")
         self.assertIn("deepseek-v4-pro", models)
         self.assertNotIn("auto-chat", models)
 
@@ -248,18 +255,19 @@ class SecurityTests(unittest.TestCase):
             "messages": [{"role": "user", "content": "test"}],
         })
 
-        self.assertEqual(payload["model"], "glm-5.1")
+        self.assertEqual(payload["model"], "glm-5.2")
 
     def test_prepare_payload_forces_deepseek_v4_reasoning(self):
         payload = RequestProcessor.prepare_payload({
             "model": "deepseek-v4-pro",
-            "reasoning_effort": "low",
-            "thinking": {"type": "disabled"},
+            "reasoning_effort": "max",
+            "thinking": {"type": "enabled"},
             "messages": [{"role": "user", "content": "test"}],
         })
 
         self.assertEqual(payload["reasoning_effort"], "max")
         self.assertEqual(payload["thinking"], {"type": "enabled"})
+        self.assertEqual(payload["stream_options"], {"include_usage": True})
 
     def test_prepare_payload_forces_namespaced_deepseek_v4_reasoning(self):
         payload = RequestProcessor.prepare_payload({
@@ -280,17 +288,87 @@ class SecurityTests(unittest.TestCase):
 
         self.assertEqual(payload["reasoning_effort"], "max")
         self.assertEqual(payload["thinking"], {"type": "enabled", "clear_thinking": False})
+        self.assertNotIn("enable_thinking", payload)
+
+    def test_prepare_payload_forces_glm_5_2_reasoning(self):
+        payload = RequestProcessor.prepare_payload({
+            "model": "glm-5.2",
+            "messages": [{"role": "user", "content": "test"}],
+        })
+
+        self.assertEqual(payload["reasoning_effort"], "max")
+        self.assertEqual(payload["thinking"], {"type": "enabled", "clear_thinking": False})
+        self.assertNotIn("enable_thinking", payload)
 
     def test_prepare_payload_does_not_force_reasoning_for_other_models(self):
         payload = RequestProcessor.prepare_payload({
             "model": "lite",
             "reasoning_effort": "low",
             "thinking": {"type": "disabled"},
+            "temperature": 0.2,
             "messages": [{"role": "user", "content": "test"}],
         })
 
         self.assertEqual(payload["reasoning_effort"], "low")
         self.assertEqual(payload["thinking"], {"type": "disabled"})
+        self.assertEqual(payload["temperature"], 1)
+
+    def test_prepare_payload_preserves_tool_call_ids(self):
+        request_body = {
+            "model": "glm-5.1",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_search_1",
+                            "type": "function",
+                            "function": {"name": "search", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_search_1",
+                    "content": "result",
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "toolUseId": "call_search_2",
+                            "content": "structured result",
+                        }
+                    ],
+                },
+            ],
+        }
+
+        payload = RequestProcessor.prepare_payload(request_body)
+
+        self.assertEqual(payload["messages"][0]["tool_calls"][0]["id"], "call_search_1")
+        self.assertEqual(payload["messages"][1]["tool_call_id"], "call_search_1")
+        self.assertEqual(payload["messages"][2]["content"][0]["toolUseId"], "call_search_2")
+        self.assertEqual(request_body["messages"][0]["tool_calls"][0]["id"], "call_search_1")
+
+    def test_validate_request_accepts_assistant_tool_call_without_content(self):
+        RequestProcessor.validate_request({
+            "messages": [
+                {"role": "user", "content": "test"},
+                {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": "call_search_1",
+                            "type": "function",
+                            "function": {"name": "search", "arguments": "{}"},
+                        }
+                    ],
+                },
+            ],
+        })
 
     def _request(self, authorization: str) -> Request:
         return Request({
@@ -401,6 +479,7 @@ class AuthSessionTests(unittest.IsolatedAsyncioTestCase):
 class _FakeStreamResponse:
     def __init__(self, chunks):
         self.status_code = 200
+        self.text = ""
         self._chunks = chunks
 
     async def __aenter__(self):
@@ -424,6 +503,9 @@ class _FakeHttpClient:
     def stream(self, *args, **kwargs):
         return _FakeStreamResponse(self._chunks)
 
+    async def post(self, *args, **kwargs):
+        return _FakeStreamResponse(self._chunks)
+
 
 class StreamingFormatTests(unittest.IsolatedAsyncioTestCase):
     async def _render_stream_body(self, chunks, model="glm-5.1"):
@@ -440,6 +522,16 @@ class StreamingFormatTests(unittest.IsolatedAsyncioTestCase):
                 body_parts.append(part.decode("utf-8") if isinstance(part, bytes) else part)
 
         return "".join(body_parts)
+
+    async def _render_non_stream_response(self, chunks, model="glm-5.1"):
+        async def fake_get_http_client():
+            return _FakeHttpClient(chunks)
+
+        with mock.patch("src.codebuddy_router.get_http_client", fake_get_http_client):
+            return await CodeBuddyStreamService().handle_non_stream_response(
+                {"model": model},
+                {},
+            )
 
     def _stream_payloads(self, body):
         events = [event for event in body.split("\n\n") if event]
@@ -488,7 +580,7 @@ class StreamingFormatTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_stream_response_normalizes_reasoning_chunks_for_opencode(self):
         chunks = [
-            'data: {"id":"upstream-1","created":1,"model":"wrong","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"我","content":""},"finish_reason":null}]}\n'
+            'data: {"id":"upstream-1","created":1,"model":"wrong","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"我","content":"","function_call":null,"refusal":null,"tool_calls":[],"extra_fields":{}},"finish_reason":null}]}\n'
             'data: {"id":"upstream-2","created":2,"model":"wrong","choices":[{"index":0,"delta":{"role":"","reasoning_content":"需要","content":null},"finish_reason":null}]}\n'
             'data: {"id":"upstream-3","created":3,"model":"wrong","choices":[{"index":0,"delta":{"role":"","reasoning_content":"先","content":""},"finish_reason":null}]}\n'
             'data: {"id":"upstream-4","created":4,"model":"wrong","choices":[{"index":0,"delta":{"role":"","content":"结论"},"finish_reason":null}]}\n'
@@ -509,20 +601,89 @@ class StreamingFormatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len({payload["created"] for payload in payloads}), 1)
         self.assertEqual({payload["model"] for payload in payloads}, {"glm-5.1"})
 
-    async def test_stream_response_splits_mixed_reasoning_and_content_delta(self):
+    async def test_stream_response_removes_empty_function_call_object(self):
         chunks = [
-            'data: {"choices":[{"index":0,"delta":{"reasoning_content":"先想","content":"再答"},"finish_reason":null}]}\n'
+            'data: {"choices":[{"index":0,"delta":{"content":"结论"},"finish_reason":null}]}\n'
+            'data: {"choices":[{"index":0,"delta":{"role":"","function_call":{"name":"","arguments":""},"refusal":"","extra_fields":null},"finish_reason":"stop"}]}\n'
             "data: [DONE]\n"
         ]
 
         body = await self._render_stream_body(chunks)
         payloads = self._stream_payloads(body)
 
-        self.assertEqual([payload["choices"][0]["delta"] for payload in payloads], [
-            {"role": "assistant"},
-            {"reasoning_content": "先想"},
-            {"content": "再答"},
-        ])
+        deltas = [payload["choices"][0]["delta"] for payload in payloads]
+        self.assertEqual(deltas, [{"role": "assistant"}, {"content": "结论"}, {}])
+        self.assertEqual(payloads[2]["choices"][0]["finish_reason"], "stop")
+
+    async def test_stream_response_preserves_content_after_tool_calls(self):
+        chunks = [
+            'data: {"choices":[{"index":0,"delta":{"reasoning_content":"先想"},"finish_reason":null}]}\n'
+            'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"id":"tooluse_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},"finish_reason":null}]}\n'
+            'data: {"choices":[{"index":0,"delta":{"content":"继续思考"},"finish_reason":null}]}\n'
+            'data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}\n'
+            "data: [DONE]\n"
+        ]
+
+        body = await self._render_stream_body(chunks)
+        payloads = self._stream_payloads(body)
+        deltas = [payload["choices"][0]["delta"] for payload in payloads]
+
+        self.assertEqual(deltas[0], {"role": "assistant"})
+        self.assertEqual(deltas[1], {"reasoning_content": "先想"})
+        self.assertEqual(deltas[2]["tool_calls"][0]["id"], "tooluse_1")
+        self.assertEqual(deltas[3], {"content": "继续思考"})
+        self.assertEqual(deltas[4], {})
+        self.assertEqual(payloads[4]["choices"][0]["finish_reason"], "tool_calls")
+
+    async def test_stream_response_keeps_content_and_reasoning_after_tool_calls_separate(self):
+        chunks = [
+            'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"id":"tooluse_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},"finish_reason":null}]}\n'
+            'data: {"choices":[{"index":0,"delta":{"content":"工具后文本"},"finish_reason":null}]}\n'
+            'data: {"choices":[{"index":0,"delta":{"reasoning_content":"继续推理"},"finish_reason":null}]}\n'
+            'data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}\n'
+            "data: [DONE]\n"
+        ]
+
+        body = await self._render_stream_body(chunks)
+        payloads = self._stream_payloads(body)
+        deltas = [payload["choices"][0]["delta"] for payload in payloads]
+
+        self.assertEqual(deltas[0], {"role": "assistant"})
+        self.assertEqual(deltas[2], {"content": "工具后文本"})
+        self.assertEqual(deltas[3], {"reasoning_content": "继续推理"})
+
+    async def test_stream_response_keeps_reasoning_after_tool_calls(self):
+        chunks = [
+            'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"id":"tooluse_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},"finish_reason":null}]}\n'
+            'data: {"choices":[{"index":0,"delta":{"reasoning_content":"工具后继续想"},"finish_reason":null}]}\n'
+            'data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}\n'
+            "data: [DONE]\n"
+        ]
+
+        body = await self._render_stream_body(chunks)
+        payloads = self._stream_payloads(body)
+        deltas = [payload["choices"][0]["delta"] for payload in payloads]
+
+        self.assertEqual(deltas[0], {"role": "assistant"})
+        self.assertEqual(deltas[2], {"reasoning_content": "工具后继续想"})
+        self.assertFalse(any(delta.get("content") == "工具后继续想" for delta in deltas))
+
+    async def test_non_stream_response_preserves_reasoning_and_content_after_tool_calls(self):
+        chunks = [
+            'data: {"id":"chatcmpl-1","model":"glm-5.1","choices":[{"index":0,"delta":{"reasoning_content":"先想"},"finish_reason":null}]}\n'
+            'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},"finish_reason":null}]}\n'
+            'data: {"choices":[{"index":0,"delta":{"content":"继续思考"},"finish_reason":null}]}\n'
+            'data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}\n'
+            "data: [DONE]\n"
+        ]
+
+        response = await self._render_non_stream_response(chunks)
+        message = response["choices"][0]["message"]
+
+        self.assertEqual(message["content"], "继续思考")
+        self.assertEqual(message["reasoning_content"], "先想")
+        self.assertEqual(message["tool_calls"][0]["id"], "call_1")
+        self.assertEqual(response["choices"][0]["finish_reason"], "tool_calls")
 
 
 if __name__ == "__main__":

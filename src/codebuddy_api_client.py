@@ -5,12 +5,17 @@ import json
 import time
 import uuid
 import secrets
+import platform
 import httpx
 import logging
 import re
 from typing import Dict, Any, Optional, AsyncGenerator, List
 
 logger = logging.getLogger(__name__)
+
+CODEBUDDY_CLI_VERSION = "2.107.0"
+OPENAI_JS_PACKAGE_VERSION = "6.25.0"
+NODE_RUNTIME_VERSION = "v24.11.1"
 
 
 def _safe_domain_header(domain: str, fallback: str) -> str:
@@ -21,6 +26,26 @@ def _safe_domain_header(domain: str, fallback: str) -> str:
         return value
     logger.warning("Ignoring unsafe CodeBuddy domain header value")
     return fallback
+
+
+def _stainless_arch() -> str:
+    machine = platform.machine().lower()
+    if machine in ("arm64", "aarch64"):
+        return "arm64"
+    if machine in ("x86_64", "amd64"):
+        return "x64"
+    return machine or "x64"
+
+
+def _stainless_os() -> str:
+    system = platform.system().lower()
+    if system == "darwin":
+        return "MacOS"
+    if system == "linux":
+        return "Linux"
+    if system == "windows":
+        return "Windows"
+    return platform.system() or "Linux"
 
 
 class CodeBuddyAPIClient:
@@ -199,24 +224,27 @@ class CodeBuddyAPIClient:
             'Accept': 'application/json',
             'Content-Type': 'application/json',
             'X-Requested-With': 'XMLHttpRequest',
-            'x-stainless-arch': 'x64',
+            'x-stainless-arch': _stainless_arch(),
             'x-stainless-lang': 'js',
-            'x-stainless-os': 'Linux',
-            'x-stainless-package-version': '5.10.1',
+            'x-stainless-os': _stainless_os(),
+            'x-stainless-package-version': OPENAI_JS_PACKAGE_VERSION,
             'x-stainless-retry-count': '0',
             'x-stainless-runtime': 'node',
-            'x-stainless-runtime-version': 'v22.13.1',
+            'x-stainless-runtime-version': NODE_RUNTIME_VERSION,
             'X-Conversation-ID': conversation_id or str(uuid.uuid4()),
             'X-Conversation-Request-ID': conversation_request_id or secrets.token_hex(16),
             'X-Conversation-Message-ID': conversation_message_id or str(uuid.uuid4()).replace('-', ''),
             'X-Request-ID': request_id or str(uuid.uuid4()).replace('-', ''),
             'X-Agent-Intent': 'craft',
+            'X-Agent-Purpose': 'conversation',
             'X-IDE-Type': 'CLI',
             'X-IDE-Name': 'CLI',
-            'X-IDE-Version': '1.0.7',
+            'X-IDE-Version': CODEBUDDY_CLI_VERSION,
             'Authorization': f'Bearer {bearer_token}',
             'X-Domain': codebuddy_domain,
-            'User-Agent': 'CLI/1.0.7 CodeBuddy/1.0.7',
+            'User-Agent': f'CLI/{CODEBUDDY_CLI_VERSION} CodeBuddy/{CODEBUDDY_CLI_VERSION}',
+            'X-Private-Data': 'false',
+            'X-CodeBuddy-Request': '1',
             'X-Product': 'SaaS',
             'X-User-Id': user_id or 'b5be3a67-237e-4ee6-9b9a-0b9ecd7b454b'
         }

@@ -23,27 +23,35 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 DEEPSEEK_V4_REASONING_MODELS = {"deepseek-v4-pro", "deepseek-v4-flash"}
-GLM_REASONING_MODELS = {"glm-5.1"}
-FORCED_REASONING_MODELS = DEEPSEEK_V4_REASONING_MODELS | GLM_REASONING_MODELS
+GLM_REASONING_MODELS = {"glm-5.1", "glm-5.2"}
+REASONING_MODELS = DEEPSEEK_V4_REASONING_MODELS | GLM_REASONING_MODELS
 
 def normalize_model_id(model: Any) -> str:
     return str(model or "").strip().lower().split("/")[-1]
 
 
-def should_force_model_reasoning(model: Any) -> bool:
-    return normalize_model_id(model) in FORCED_REASONING_MODELS
+def is_glm_reasoning_model(model: Any) -> bool:
+    return normalize_model_id(model) in GLM_REASONING_MODELS
 
 
-def should_force_deepseek_v4_reasoning(model: Any) -> bool:
-    model_id = str(model or "").strip().lower().split("/")[-1]
-    return model_id in DEEPSEEK_V4_REASONING_MODELS
+def should_configure_model_reasoning(model: Any) -> bool:
+    return normalize_model_id(model) in REASONING_MODELS
 
 
 def forced_reasoning_thinking_options(model: Any) -> Dict[str, Any]:
     options: Dict[str, Any] = {"type": "enabled"}
-    if normalize_model_id(model) in GLM_REASONING_MODELS:
+    if is_glm_reasoning_model(model):
         options["clear_thinking"] = False
     return options
+
+
+def apply_forced_reasoning_options(payload: Dict[str, Any]) -> None:
+    """保持本项目原有策略：对推理模型强制传 max。"""
+    model = payload.get("model")
+    payload.pop("enable_thinking", None)
+    payload["reasoning_effort"] = "max"
+    thinking = payload.get("thinking") if isinstance(payload.get("thinking"), dict) else {}
+    payload["thinking"] = {**thinking, **forced_reasoning_thinking_options(model)}
 
 def get_codebuddy_api_url() -> str:
     """动态加载 CodeBuddy API URL，确保安全白名单即时生效。"""
@@ -197,15 +205,6 @@ class OpenAIStreamNormalizer:
             outgoing_chunks.append(self._copy_with_delta(chunk_data, {}, finish_reason))
             return outgoing_chunks
 
-        if "reasoning_content" in delta and "content" in delta:
-            reasoning_delta = {key: value for key, value in delta.items() if key != "content"}
-            content_delta = {key: value for key, value in delta.items() if key != "reasoning_content"}
-            if reasoning_delta:
-                outgoing_chunks.append(self._copy_with_delta(chunk_data, reasoning_delta, None))
-            if content_delta:
-                outgoing_chunks.append(self._copy_with_delta(chunk_data, content_delta, finish_reason))
-            return outgoing_chunks
-
         outgoing_chunks.append(self._copy_with_delta(chunk_data, delta, finish_reason))
         return outgoing_chunks
 
@@ -222,6 +221,16 @@ class OpenAIStreamNormalizer:
             normalized_delta.pop("content", None)
         if normalized_delta.get("tool_calls") in ([], None):
             normalized_delta.pop("tool_calls", None)
+        function_call = normalized_delta.get("function_call")
+        if function_call in ({}, None) or (
+            isinstance(function_call, dict)
+            and not any(value not in ("", None, [], {}) for value in function_call.values())
+        ):
+            normalized_delta.pop("function_call", None)
+        if normalized_delta.get("refusal") in ("", None):
+            normalized_delta.pop("refusal", None)
+        if normalized_delta.get("extra_fields") in ({}, None):
+            normalized_delta.pop("extra_fields", None)
         return normalized_delta
 
     @staticmethod
@@ -244,9 +253,7 @@ class OpenAICompatibilityConverter:
     
     @staticmethod
     def convert_tool_call_id(codebuddy_id: str) -> str:
-        """转换工具调用ID格式: tooluse_xxx -> call_xxx"""
-        if codebuddy_id.startswith('tooluse_'):
-            return f"call_{codebuddy_id[8:]}"
+        """透传工具调用 ID。真实上游 2.107.0 已使用 OpenAI 风格 call_*。"""
         return codebuddy_id
     
     @staticmethod
@@ -267,7 +274,7 @@ class OpenAICompatibilityConverter:
         for tc in tool_calls:
             converted_tc = tc.copy()
             
-            # 转换ID格式
+            # 保留上游 ID，只补齐 OpenAI 流式客户端需要的 index。
             if tc.get('id'):
                 original_id = tc['id']
                 converted_id = OpenAICompatibilityConverter.convert_tool_call_id(original_id)
@@ -400,6 +407,7 @@ class StreamResponseAggregator:
             "id": None,
             "model": None,
             "content": "",
+            "reasoning_content": "",
             "tool_calls": [],
             "finish_reason": None,
             "usage": None,
@@ -425,18 +433,20 @@ class StreamResponseAggregator:
             return
         
         choice = choices[0]
-        if choice.get('finish_reason'):
-            self.data["finish_reason"] = choice.get('finish_reason')
-        
         delta = choice.get('delta', {})
-        
-        # 聚合内容
+
+        if delta.get('reasoning_content'):
+            self.data["reasoning_content"] += delta.get('reasoning_content')
+
         if delta.get('content'):
             self.data["content"] += delta.get('content')
-        
+
         # 处理工具调用
         if delta.get('tool_calls'):
             self._process_tool_calls(delta.get('tool_calls'))
+
+        if choice.get('finish_reason'):
+            self.data["finish_reason"] = choice.get('finish_reason')
     
     def _process_tool_calls(self, tool_calls: List[Dict[str, Any]]):
         """处理工具调用 - 修复版：使用工具调用ID，正确处理分块传输"""
@@ -503,6 +513,8 @@ class StreamResponseAggregator:
         
         # 构建最终响应
         final_message = {"role": "assistant", "content": self.data["content"]}
+        if self.data["reasoning_content"]:
+            final_message["reasoning_content"] = self.data["reasoning_content"]
         if self.data["tool_calls"]:
             final_message["tool_calls"] = self.data["tool_calls"]
         
@@ -686,13 +698,11 @@ class RequestProcessor:
                 (model for model in get_available_models() if model),
                 DEFAULT_CODEBUDDY_MODELS[0],
             )
-        if should_force_model_reasoning(payload.get("model")):
-            payload["reasoning_effort"] = "max"
-            thinking = payload.get("thinking") if isinstance(payload.get("thinking"), dict) else {}
-            payload["thinking"] = {
-                **thinking,
-                **forced_reasoning_thinking_options(payload.get("model")),
-            }
+        if should_configure_model_reasoning(payload.get("model")):
+            apply_forced_reasoning_options(payload)
+        payload["temperature"] = 1
+        stream_options = payload.get("stream_options") if isinstance(payload.get("stream_options"), dict) else {}
+        payload["stream_options"] = {**stream_options, "include_usage": True}
         payload["stream"] = True  # CodeBuddy 只支持流式请求
         
         # 处理消息长度要求：CodeBuddy要求至少2条消息
@@ -725,8 +735,10 @@ class RequestProcessor:
         for i, msg in enumerate(messages):
             if not isinstance(msg, dict):
                 raise HTTPException(status_code=400, detail=f"Message {i} must be an object")
-            if "role" not in msg or "content" not in msg:
-                raise HTTPException(status_code=400, detail=f"Message {i} must have 'role' and 'content' fields")
+            if "role" not in msg:
+                raise HTTPException(status_code=400, detail=f"Message {i} must have 'role' field")
+            if "content" not in msg and not (msg.get("role") == "assistant" and msg.get("tool_calls")):
+                raise HTTPException(status_code=400, detail=f"Message {i} must have 'content' field")
 
 class CredentialManager:
     """凭证管理器 - 线程安全的凭证获取"""
