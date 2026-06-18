@@ -4,6 +4,7 @@ Usage Statistics Manager - Tracks usage stats for models and credentials.
 import threading
 from collections import defaultdict
 
+
 class UsageStatsManager:
     _instance = None
     # Use RLock (Re-entrant Lock) to prevent deadlocks when one locked function calls another.
@@ -35,6 +36,7 @@ class UsageStatsManager:
                 "model_usage": dict(self.model_usage),
                 "credential_usage": dict(self.credential_usage)
             }
+
 
 # Global instance of the stats manager
 usage_stats_manager = UsageStatsManager()

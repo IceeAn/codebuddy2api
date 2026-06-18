@@ -24,7 +24,7 @@
 
 首先，克隆本项目到本地：
 ```bash
-git clone https://github.com/xueyue33/codebuddy2api.git
+git clone https://github.com/iceean/codebuddy2api.git
 cd codebuddy2api
 ```
 
@@ -197,11 +197,22 @@ curl -X POST "http://127.0.0.1:8001/codebuddy/v1/chat/completions" \
 ```
 codebuddy2api/
 ├── src/                           # 源代码目录
-│   ├── auth.py                    # 服务访问认证模块
-│   ├── codebuddy_api_client.py    # 封装了与CodeBuddy官方API的通信
+│   ├── auth_router.py             # 管理页登录与 API Key 路由
+│   ├── auth_types.py              # 认证类型与常量
+│   ├── users_store.py             # users.txt 用户密码存储
+│   ├── api_key_store.py           # sk- API Key 存储
+│   ├── session_store.py           # 管理页会话存储
+│   ├── codebuddy_api_client.py    # CodeBuddy 请求头生成
 │   ├── codebuddy_auth_router.py   # CodeBuddy OAuth2 认证路由
-│   ├── codebuddy_token_manager.py # CodeBuddy凭证加载与轮换管理器
-│   ├── codebuddy_router.py        # 核心API路由 (v1) - 已重构优化
+│   ├── codebuddy_oauth.py         # CodeBuddy OAuth 上游客户端与 token 保存
+│   ├── codebuddy_token_manager.py # CodeBuddy 凭证管理门面
+│   ├── credential_store.py        # CodeBuddy 凭证文件安全读写
+│   ├── credential_rotation.py     # CodeBuddy 凭证过期判断与轮换策略
+│   ├── codebuddy_router.py        # 核心 API 路由 (v1)
+│   ├── request_processor.py       # 聊天请求验证与载荷预处理
+│   ├── stream_service.py          # 上游流式请求与非流式聚合
+│   ├── sse.py                     # SSE 解析与格式化
+│   ├── openai_compat.py           # OpenAI 兼容格式转换
 │   ├── frontend_router.py         # Web管理界面的路由
 │   ├── settings_router.py         # 设置管理路由
 │   ├── usage_stats_manager.py     # 使用统计管理器

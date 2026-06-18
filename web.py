@@ -10,11 +10,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 # Import the routers
-from src.auth import router as service_auth_router
-from src.codebuddy_router import router as codebuddy_router, lifecycle_manager
+from src.auth_router import router as service_auth_router
+from src.codebuddy_router import router as codebuddy_router
 from src.codebuddy_auth_router import router as codebuddy_auth_router
 from src.settings_router import router as settings_router
 from src.frontend_router import router as frontend_router
+from src.stream_service import lifecycle_manager
 
 from config import get_server_host, get_server_port, get_log_level, get_allowed_origins, get_allowed_hosts
 

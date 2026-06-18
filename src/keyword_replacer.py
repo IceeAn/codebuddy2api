@@ -3,11 +3,12 @@
 防止CodeBuddy检测到竞争对手关键词
 """
 import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def apply_keyword_replacement(text: str) -> str:
+def apply_keyword_replacement(text: Any) -> Any:
     """
     统一的关键词替换函数
 
@@ -15,7 +16,7 @@ def apply_keyword_replacement(text: str) -> str:
         text: 需要处理的文本内容
 
     Returns:
-        str: 替换后的文本内容
+        Any: 字符串会被替换，其他类型原样返回
     """
     if not isinstance(text, str):
         return text
@@ -37,12 +38,13 @@ def apply_keyword_replacement(text: str) -> str:
 
     # 记录替换日志（仅在调试模式下）
     if text != original_text:
-        logger.debug(f"[KEYWORD_REPLACE] Applied keyword replacements, original length: {len(original_text)}, new length: {len(text)}")
+        logger.debug(
+            f"[KEYWORD_REPLACE] Applied keyword replacements, original length: {len(original_text)}, new length: {len(text)}")
 
     return text
 
 
-def apply_keyword_replacement_to_system_message(content) -> str:
+def apply_keyword_replacement_to_system_message(content: Any) -> Any:
     """
     专门用于处理系统消息的关键词替换
     支持字符串和复杂结构的content
@@ -51,7 +53,7 @@ def apply_keyword_replacement_to_system_message(content) -> str:
         content: 消息内容，可能是字符串或列表结构
 
     Returns:
-        str: 处理后的内容
+        Any: 处理后的内容，保留原始 content 类型
     """
     if isinstance(content, str):
         return apply_keyword_replacement(content)
