@@ -19,8 +19,7 @@ python3 scripts/hash_password.py <用户名>
 ## 架构
 
 - **入口点**: `web.py` — FastAPI 应用，使用 **Hypercorn**（不是 uvicorn）提供服务，通过 `asyncio.run(serve(app, config))` 启动。
-- **认证**: 实际实现拆分在 `src/auth_router.py`、`src/users_store.py`、`src/api_key_store.py`、`src/session_store.py` 和 `src/auth_types.py`。生产代码应直接从这些真实模块导入，不再通过 `src/auth.py` 兼容层转导出。认证层包含两个独立入口：
-- **配置**: `config.py` — 热更新配置优先级为：运行时内存 > `config/config.json` > 环境变量 > 硬编码默认值。仅 `_HOT_RELOADABLE_CONFIG_KEYS` 中的配置项（日志级别、模型列表、轮换次数）会持久化到 JSON；其他安全边界配置不会从 JSON 加载，实际优先级为环境变量 > 硬编码默认值。
+- **配置**: `config.py` — 热更新配置优先级为：运行时内存 > `config/config.json` > 环境变量 > 硬编码默认值。仅 `_HOT_RELOADABLE_CONFIG_KEYS` 中的配置项（日志级别、模型列表、强制推理模型列表、强制 temperature、轮换次数）会持久化到 JSON；其他安全边界配置不会从 JSON 加载，实际优先级为环境变量 > 硬编码默认值。
 - **认证**: 实际实现拆分在 `src/auth_router.py`、`src/users_store.py`、`src/api_key_store.py`、`src/session_store.py` 和 `src/auth_types.py`。生产代码应直接从这些真实模块导入，不再通过 `src/auth.py` 兼容层转导出。认证层包含两个独立入口：
   - Web UI 登录 → HttpOnly 会话 Cookie（7 天有效期），通过 `secrets/users.txt`（PBKDF2 哈希，每行格式 `用户名:哈希`）验证。
   - API 访问 → 通过 Web UI 生成的 `sk-...` Bearer Token，以密码哈希形式存储在 `.codebuddy_creds/api_keys.json`（0600 权限）。
@@ -30,7 +29,9 @@ python3 scripts/hash_password.py <用户名>
 
 ## 特殊约定与注意事项
 
-- **强制推理**: `deepseek-v4-pro`、`deepseek-v4-flash`、`glm-5.1` 和 `glm-5.2` 始终被强制设置 `reasoning_effort="max"` 及 `thinking.type="enabled"`；其他 `thinking` 子项（如 `clear_thinking`）按客户端请求透传。
+- **强制推理**: `CODEBUDDY_FORCED_REASONING_MODELS` 中的模型会被强制设置 `reasoning_effort="max"` 及 `thinking.type="enabled"`；默认包含 `deepseek-v4-pro`、`deepseek-v4-flash`、`glm-5.1` 和 `glm-5.2`。其他 `thinking` 子项（如 `clear_thinking`）按客户端请求透传。
+- **默认思考开关**: 未命中强制推理模型列表的请求默认补传 `enable_thinking=true`；若客户端显式传入 `enable_thinking=false` 或 `thinking.type="disabled"`，则不补。
+- **强制 temperature**: `CODEBUDDY_FORCED_TEMPERATURE` 默认为 `1`，会覆盖客户端传入值；留空则不覆盖。
 - **关键词替换**: 系统消息中自动将 Anthropic/Claude 相关引用替换为 Tencent/CodeBuddy（`src/keyword_replacer.py`）。
 - **工具调用 ID 兼容**: 透传上游工具调用 ID，仅为流式响应补齐 OpenAI 客户端需要的 `index`（`OpenAICompatibilityConverter`）。
 - **流式标准化**: `OpenAIStreamNormalizer` 将混合的 `reasoning_content`+`content` delta 拆分为独立块，并在首个块中注入 `role: assistant`。

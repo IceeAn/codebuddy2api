@@ -6,17 +6,19 @@ from fastapi import HTTPException
 
 from .keyword_replacer import apply_keyword_replacement_to_system_message
 
-DEEPSEEK_V4_REASONING_MODELS = {"deepseek-v4-pro", "deepseek-v4-flash"}
-GLM_REASONING_MODELS = {"glm-5.1", "glm-5.2"}
-REASONING_MODELS = DEEPSEEK_V4_REASONING_MODELS | GLM_REASONING_MODELS
-
 
 def normalize_model_id(model: Any) -> str:
     return str(model or "").strip().lower().split("/")[-1]
 
 
 def should_configure_model_reasoning(model: Any) -> bool:
-    return normalize_model_id(model) in REASONING_MODELS
+    from config import get_forced_reasoning_models
+
+    reasoning_models = {
+        normalize_model_id(model_id)
+        for model_id in get_forced_reasoning_models()
+    }
+    return normalize_model_id(model) in reasoning_models
 
 
 def forced_reasoning_thinking_options() -> Dict[str, Any]:
@@ -29,6 +31,40 @@ def apply_forced_reasoning_options(payload: Dict[str, Any]) -> None:
     payload["reasoning_effort"] = "max"
     thinking = payload.get("thinking") if isinstance(payload.get("thinking"), dict) else {}
     payload["thinking"] = {**thinking, **forced_reasoning_thinking_options()}
+
+
+def is_false_like(value: Any) -> bool:
+    if isinstance(value, bool):
+        return not value
+    if isinstance(value, (int, float)):
+        return value == 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"false", "0", "no", "off", "disabled"}
+    return False
+
+
+def is_thinking_explicitly_disabled(payload: Dict[str, Any]) -> bool:
+    if "enable_thinking" in payload and is_false_like(payload.get("enable_thinking")):
+        return True
+
+    thinking = payload.get("thinking")
+    if isinstance(thinking, dict):
+        return str(thinking.get("type", "")).strip().lower() == "disabled"
+
+    return False
+
+
+def apply_default_thinking_options(payload: Dict[str, Any]) -> None:
+    if not is_thinking_explicitly_disabled(payload):
+        payload["enable_thinking"] = True
+
+
+def apply_forced_temperature(payload: Dict[str, Any]) -> None:
+    from config import get_forced_temperature
+
+    forced_temperature = get_forced_temperature()
+    if forced_temperature is not None:
+        payload["temperature"] = forced_temperature
 
 
 class RequestProcessor:
@@ -47,7 +83,9 @@ class RequestProcessor:
             )
         if should_configure_model_reasoning(payload.get("model")):
             apply_forced_reasoning_options(payload)
-        payload["temperature"] = 1
+        else:
+            apply_default_thinking_options(payload)
+        apply_forced_temperature(payload)
         stream_options = payload.get("stream_options") if isinstance(payload.get("stream_options"), dict) else {}
         payload["stream_options"] = {**stream_options, "include_usage": True}
         payload["stream"] = True  # CodeBuddy 只支持流式请求

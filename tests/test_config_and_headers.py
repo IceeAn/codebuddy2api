@@ -50,6 +50,26 @@ class ConfigTests(ConfigIsolationMixin, unittest.TestCase):
 
         self.assertEqual(config.get_available_models(), ["glm-5.2", "", "lite"])
 
+    def test_forced_reasoning_models_filters_empty_entries(self):
+        config._config_cache["CODEBUDDY_FORCED_REASONING_MODELS"] = "glm-5.2,, lite "
+
+        self.assertEqual(config.get_forced_reasoning_models(), ["glm-5.2", "lite"])
+
+    def test_forced_temperature_accepts_int_float_empty_and_invalid_classes(self):
+        cases = [
+            ("1", 1),
+            ("0.7", 0.7),
+            (2, 2),
+            ("", None),
+            (None, None),
+            ("not-a-number", None),
+        ]
+
+        for value, expected in cases:
+            with self.subTest(value=value):
+                config._config_cache["CODEBUDDY_FORCED_TEMPERATURE"] = value
+                self.assertEqual(config.get_forced_temperature(), expected)
+
     def test_update_settings_ignores_non_hot_reloadable_keys(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             settings_path = f"{tmp_dir}/config.json"

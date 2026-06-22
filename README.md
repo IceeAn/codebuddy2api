@@ -249,7 +249,9 @@ codebuddy2api/
 | `CODEBUDDY_ALLOWED_HOSTS` | `localhost,127.0.0.1` | 允许访问本服务的 Host 头，公网部署必须加入实际域名。 |
 | `CODEBUDDY_ALLOWED_ORIGINS` | 空 | 允许跨域调用的前端 Origin；留空表示不启用跨域。 |
 | `CODEBUDDY_LOG_LEVEL` | `INFO` | 日志级别，可选 `DEBUG`, `INFO`, `WARNING`, `ERROR`。 |
-| `CODEBUDDY_MODELS` | `glm-5.1,glm-5.0,...` | 向客户端报告的可用模型列表，用逗号分隔。默认按中国站模型配置。 |
+| `CODEBUDDY_MODELS` | `glm-5.2,glm-5.1,...` | 向客户端报告的可用模型列表，用逗号分隔。默认按中国站模型配置。 |
+| `CODEBUDDY_FORCED_REASONING_MODELS` | `deepseek-v4-pro,deepseek-v4-flash,glm-5.1,glm-5.2` | 强制注入推理参数的模型列表，用逗号分隔；留空则关闭强制推理。 |
+| `CODEBUDDY_FORCED_TEMPERATURE` | `1` | 强制覆盖上游请求的 `temperature`；留空则不覆盖客户端传入值。 |
 | `CODEBUDDY_SSL_VERIFY` | `true` | 上游 TLS 证书校验开关，公网部署必须保持 `true`。 |
 | `CODEBUDDY_ROTATION_COUNT` | `1` | 凭证轮换计数，每N次请求后切换凭证。 |
 

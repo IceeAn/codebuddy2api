@@ -11,10 +11,17 @@ Priority order:
 import os
 import json
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from urllib.parse import urlsplit, urlunsplit
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_FORCED_REASONING_MODELS = (
+    "deepseek-v4-pro",
+    "deepseek-v4-flash",
+    "glm-5.1",
+    "glm-5.2",
+)
 
 DEFAULT_CODEBUDDY_MODELS = (
     "glm-5.2",
@@ -50,12 +57,16 @@ _DEFAULT_CONFIG = {
     "CODEBUDDY_SSL_VERIFY": True,
     "CODEBUDDY_LOG_LEVEL": "INFO",
     "CODEBUDDY_MODELS": ",".join(DEFAULT_CODEBUDDY_MODELS),
+    "CODEBUDDY_FORCED_REASONING_MODELS": ",".join(DEFAULT_FORCED_REASONING_MODELS),
+    "CODEBUDDY_FORCED_TEMPERATURE": "1",
     "CODEBUDDY_ROTATION_COUNT": 1
 }
 
 _HOT_RELOADABLE_CONFIG_KEYS = {
     "CODEBUDDY_LOG_LEVEL",
     "CODEBUDDY_MODELS",
+    "CODEBUDDY_FORCED_REASONING_MODELS",
+    "CODEBUDDY_FORCED_TEMPERATURE",
     "CODEBUDDY_ROTATION_COUNT",
 }
 
@@ -235,6 +246,34 @@ def get_log_level() -> str:
 def get_available_models() -> list:
     models_str = str(_get_config_value("CODEBUDDY_MODELS"))
     return [model.strip() for model in models_str.split(",")]
+
+
+def get_forced_reasoning_models() -> list:
+    return _parse_csv(_get_config_value("CODEBUDDY_FORCED_REASONING_MODELS"))
+
+
+def get_forced_temperature() -> Optional[float]:
+    value = _get_config_value("CODEBUDDY_FORCED_TEMPERATURE")
+    if value is None:
+        return None
+
+    if isinstance(value, (int, float)):
+        return value
+
+    raw_value = str(value).strip()
+    if not raw_value:
+        return None
+
+    try:
+        temperature = float(raw_value)
+    except ValueError:
+        logger.warning("Invalid CODEBUDDY_FORCED_TEMPERATURE value: %s", value)
+        return None
+
+    if temperature.is_integer():
+        return int(temperature)
+    return temperature
+
 
 def get_rotation_count() -> int:
     return int(_get_config_value("CODEBUDDY_ROTATION_COUNT"))

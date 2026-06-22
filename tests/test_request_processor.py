@@ -6,6 +6,7 @@ from fastapi import HTTPException
 
 from src.request_processor import (
     RequestProcessor,
+    is_false_like,
     normalize_model_id,
     should_configure_model_reasoning,
 )
@@ -79,6 +80,90 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
         self.assertEqual(payload["thinking"], {"type": "disabled"})
         self.assertNotIn("enable_thinking", payload)
         self.assertEqual(payload["temperature"], 1)
+
+    def test_prepare_payload_enables_thinking_for_other_models_by_default(self):
+        payload = RequestProcessor.prepare_payload({
+            "model": "lite",
+            "messages": [{"role": "user", "content": "test"}],
+        })
+
+        self.assertIs(payload["enable_thinking"], True)
+
+    def test_prepare_payload_preserves_explicit_enable_thinking_false(self):
+        false_like_values = [False, 0, "false", "0", "no", "off", "disabled"]
+
+        for value in false_like_values:
+            with self.subTest(value=value):
+                payload = RequestProcessor.prepare_payload({
+                    "model": "lite",
+                    "enable_thinking": value,
+                    "messages": [{"role": "user", "content": "test"}],
+                })
+                self.assertEqual(payload["enable_thinking"], value)
+
+    def test_prepare_payload_respects_disabled_thinking_type_for_other_models(self):
+        payload = RequestProcessor.prepare_payload({
+            "model": "lite",
+            "thinking": {"type": "disabled"},
+            "messages": [{"role": "user", "content": "test"}],
+        })
+
+        self.assertEqual(payload["thinking"], {"type": "disabled"})
+        self.assertNotIn("enable_thinking", payload)
+
+    def test_prepare_payload_uses_configured_forced_reasoning_models(self):
+        config._config_cache["CODEBUDDY_FORCED_REASONING_MODELS"] = "lite"
+
+        payload = RequestProcessor.prepare_payload({
+            "model": "lite",
+            "reasoning_effort": "low",
+            "thinking": {"type": "disabled"},
+            "messages": [{"role": "user", "content": "test"}],
+        })
+
+        self.assertEqual(payload["reasoning_effort"], "max")
+        self.assertEqual(payload["thinking"], {"type": "enabled"})
+
+    def test_prepare_payload_skips_forced_reasoning_when_config_empty(self):
+        config._config_cache["CODEBUDDY_FORCED_REASONING_MODELS"] = ""
+
+        payload = RequestProcessor.prepare_payload({
+            "model": "glm-5.2",
+            "reasoning_effort": "low",
+            "thinking": {"type": "disabled"},
+            "messages": [{"role": "user", "content": "test"}],
+        })
+
+        self.assertEqual(payload["reasoning_effort"], "low")
+        self.assertEqual(payload["thinking"], {"type": "disabled"})
+        self.assertNotIn("enable_thinking", payload)
+
+    def test_prepare_payload_uses_configured_forced_temperature(self):
+        config._config_cache["CODEBUDDY_FORCED_TEMPERATURE"] = "0.7"
+
+        payload = RequestProcessor.prepare_payload({
+            "model": "lite",
+            "temperature": 0.2,
+            "messages": [{"role": "user", "content": "test"}],
+        })
+
+        self.assertEqual(payload["temperature"], 0.7)
+
+    def test_prepare_payload_preserves_temperature_when_forcing_disabled(self):
+        config._config_cache["CODEBUDDY_FORCED_TEMPERATURE"] = ""
+
+        payload = RequestProcessor.prepare_payload({
+            "model": "lite",
+            "temperature": 0.2,
+            "messages": [{"role": "user", "content": "test"}],
+        })
+        payload_without_temperature = RequestProcessor.prepare_payload({
+            "model": "lite",
+            "messages": [{"role": "user", "content": "test"}],
+        })
+
+        self.assertEqual(payload["temperature"], 0.2)
+        self.assertNotIn("temperature", payload_without_temperature)
 
     def test_prepare_payload_preserves_tool_call_ids(self):
         request_body = {
@@ -245,9 +330,22 @@ class RequestProcessorHelperTests(ConfigIsolationMixin, unittest.TestCase):
         self.assertEqual(normalize_model_id(" CodeBuddy/GLM-5.2 "), "glm-5.2")
         self.assertEqual(normalize_model_id(None), "")
 
-    def test_should_configure_model_reasoning_uses_hardcoded_names(self):
+    def test_should_configure_model_reasoning_uses_configured_names(self):
+        config._config_cache["CODEBUDDY_FORCED_REASONING_MODELS"] = "codebuddy/glm-5.2"
+
         self.assertTrue(should_configure_model_reasoning("GLM-5.2"))
         self.assertFalse(should_configure_model_reasoning("lite"))
+
+    def test_is_false_like_partitions_values(self):
+        true_cases = [False, 0, "false", "0", "NO", "off", "disabled"]
+        false_cases = [True, 1, "true", "yes", "", None]
+
+        for value in true_cases:
+            with self.subTest(value=value):
+                self.assertTrue(is_false_like(value))
+        for value in false_cases:
+            with self.subTest(value=value):
+                self.assertFalse(is_false_like(value))
 
 
 if __name__ == "__main__":
