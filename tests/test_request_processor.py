@@ -8,6 +8,7 @@ from src.request_processor import (
     RequestProcessor,
     is_false_like,
     normalize_model_id,
+    strip_model_namespace,
     should_configure_model_reasoning,
 )
 
@@ -88,6 +89,30 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
         })
 
         self.assertIs(payload["enable_thinking"], True)
+
+    def test_prepare_payload_strips_model_namespace_when_enabled(self):
+        config._config_cache["CODEBUDDY_STRIP_MODEL_NAMESPACE"] = True
+
+        payload = RequestProcessor.prepare_payload({
+            "model": "codebuddy/lite",
+            "messages": [{"role": "user", "content": "test"}],
+        })
+
+        self.assertEqual(payload["model"], "lite")
+
+    def test_prepare_payload_preserves_model_namespace_when_disabled(self):
+        false_values = [False, ""]
+
+        for value in false_values:
+            with self.subTest(value=value):
+                config._config_cache["CODEBUDDY_STRIP_MODEL_NAMESPACE"] = value
+
+                payload = RequestProcessor.prepare_payload({
+                    "model": "codebuddy/lite",
+                    "messages": [{"role": "user", "content": "test"}],
+                })
+
+                self.assertEqual(payload["model"], "codebuddy/lite")
 
     def test_prepare_payload_preserves_explicit_enable_thinking_false(self):
         false_like_values = [False, 0, "false", "0", "no", "off", "disabled"]
@@ -329,6 +354,10 @@ class RequestProcessorHelperTests(ConfigIsolationMixin, unittest.TestCase):
     def test_normalize_model_id_strips_namespace_case_and_whitespace(self):
         self.assertEqual(normalize_model_id(" CodeBuddy/GLM-5.2 "), "glm-5.2")
         self.assertEqual(normalize_model_id(None), "")
+
+    def test_strip_model_namespace_keeps_model_case(self):
+        self.assertEqual(strip_model_namespace(" CodeBuddy/GLM-5.2 "), "GLM-5.2")
+        self.assertEqual(strip_model_namespace(None), "")
 
     def test_should_configure_model_reasoning_uses_configured_names(self):
         config._config_cache["CODEBUDDY_FORCED_REASONING_MODELS"] = "codebuddy/glm-5.2"

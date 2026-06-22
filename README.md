@@ -252,6 +252,7 @@ codebuddy2api/
 | `CODEBUDDY_MODELS` | `glm-5.2,glm-5.1,...` | 向客户端报告的可用模型列表，用逗号分隔。默认按中国站模型配置。 |
 | `CODEBUDDY_FORCED_REASONING_MODELS` | `deepseek-v4-pro,deepseek-v4-flash,glm-5.1,glm-5.2` | 强制注入推理参数的模型列表，用逗号分隔；留空则关闭强制推理。 |
 | `CODEBUDDY_FORCED_TEMPERATURE` | `1` | 强制覆盖上游请求的 `temperature`；留空则不覆盖客户端传入值。 |
+| `CODEBUDDY_STRIP_MODEL_NAMESPACE` | `true` | 将 `provider/model` 形式的模型名在转发上游前改为 `model`；留空或 `false` 则不处理。 |
 | `CODEBUDDY_SSL_VERIFY` | `true` | 上游 TLS 证书校验开关，公网部署必须保持 `true`。 |
 | `CODEBUDDY_ROTATION_COUNT` | `1` | 凭证轮换计数，每N次请求后切换凭证。 |
 

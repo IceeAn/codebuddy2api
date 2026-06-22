@@ -70,6 +70,23 @@ class ConfigTests(ConfigIsolationMixin, unittest.TestCase):
                 config._config_cache["CODEBUDDY_FORCED_TEMPERATURE"] = value
                 self.assertEqual(config.get_forced_temperature(), expected)
 
+    def test_strip_model_namespace_defaults_to_enabled_but_empty_disables(self):
+        self.assertIs(config._DEFAULT_CONFIG["CODEBUDDY_STRIP_MODEL_NAMESPACE"], True)
+
+        cases = [
+            (True, True),
+            ("true", True),
+            ("1", True),
+            (False, False),
+            ("", False),
+            (None, False),
+        ]
+
+        for value, expected in cases:
+            with self.subTest(value=value):
+                config._config_cache["CODEBUDDY_STRIP_MODEL_NAMESPACE"] = value
+                self.assertIs(config.get_strip_model_namespace(), expected)
+
     def test_update_settings_ignores_non_hot_reloadable_keys(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             settings_path = f"{tmp_dir}/config.json"

@@ -20,6 +20,7 @@ SETTING_LABELS = {
     "CODEBUDDY_MODELS": "可用模型列表 (逗号分隔)",
     "CODEBUDDY_FORCED_REASONING_MODELS": "强制推理模型列表 (逗号分隔)",
     "CODEBUDDY_FORCED_TEMPERATURE": "强制 temperature (留空则不覆盖客户端)",
+    "CODEBUDDY_STRIP_MODEL_NAMESPACE": "去除模型名前缀 (如 provider/model 只转发 model，留空关闭)",
     "CODEBUDDY_ROTATION_COUNT": "凭证轮换频率 (N次请求/凭证，设为0关闭轮换)"
 }
 

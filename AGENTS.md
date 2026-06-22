@@ -32,6 +32,7 @@ python3 scripts/hash_password.py <用户名>
 - **强制推理**: `CODEBUDDY_FORCED_REASONING_MODELS` 中的模型会被强制设置 `reasoning_effort="max"` 及 `thinking.type="enabled"`；默认包含 `deepseek-v4-pro`、`deepseek-v4-flash`、`glm-5.1` 和 `glm-5.2`。其他 `thinking` 子项（如 `clear_thinking`）按客户端请求透传。
 - **默认思考开关**: 未命中强制推理模型列表的请求默认补传 `enable_thinking=true`；若客户端显式传入 `enable_thinking=false` 或 `thinking.type="disabled"`，则不补。
 - **强制 temperature**: `CODEBUDDY_FORCED_TEMPERATURE` 默认为 `1`，会覆盖客户端传入值；留空则不覆盖。
+- **模型名前缀处理**: `CODEBUDDY_STRIP_MODEL_NAMESPACE` 默认为 `true`，会把 `provider/model` 形式的模型名在转发上游前改为 `model`；留空或 `false` 则不处理。
 - **关键词替换**: 系统消息中自动将 Anthropic/Claude 相关引用替换为 Tencent/CodeBuddy（`src/keyword_replacer.py`）。
 - **工具调用 ID 兼容**: 透传上游工具调用 ID，仅为流式响应补齐 OpenAI 客户端需要的 `index`（`OpenAICompatibilityConverter`）。
 - **流式标准化**: `OpenAIStreamNormalizer` 将混合的 `reasoning_content`+`content` delta 拆分为独立块，并在首个块中注入 `role: assistant`。

@@ -59,6 +59,7 @@ _DEFAULT_CONFIG = {
     "CODEBUDDY_MODELS": ",".join(DEFAULT_CODEBUDDY_MODELS),
     "CODEBUDDY_FORCED_REASONING_MODELS": ",".join(DEFAULT_FORCED_REASONING_MODELS),
     "CODEBUDDY_FORCED_TEMPERATURE": "1",
+    "CODEBUDDY_STRIP_MODEL_NAMESPACE": True,
     "CODEBUDDY_ROTATION_COUNT": 1
 }
 
@@ -67,6 +68,7 @@ _HOT_RELOADABLE_CONFIG_KEYS = {
     "CODEBUDDY_MODELS",
     "CODEBUDDY_FORCED_REASONING_MODELS",
     "CODEBUDDY_FORCED_TEMPERATURE",
+    "CODEBUDDY_STRIP_MODEL_NAMESPACE",
     "CODEBUDDY_ROTATION_COUNT",
 }
 
@@ -273,6 +275,15 @@ def get_forced_temperature() -> Optional[float]:
     if temperature.is_integer():
         return int(temperature)
     return temperature
+
+
+def get_strip_model_namespace() -> bool:
+    value = _get_config_value("CODEBUDDY_STRIP_MODEL_NAMESPACE")
+    if value is None:
+        return False
+    if isinstance(value, str) and not value.strip():
+        return False
+    return _to_bool(value)
 
 
 def get_rotation_count() -> int:

@@ -7,8 +7,12 @@ from fastapi import HTTPException
 from .keyword_replacer import apply_keyword_replacement_to_system_message
 
 
+def strip_model_namespace(model: Any) -> str:
+    return str(model or "").strip().rsplit("/", 1)[-1]
+
+
 def normalize_model_id(model: Any) -> str:
-    return str(model or "").strip().lower().split("/")[-1]
+    return strip_model_namespace(model).lower()
 
 
 def should_configure_model_reasoning(model: Any) -> bool:
@@ -81,6 +85,10 @@ class RequestProcessor:
                 (model for model in get_available_models() if model),
                 DEFAULT_CODEBUDDY_MODELS[0],
             )
+        from config import get_strip_model_namespace
+
+        if get_strip_model_namespace():
+            payload["model"] = strip_model_namespace(payload.get("model"))
         if should_configure_model_reasoning(payload.get("model")):
             apply_forced_reasoning_options(payload)
         else:
