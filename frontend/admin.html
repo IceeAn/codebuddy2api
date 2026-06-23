@@ -1530,20 +1530,7 @@
                     <div class="form-group">
                         <label class="form-label" for="testModel">模型</label>
                         <select id="testModel" class="form-input">
-                            <option value="glm-5.1">glm-5.1</option>
-                            <option value="glm-5.0">glm-5.0</option>
-                            <option value="glm-5.0-turbo">glm-5.0-turbo</option>
-                            <option value="glm-5v-turbo">glm-5v-turbo</option>
-                            <option value="glm-4.7">glm-4.7</option>
-                            <option value="minimax-m2.7">minimax-m2.7</option>
-                            <option value="minimax-m2.5">minimax-m2.5</option>
-                            <option value="kimi-k2.6">kimi-k2.6</option>
-                            <option value="kimi-k2.5">kimi-k2.5</option>
-                            <option value="hy3-preview">hy3-preview</option>
-                            <option value="deepseek-v4-pro">deepseek-v4-pro</option>
-                            <option value="deepseek-v4-flash">deepseek-v4-flash</option>
-                            <option value="deepseek-v3-2-volc">deepseek-v3-2-volc</option>
-                            <option value="lite">lite</option>
+                            <option value="">加载模型列表中...</option>
                         </select>
                     </div>
                     <div class="form-group">
@@ -1581,7 +1568,7 @@
       -H "Authorization: Bearer sk-your_api_key" \
       -H "Content-Type: application/json" \
       -d '{
-        "model": "glm-5.1",
+        "model": "deepseek-v4-pro",
         "messages": [
           {"role": "user", "content": "Hello!"}
         ]
@@ -1596,7 +1583,7 @@
     )
 
     response = client.chat.completions.create(
-        model="glm-5.1",
+        model="deepseek-v4-pro",
         messages=[
             {"role": "user", "content": "Hello!"}
         ]
@@ -1644,6 +1631,8 @@
         let isAuthenticated = false;
         let credentialsCache = []; // 用于缓存凭证和其状态
         let apiKeysCache = [];
+        let apiModelsCache = [];
+        const fallbackApiModels = ['glm-5.2', 'deepseek-v4-pro'];
 
         // 初始化
         document.addEventListener('DOMContentLoaded', function() {
@@ -1711,6 +1700,9 @@
                     break;
                 case 'api-keys':
                     loadApiKeys();
+                    break;
+                case 'api-test':
+                    loadModelOptions(true);
                     break;
                 case 'settings':
                     loadSettings();
@@ -1833,6 +1825,8 @@
                 loadCredentials();
             } else if (tabId === 'api-keys') {
                 loadApiKeys();
+            } else if (tabId === 'api-test') {
+                loadModelOptions();
             } else if (tabId === 'settings') {
                 loadSettings();
             }
@@ -1937,6 +1931,7 @@
                     
                     showDashboardPage();
                     loadDashboard();
+                    loadModelOptions();
                     showNotification('登录成功！', 'success');
                 } else {
                     let errorMessage = '登录失败';
@@ -1973,6 +1968,7 @@
 
             serviceUsername = '';
             isAuthenticated = false;
+            apiModelsCache = [];
             sessionStorage.removeItem('serviceUsername');
             document.getElementById('loginPassword').value = '';
             showLoginPage();
@@ -2660,6 +2656,7 @@
                     document.getElementById('bearerToken').value = '';
                     document.getElementById('userId').value = '';
                     loadCredentials();
+                    loadModelOptions(true);
                 } else {
                     const errorData = await response.json();
                     showNotification(`添加失败: ${errorData.detail || '未知错误'}`, 'error');
@@ -2806,6 +2803,7 @@
             if (!originalCred) return;
 
             try {
+                const model = await getSelectedOrFallbackModel();
                 const response = await fetch('/codebuddy/v1/chat/completions', {
                     method: 'POST',
                     headers: getAuthHeaders(),
@@ -2814,7 +2812,7 @@
                         // 所以这里的测试实际上是测试下一个将被轮换到的token
                         // 为了更精确，理想的后端应该有一个专门的测试接口
                         // 但在当前架构下，这是最好的模拟
-                        model: 'glm-5.1',
+                        model: model,
                         messages: [{ role: 'user', content: 'test' }],
                         max_tokens: 1
                     })
@@ -2837,8 +2835,79 @@
         }
 
         // API测试功能
+        function renderModelOptions(models) {
+            const select = document.getElementById('testModel');
+            if (!select) return;
+
+            const previousValue = select.value;
+            select.innerHTML = '';
+
+            models.forEach(model => {
+                const option = document.createElement('option');
+                option.value = model;
+                option.textContent = model;
+                select.appendChild(option);
+            });
+
+            if (models.includes(previousValue)) {
+                select.value = previousValue;
+            } else if (models.length > 0) {
+                select.value = models[0];
+            }
+            select.disabled = models.length === 0;
+        }
+
+        async function loadModelOptions(force = false) {
+            const select = document.getElementById('testModel');
+            if (!select || !isAuthenticated) return apiModelsCache;
+
+            if (!force && apiModelsCache.length > 0) {
+                renderModelOptions(apiModelsCache);
+                return apiModelsCache;
+            }
+
+            select.disabled = true;
+            select.innerHTML = '<option value="">加载模型列表中...</option>';
+
+            try {
+                const response = await fetch('/codebuddy/v1/models', {
+                    headers: getAuthHeaders()
+                });
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+
+                const data = await response.json();
+                const models = (data.data || [])
+                    .map(item => item && item.id)
+                    .filter(model => typeof model === 'string' && model.trim())
+                    .map(model => model.trim());
+
+                apiModelsCache = Array.from(new Set(models));
+                if (apiModelsCache.length === 0) {
+                    throw new Error('模型列表为空');
+                }
+            } catch (error) {
+                apiModelsCache = [...fallbackApiModels];
+                showNotification(`模型列表加载失败，使用本地兜底: ${error.message}`, 'warning');
+            }
+
+            renderModelOptions(apiModelsCache);
+            return apiModelsCache;
+        }
+
+        async function getSelectedOrFallbackModel() {
+            const select = document.getElementById('testModel');
+            if (select && select.value) {
+                return select.value;
+            }
+
+            const models = await loadModelOptions();
+            return models[0] || fallbackApiModels[0];
+        }
+
         async function testAPI() {
-            const model = document.getElementById('testModel').value;
+            const model = await getSelectedOrFallbackModel();
             const message = document.getElementById('testMessage').value;
             const stream = document.getElementById('testStream').checked;
             const resultDiv = document.getElementById('testResult');

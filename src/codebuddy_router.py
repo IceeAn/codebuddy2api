@@ -9,6 +9,7 @@ from .auth_router import authenticate, require_session_user
 from .auth_types import AuthenticatedUser
 from .codebuddy_api_client import codebuddy_api_client
 from .codebuddy_token_manager import get_token_manager_for_user
+from .models_manager import models_manager
 from .request_processor import RequestProcessor
 from .stream_service import CodeBuddyStreamService
 from .usage_stats_manager import usage_stats_manager
@@ -17,11 +18,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def get_available_models_list() -> List[str]:
-    """动态加载可用模型列表，支持设置热更新。"""
-    from config import get_available_models
-
-    return get_available_models()
+async def get_available_models_list(user: AuthenticatedUser) -> List[str]:
+    """动态加载可用模型列表，支持设置热更新和真实模型回退缓存。"""
+    return await models_manager.get_available_models(user)
 
 
 class CredentialManager:
@@ -98,6 +97,7 @@ async def chat_completions(
 async def list_v1_models(_user: AuthenticatedUser = Depends(authenticate)):
     """获取 CodeBuddy V1 模型列表。"""
     try:
+        models = await get_available_models_list(_user)
         return {
             "object": "list",
             "data": [
@@ -107,7 +107,7 @@ async def list_v1_models(_user: AuthenticatedUser = Depends(authenticate)):
                     "created": int(time.time()),
                     "owned_by": "codebuddy",
                 }
-                for model in get_available_models_list()
+                for model in models
             ],
         }
 

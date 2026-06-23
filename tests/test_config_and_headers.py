@@ -36,14 +36,12 @@ class ConfigTests(ConfigIsolationMixin, unittest.TestCase):
             ["https://www.codebuddy.ai", "https://copilot.tencent.com"],
         )
 
-    def test_default_models_follow_china_endpoint(self):
+    def test_default_models_keep_minimal_static_fallback(self):
         config._config_cache["CODEBUDDY_MODELS"] = ",".join(config.DEFAULT_CODEBUDDY_MODELS)
 
         models = config.get_available_models()
 
-        self.assertEqual(models[0], "glm-5.2")
-        self.assertIn("deepseek-v4-pro", models)
-        self.assertNotIn("auto-chat", models)
+        self.assertEqual(models, ["glm-5.2", "deepseek-v4-pro"])
 
     def test_parse_model_csv_preserves_current_behavior_for_empty_entries(self):
         config._config_cache["CODEBUDDY_MODELS"] = "glm-5.2,, lite "

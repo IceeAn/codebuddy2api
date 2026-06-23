@@ -17,7 +17,7 @@ router = APIRouter()
 # 中文标签映射
 SETTING_LABELS = {
     "CODEBUDDY_LOG_LEVEL": "日志级别",
-    "CODEBUDDY_MODELS": "可用模型列表 (逗号分隔)",
+    "CODEBUDDY_MODELS": "附加模型列表 (逗号分隔)",
     "CODEBUDDY_FORCED_REASONING_MODELS": "强制推理模型列表 (逗号分隔)",
     "CODEBUDDY_FORCED_TEMPERATURE": "强制 temperature (留空则不覆盖客户端)",
     "CODEBUDDY_STRIP_MODEL_NAMESPACE": "去除模型名前缀 (如 provider/model 只转发 model，留空关闭)",

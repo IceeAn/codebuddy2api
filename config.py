@@ -25,20 +25,7 @@ DEFAULT_FORCED_REASONING_MODELS = (
 
 DEFAULT_CODEBUDDY_MODELS = (
     "glm-5.2",
-    "glm-5.1",
-    "glm-5.0",
-    "glm-5.0-turbo",
-    "glm-5v-turbo",
-    "glm-4.7",
-    "minimax-m2.7",
-    "minimax-m2.5",
-    "kimi-k2.6",
-    "kimi-k2.5",
-    "hy3-preview",
     "deepseek-v4-pro",
-    "deepseek-v4-flash",
-    "deepseek-v3-2-volc",
-    "lite",
 )
 
 # --- Private State ---

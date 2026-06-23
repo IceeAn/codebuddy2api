@@ -13,7 +13,10 @@ from tests.helpers import FakeHttpClient
 
 class CodeBuddyRouterModelTests(unittest.IsolatedAsyncioTestCase):
     async def test_model_list_returns_minimal_openai_model_objects(self):
-        with mock.patch("src.codebuddy_router.get_available_models_list", lambda: ["deepseek-v4-pro", "glm-5.1"]):
+        async def fake_models(_user):
+            return ["deepseek-v4-pro", "glm-5.1"]
+
+        with mock.patch("src.codebuddy_router.get_available_models_list", fake_models):
             response = await list_v1_models(AuthenticatedUser(username="admin", source="users_file"))
 
         models = {item["id"]: item for item in response["data"]}
