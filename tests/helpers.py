@@ -1,5 +1,6 @@
 import tempfile
 from pathlib import Path
+from copy import deepcopy
 
 import config
 from starlette.requests import Request
@@ -12,12 +13,19 @@ from src.session_store import session_store
 class ConfigIsolationMixin:
     def setUp(self):
         super().setUp()
+        self._config_json_dir = tempfile.TemporaryDirectory()
+        self._original_config_json_path = config._CONFIG_JSON_PATH
+        config._CONFIG_JSON_PATH = str(Path(self._config_json_dir.name) / "config.json")
         self._original_config = config._config_cache.copy()
+        self._original_user_settings = deepcopy(config._user_settings_cache)
         reset_runtime_stores()
 
     def tearDown(self):
         reset_runtime_stores()
+        config._user_settings_cache = deepcopy(self._original_user_settings)
         config._config_cache = self._original_config.copy()
+        config._CONFIG_JSON_PATH = self._original_config_json_path
+        self._config_json_dir.cleanup()
         super().tearDown()
 
 

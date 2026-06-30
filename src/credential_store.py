@@ -59,12 +59,13 @@ class CodeBuddyCredentialStore:
                     continue
 
                 with open(real_file_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
+                    data: Dict[str, Any] = json.load(f)
                     if "bearer_token" in data:
-                        credentials.append({
+                        credential: CredentialRecord = {
                             "file_path": real_file_path,
                             "data": data,
-                        })
+                        }
+                        credentials.append(credential)
                         logger.info(f"Successfully loaded credential: {os.path.basename(real_file_path)}")
                     else:
                         logger.warning(
@@ -93,13 +94,27 @@ class CodeBuddyCredentialStore:
         self.write_json_file(self.state_file, state, indent=2)
         logger.debug(f"Manager state saved to {self.state_file}")
 
-    def save_credential(self, credential_data: Dict[str, Any], filename: str, indent: int = 4) -> str:
-        """保存凭证数据并返回安全文件名。"""
+    def save_credential(self, credential_data: Dict[str, Any], filename: str, indent: int = 4, create_new: bool = False) -> str:
+        """保存凭证数据并返回安全文件名；新增凭证时拒绝覆盖已有文件。"""
         safe_filename = self.sanitize_filename(filename)
         file_path = self.resolve_credential_path(safe_filename)
         self.ensure_directory()
-        self.write_json_file(file_path, credential_data, indent=indent)
+        self.write_json_file(file_path, credential_data, indent=indent, create_new=create_new)
         return safe_filename
+
+    def next_available_filename(self, filename: str) -> str:
+        """基于候选文件名查找当前凭证目录中不会碰撞的安全文件名。"""
+        safe_filename = self.sanitize_filename(filename)
+        if not os.path.exists(self.resolve_credential_path(safe_filename)):
+            return safe_filename
+
+        stem, ext = os.path.splitext(safe_filename)
+        suffix = 1
+        while True:
+            candidate = f"{stem}_{suffix}{ext or '.json'}"
+            if not os.path.exists(self.resolve_credential_path(candidate)):
+                return candidate
+            suffix += 1
 
     def delete_credential_file(self, file_path: str) -> bool:
         """删除指定凭证文件。"""
@@ -139,9 +154,11 @@ class CodeBuddyCredentialStore:
         creds_dir_with_sep = self.creds_dir + os.sep
         return real_file_path != self.creds_dir and real_file_path.startswith(creds_dir_with_sep)
 
-    def write_json_file(self, file_path: str, data: Dict[str, Any], indent: int):
-        """以 0600 权限写 JSON 文件，并避免跟随符号链接。"""
+    def write_json_file(self, file_path: str, data: Dict[str, Any], indent: int, create_new: bool = False):
+        """以 0600 权限写 JSON 文件，并在新增凭证时通过原子创建避免覆盖。"""
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        if create_new:
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
 

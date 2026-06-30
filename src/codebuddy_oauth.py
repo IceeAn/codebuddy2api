@@ -83,29 +83,46 @@ class AuthStateStore:
         self.ttl_seconds = ttl_seconds
         self._owners: Dict[str, Dict[str, Any]] = {}
 
-    def remember(self, auth_state: str, user: AuthenticatedUser):
+    def remember(self, auth_state: str, user: AuthenticatedUser) -> bool:
+        """登记未占用的 state；已存在时保持原所属用户不变。"""
         self.cleanup_expired()
+        if auth_state in self._owners:
+            return False
         self._owners[auth_state] = {
             "username": user.username,
             "created_at": int(time.time()),
+            "consumed_at": None,
         }
+        return True
 
     def validate_owner(self, auth_state: str, user: AuthenticatedUser) -> bool:
         self.cleanup_expired()
         state_info = self._owners.get(auth_state)
         if not state_info:
             return False
-        return state_info.get("username") == user.username
+        return state_info.get("username") == user.username and state_info.get("consumed_at") is None
 
-    def forget(self, auth_state: str):
-        self._owners.pop(auth_state, None)
+    def consume(self, auth_state: str, user: AuthenticatedUser) -> bool:
+        """将所属用户的待处理 state 标记为已消费，并保留墓碑防止重放。"""
+        self.cleanup_expired()
+        state_info = self._owners.get(auth_state)
+        if not state_info:
+            return False
+        if state_info.get("username") != user.username or state_info.get("consumed_at") is not None:
+            return False
+        state_info["consumed_at"] = int(time.time())
+        return True
 
     def cleanup_expired(self):
         current_time = int(time.time())
         expired_states = [
             state
             for state, state_info in self._owners.items()
-            if current_time - int(state_info.get("created_at", 0)) > self.ttl_seconds
+            if current_time - int(
+                state_info.get("consumed_at")
+                if state_info.get("consumed_at") is not None
+                else state_info.get("created_at", 0)
+            ) > self.ttl_seconds
         ]
         for state in expired_states:
             self._owners.pop(state, None)
@@ -117,29 +134,19 @@ auth_state_store = AuthStateStore()
 class CodeBuddyAuthClient:
     """CodeBuddy OAuth 上游客户端。"""
 
-    def __init__(self):
-        self._last_auth_state: Optional[str] = None
-
     async def start_auth(self) -> Dict[str, Any]:
         """启动 CodeBuddy 认证流程。"""
         try:
             logger.info("启动CodeBuddy认证流程...")
             headers = get_auth_start_headers()
 
-            async with httpx.AsyncClient(verify=get_ssl_verify()) as client:
+            async with httpx.AsyncClient(verify=get_ssl_verify(), trust_env=False) as client:
                 result = await self._request_state(client, headers)
                 auth_state = result.get("auth_state")
                 auth_url = result.get("auth_url")
 
                 if auth_state and auth_url:
-                    if self._last_auth_state and auth_state == self._last_auth_state:
-                        logger.warning("上游返回的state与上一次相同，尝试重新获取新的state...")
-                        retry_result = await self._try_request_fresh_state(headers, auth_state)
-                        auth_state = retry_result.get("auth_state") or auth_state
-                        auth_url = retry_result.get("auth_url") or auth_url
-
                     token_endpoint = f"{get_codebuddy_auth_token_endpoint()}?state={auth_state}"
-                    self._last_auth_state = auth_state
 
                     return {
                         "success": True,
@@ -193,23 +200,13 @@ class CodeBuddyAuthClient:
             "auth_url": data.get("authUrl"),
         }
 
-    async def _try_request_fresh_state(self, headers: Dict[str, str], previous_state: str) -> Dict[str, Optional[str]]:
-        try:
-            async with httpx.AsyncClient(verify=get_ssl_verify()) as client:
-                result = await self._request_state(client, headers)
-            if result.get("auth_state") and result.get("auth_state") != previous_state and result.get("auth_url"):
-                return result
-        except (httpx.HTTPError, ValueError) as e:
-            logger.debug(f"重新获取CodeBuddy auth_state失败: {e}")
-        return {"auth_state": None, "auth_url": None}
-
     async def poll_status(self, auth_state: str) -> Dict[str, Any]:
         """轮询 CodeBuddy 认证状态。"""
         try:
             headers = get_auth_poll_headers()
             url = f"{get_codebuddy_auth_token_endpoint()}?state={auth_state}"
 
-            async with httpx.AsyncClient(verify=get_ssl_verify()) as client:
+            async with httpx.AsyncClient(verify=get_ssl_verify(), trust_env=False) as client:
                 response = await client.get(url, headers=headers, timeout=30)
 
             if response.status_code != 200:
@@ -370,16 +367,16 @@ codebuddy_auth_client = CodeBuddyAuthClient()
 codebuddy_token_saver = CodeBuddyTokenSaver()
 
 
-def remember_auth_state(auth_state: str, user: AuthenticatedUser):
-    auth_state_store.remember(auth_state, user)
+def remember_auth_state(auth_state: str, user: AuthenticatedUser) -> bool:
+    return auth_state_store.remember(auth_state, user)
 
 
 def validate_auth_state_owner(auth_state: str, user: AuthenticatedUser) -> bool:
     return auth_state_store.validate_owner(auth_state, user)
 
 
-def forget_auth_state(auth_state: str):
-    auth_state_store.forget(auth_state)
+def consume_auth_state(auth_state: str, user: AuthenticatedUser) -> bool:
+    return auth_state_store.consume(auth_state, user)
 
 
 async def start_codebuddy_auth() -> Dict[str, Any]:

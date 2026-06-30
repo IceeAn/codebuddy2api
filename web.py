@@ -11,9 +11,9 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 # Import the routers
 from src.auth_router import router as service_auth_router
+from src.admin_router import router as admin_router
 from src.codebuddy_router import router as codebuddy_router
 from src.codebuddy_auth_router import router as codebuddy_auth_router
-from src.settings_router import router as settings_router
 from src.frontend_router import router as frontend_router
 from src.stream_service import lifecycle_manager
 
@@ -94,11 +94,11 @@ app.include_router(
     tags=["CodeBuddy Compatible API"]
 )
 
-# 挂载设置路由
+# 挂载管理页专用 API 路由
 app.include_router(
-    settings_router,
-    prefix="/api",
-    tags=["Settings Management"]
+    admin_router,
+    prefix="/api/admin",
+    tags=["Admin Management"]
 )
 
 # 健康检查端点
@@ -118,12 +118,10 @@ async def root():
         "endpoints": {
             "models": "/codebuddy/v1/models",
             "chat": "/codebuddy/v1/chat/completions",
-            "credentials": "/codebuddy/v1/credentials",
             "auth_start": "/codebuddy/auth/start",
             "auth_poll": "/codebuddy/auth/poll",
             "auth_callback": "/codebuddy/auth/callback",
-            "get_settings": "/api/settings",
-            "save_settings": "/api/settings"
+            "admin": "/api/admin"
         }
     }
 
@@ -146,7 +144,7 @@ if __name__ == "__main__":
     logger.info("API Endpoints:")
     logger.info(f"   Models: GET http://{host}:{port}/codebuddy/v1/models")
     logger.info(f"   Chat: POST http://{host}:{port}/codebuddy/v1/chat/completions")
-    logger.info(f"   Credentials: GET http://{host}:{port}/codebuddy/v1/credentials")
+    logger.info(f"   Admin API: GET http://{host}:{port}/api/admin/status")
     logger.info("=" * 60)
     logger.info("Authentication:")
     logger.info("   Mount secrets/users.txt for multi-user authentication")

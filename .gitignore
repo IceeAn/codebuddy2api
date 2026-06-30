@@ -1,171 +1,39 @@
-# Byte-compiled / optimized / DLL files
+# Python 缓存、覆盖率与虚拟环境
 __pycache__/
 *.py[cod]
-*$py.class
-
-# C extensions
-*.so
-
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-pip-wheel-metadata/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
-*.manifest
-*.spec
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
 .coverage
 .coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
+htmlcov/
+/.venv/
+/venv/
 
-# Translations
-*.mo
-*.pot
-
-# Django stuff:
+# 运行时配置、敏感数据与状态
+/.env
+/config/
+/secrets/users.txt
+/.codebuddy_creds/
+/logs/
 *.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
 
-# Flask stuff:
-instance/
-.webassets-cache
+# 前端依赖、构建与测试产物
+/frontend/node_modules/
+/frontend/dist/
+/frontend/coverage/
+/frontend/test-results/
+/frontend/playwright-report/
+/.pnpm-store/
 
-# Scrapy stuff:
-.scrapy
+# 本地开发工具
+/.codegraph/
 
-# Sphinx documentation
-docs/_build/
-
-# PyBuilder
-target/
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# IPython
-profile_default/
-ipython_config.py
-
-# pyenv
-.python-version
-
-# pipenv
-#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if having platform-specific dependencies or dependencies
-#   having no cross-platform support, pipenv may install dependencies that don't work, or not
-#   install all needed dependencies.
-#Pipfile.lock
-
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow
-__pypackages__/
-
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
-
-# SageMath parsed files
-*.sage.py
-
-# Environments
-.env
-config.json
-config/
-secrets/users.txt
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# Spyder project settings
-.spyderproject
-.spyproject
-
-# Rope project settings
-.ropeproject
-
-# mkdocs documentation
-/site
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Pyre type checker
-.pyre/
-
-# CodeBuddy2API specific
-# Ignore the content of the credentials directory, but not the directory itself.
-# This ensures the directory is present in the repository.
-.codebuddy_creds/*
-# You can add a .gitkeep file inside .codebuddy_creds to ensure the directory is tracked.
-# Or, if you have an example file, you can explicitly un-ignore it like this:
-# !.codebuddy_creds/credential.example.json
-
-# IDE files
-.vscode/
-.idea/
+# 编辑器
+/.idea/
+/.vscode/
 *.swp
 *.swo
 *~
 
-# OS files
+# 操作系统
 .DS_Store
-.DS_Store?
 ._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
 Thumbs.db
-
-# Temporary files
-tmp_*
-temp_*
-*.tmp
-*.temp
-
-# Log files
-*.log
-logs/
-
-# Backup files
-*.bak
-*.backup
-.claude/settings.local.json

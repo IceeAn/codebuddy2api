@@ -1,12 +1,14 @@
 """
 Configuration management for CodeBuddy2API
 
-Implements a multi-layered configuration system with hot-reloading.
-Priority order:
-1. In-memory config (for hot-settings from the UI)
-2. config.json file (only for explicitly hot-reloadable safe settings)
-3. Environment variables (for deployment, e.g., Docker and security boundaries)
-4. Hard-coded defaults
+Implements startup configuration plus user-scoped runtime settings.
+
+Startup configuration priority:
+1. Environment variables (for deployment and security boundaries)
+2. Hard-coded defaults
+
+User settings are persisted under users.<username> in config/config.json.
+Users without saved settings inherit the startup defaults.
 """
 import os
 import json
@@ -47,16 +49,24 @@ _DEFAULT_CONFIG = {
     "CODEBUDDY_FORCED_REASONING_MODELS": ",".join(DEFAULT_FORCED_REASONING_MODELS),
     "CODEBUDDY_FORCED_TEMPERATURE": "1",
     "CODEBUDDY_STRIP_MODEL_NAMESPACE": True,
+    "CODEBUDDY_AUTO_ROTATION_ENABLED": True,
     "CODEBUDDY_ROTATION_COUNT": 1
 }
 
-_HOT_RELOADABLE_CONFIG_KEYS = {
-    "CODEBUDDY_LOG_LEVEL",
+_USER_SETTING_KEYS = {
     "CODEBUDDY_MODELS",
     "CODEBUDDY_FORCED_REASONING_MODELS",
     "CODEBUDDY_FORCED_TEMPERATURE",
     "CODEBUDDY_STRIP_MODEL_NAMESPACE",
+    "CODEBUDDY_AUTO_ROTATION_ENABLED",
     "CODEBUDDY_ROTATION_COUNT",
+}
+_USER_SETTINGS_ROOT_KEY = "users"
+_user_settings_cache: Dict[str, Dict[str, Any]] = {}
+
+_BOOL_USER_SETTING_KEYS = {
+    "CODEBUDDY_STRIP_MODEL_NAMESPACE",
+    "CODEBUDDY_AUTO_ROTATION_ENABLED",
 }
 
 # --- Core Functions ---
@@ -66,7 +76,7 @@ def load_config():
     Loads configuration from all sources into the in-memory cache.
     This should be called once at application startup.
     """
-    global _config_cache
+    global _config_cache, _user_settings_cache
     
     config = _DEFAULT_CONFIG.copy()
     
@@ -81,34 +91,33 @@ def load_config():
         env_value = os.getenv(key)
         if env_value is not None:
             config[key] = env_value
-            
-    if os.path.exists(_CONFIG_JSON_PATH):
-        try:
-            with open(_CONFIG_JSON_PATH, 'r', encoding='utf-8') as f:
-                content = f.read()
-                if content:
-                    persisted_config = {
-                        key: value
-                        for key, value in json.loads(content).items()
-                        if key in _HOT_RELOADABLE_CONFIG_KEYS
-                    }
-                    config.update(persisted_config)
-                    logger.info(f"Loaded and merged persisted settings from {_CONFIG_JSON_PATH}.")
-        except Exception as e:
-            logger.error(f"Error loading {_CONFIG_JSON_PATH}: {e}")
-
     _config_cache = config
+    _user_settings_cache = _load_user_settings()
     logger.info("Configuration loaded successfully.")
 
 
 def _get_config_value(key: str) -> Any:
     return _config_cache.get(key, _DEFAULT_CONFIG.get(key))
 
-def _update_config_value(key: str, value: Any):
-    global _config_cache
-    _config_cache[key] = value
-    # Downgrade to debug to avoid verbose logging in production
-    logger.debug(f"Hot-reloaded setting '{key}' to new value.")
+
+def _username_from_user(user: Any = None, username: Optional[str] = None) -> Optional[str]:
+    if username is not None:
+        return str(username).strip()
+    if user is None:
+        return None
+    if isinstance(user, str):
+        return user.strip()
+    value = getattr(user, "username", None)
+    if value is None:
+        return None
+    return str(value).strip()
+
+
+def _get_user_config_value(key: str, user: Any = None, username: Optional[str] = None) -> Any:
+    user_key = _username_from_user(user, username)
+    if user_key and key in _user_settings_cache.get(user_key, {}):
+        return _user_settings_cache[user_key][key]
+    return _get_config_value(key)
 
 
 def _to_bool(value: Any) -> bool:
@@ -118,11 +127,96 @@ def _to_bool(value: Any) -> bool:
     return str(value).strip().lower() in ("true", "1", "t", "y", "yes", "on")
 
 
+def _parse_bool_setting(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("true", "1", "t", "y", "yes", "on"):
+            return True
+        if normalized in ("false", "0", "f", "n", "no", "off"):
+            return False
+    raise ValueError(f"Invalid boolean setting value: {value!r}")
+
+
 def _parse_csv(value: Any) -> list:
     """解析逗号分隔配置，自动过滤空项。"""
     if value is None:
         return []
     return [item.strip() for item in str(value).split(",") if item.strip()]
+
+
+def _coerce_user_setting(key: str, value: Any) -> Any:
+    if key not in _USER_SETTING_KEYS:
+        raise ValueError(f"Unsupported user setting: {key}")
+
+    if key in _BOOL_USER_SETTING_KEYS:
+        return _parse_bool_setting(value)
+
+    if key == "CODEBUDDY_ROTATION_COUNT":
+        if isinstance(value, bool):
+            raise ValueError("CODEBUDDY_ROTATION_COUNT must be a positive integer")
+        try:
+            rotation_count = int(value)
+        except (TypeError, ValueError) as e:
+            raise ValueError("CODEBUDDY_ROTATION_COUNT must be a positive integer") from e
+        if str(value).strip() != str(rotation_count) and not isinstance(value, int):
+            raise ValueError("CODEBUDDY_ROTATION_COUNT must be a positive integer")
+        if rotation_count < 1:
+            raise ValueError("CODEBUDDY_ROTATION_COUNT must be a positive integer")
+        return rotation_count
+
+    if key == "CODEBUDDY_FORCED_TEMPERATURE":
+        if value is None:
+            return ""
+        raw_value = str(value).strip()
+        if not raw_value:
+            return ""
+        try:
+            temperature = float(raw_value)
+        except ValueError as e:
+            raise ValueError("CODEBUDDY_FORCED_TEMPERATURE must be a number or empty") from e
+        if not 0 <= temperature <= 2:
+            raise ValueError("CODEBUDDY_FORCED_TEMPERATURE must be between 0 and 2")
+        if temperature.is_integer():
+            return int(temperature)
+        return temperature
+
+    return str(value or "")
+
+
+def _sanitize_user_settings(raw_settings: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        key: _coerce_user_setting(key, value)
+        for key, value in raw_settings.items()
+        if key in _USER_SETTING_KEYS
+    }
+
+
+def _load_user_settings() -> Dict[str, Dict[str, Any]]:
+    if not os.path.exists(_CONFIG_JSON_PATH):
+        return {}
+
+    with open(_CONFIG_JSON_PATH, 'r', encoding='utf-8') as f:
+        content = f.read()
+    if not content:
+        return {}
+
+    raw_config = json.loads(content)
+    if not isinstance(raw_config, dict):
+        raise ValueError(f"{_CONFIG_JSON_PATH} must contain a JSON object")
+
+    if not raw_config:
+        return {}
+
+    raw_users = raw_config.get(_USER_SETTINGS_ROOT_KEY)
+    if not isinstance(raw_users, dict):
+        raise ValueError(f"{_CONFIG_JSON_PATH} must contain a users object")
+    return {
+        str(username): _sanitize_user_settings(settings)
+        for username, settings in raw_users.items()
+        if isinstance(settings, dict)
+    }
 
 
 def _normalize_base_url(url: Any) -> str:
@@ -140,7 +234,7 @@ def _normalize_base_url(url: Any) -> str:
     ))
 
 
-def save_config_to_json():
+def _save_user_settings(settings: Dict[str, Dict[str, Any]]) -> None:
     """
     Saves the entire current in-memory configuration to config.json.
     This is simpler and more robust, ensuring a complete snapshot is always saved.
@@ -154,13 +248,16 @@ def save_config_to_json():
             logger.info(f"Created config directory at {config_dir}")
 
         with open(_CONFIG_JSON_PATH, 'w', encoding='utf-8') as f:
-            # 仅持久化允许热更新的非敏感配置，避免把密码和安全边界写入配置文件。
-            config_to_save = {key: _config_cache.get(key) for key in _HOT_RELOADABLE_CONFIG_KEYS}
-            json.dump(config_to_save, f, indent=4)
-        logger.info(f"Settings successfully persisted to {_CONFIG_JSON_PATH}.")
+            json.dump({_USER_SETTINGS_ROOT_KEY: settings}, f, indent=4)
+        logger.info(f"User settings successfully persisted to {_CONFIG_JSON_PATH}.")
     except Exception as e:
         logger.error(f"Failed to save config to {_CONFIG_JSON_PATH}: {e}")
         raise
+
+
+def save_config_to_json():
+    """将按用户隔离的可编辑设置持久化到 config.json。"""
+    _save_user_settings(_user_settings_cache)
 
 # --- Public Getter Functions ---
 
@@ -168,9 +265,25 @@ def get_active_config() -> Dict[str, Any]:
     return {key: _config_cache.get(key) for key in _DEFAULT_CONFIG}
 
 
-def get_editable_config() -> Dict[str, Any]:
-    """仅返回允许运行时热更新的非敏感配置。"""
-    return {key: _config_cache.get(key) for key in _HOT_RELOADABLE_CONFIG_KEYS}
+def get_editable_config(user: Any = None, username: Optional[str] = None) -> Dict[str, Any]:
+    """返回当前用户可编辑设置；未保存的用户使用系统默认配置。"""
+    return {
+        key: _get_editable_config_value(key, user, username)
+        for key in _USER_SETTING_KEYS
+    }
+
+
+def _get_editable_config_value(key: str, user: Any = None, username: Optional[str] = None) -> Any:
+    owner = user if user is not None else username
+    if key == "CODEBUDDY_FORCED_TEMPERATURE":
+        return get_forced_temperature(owner)
+    if key == "CODEBUDDY_STRIP_MODEL_NAMESPACE":
+        return get_strip_model_namespace(owner)
+    if key == "CODEBUDDY_AUTO_ROTATION_ENABLED":
+        return get_auto_rotation_enabled(owner)
+    if key == "CODEBUDDY_ROTATION_COUNT":
+        return get_rotation_count(owner)
+    return str(_get_user_config_value(key, user, username) or "")
 
 
 def get_server_host() -> str:
@@ -232,17 +345,17 @@ def get_ssl_verify() -> bool:
 def get_log_level() -> str:
     return str(_get_config_value("CODEBUDDY_LOG_LEVEL")).upper()
 
-def get_available_models() -> list:
-    models_str = str(_get_config_value("CODEBUDDY_MODELS"))
+def get_available_models(user: Any = None) -> list:
+    models_str = str(_get_user_config_value("CODEBUDDY_MODELS", user))
     return [model.strip() for model in models_str.split(",")]
 
 
-def get_forced_reasoning_models() -> list:
-    return _parse_csv(_get_config_value("CODEBUDDY_FORCED_REASONING_MODELS"))
+def get_forced_reasoning_models(user: Any = None) -> list:
+    return _parse_csv(_get_user_config_value("CODEBUDDY_FORCED_REASONING_MODELS", user))
 
 
-def get_forced_temperature() -> Optional[float]:
-    value = _get_config_value("CODEBUDDY_FORCED_TEMPERATURE")
+def get_forced_temperature(user: Any = None) -> Optional[float]:
+    value = _get_user_config_value("CODEBUDDY_FORCED_TEMPERATURE", user)
     if value is None:
         return None
 
@@ -264,8 +377,8 @@ def get_forced_temperature() -> Optional[float]:
     return temperature
 
 
-def get_strip_model_namespace() -> bool:
-    value = _get_config_value("CODEBUDDY_STRIP_MODEL_NAMESPACE")
+def get_strip_model_namespace(user: Any = None) -> bool:
+    value = _get_user_config_value("CODEBUDDY_STRIP_MODEL_NAMESPACE", user)
     if value is None:
         return False
     if isinstance(value, str) and not value.strip():
@@ -273,34 +386,30 @@ def get_strip_model_namespace() -> bool:
     return _to_bool(value)
 
 
-def get_rotation_count() -> int:
-    return int(_get_config_value("CODEBUDDY_ROTATION_COUNT"))
+def get_auto_rotation_enabled(user: Any = None) -> bool:
+    return _to_bool(_get_user_config_value("CODEBUDDY_AUTO_ROTATION_ENABLED", user))
+
+
+def get_rotation_count(user: Any = None) -> int:
+    rotation_count = int(_get_user_config_value("CODEBUDDY_ROTATION_COUNT", user))
+    if rotation_count < 1:
+        raise ValueError("CODEBUDDY_ROTATION_COUNT must be a positive integer")
+    return rotation_count
 
 # --- Public Setter for Hot-Reload ---
 
-def update_settings(new_settings: Dict[str, Any]):
-    """Updates the live config and persists it to config.json."""
-    ignored_keys = []
-    for key, value in new_settings.items():
-        if key not in _HOT_RELOADABLE_CONFIG_KEYS:
-            ignored_keys.append(key)
-            continue
+def update_settings(new_settings: Dict[str, Any], user: Any = None, username: Optional[str] = None):
+    """更新当前用户的可编辑设置并持久化。"""
+    user_key = _username_from_user(user, username)
+    if not user_key:
+        raise ValueError("username is required when updating user settings")
 
-        if key in _config_cache:
-            original_type = type(_DEFAULT_CONFIG.get(key, value))
-            try:
-                if original_type is bool:
-                    typed_value = _to_bool(value)
-                else:
-                    typed_value = original_type(value)
-                _update_config_value(key, typed_value)
-            except (ValueError, TypeError):
-                logger.warning(f"Could not cast new value for '{key}' to {original_type}. Using as string.")
-                _update_config_value(key, value)
-
-    if ignored_keys:
-        logger.warning("Ignored non-editable settings update: %s", ", ".join(sorted(ignored_keys)))
-
+    sanitized = {
+        key: _coerce_user_setting(key, value)
+        for key, value in new_settings.items()
+    }
+    current = _user_settings_cache.setdefault(user_key, {})
+    current.update(sanitized)
     save_config_to_json()
 
 # --- Initial Load ---

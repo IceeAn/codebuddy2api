@@ -1,4 +1,16 @@
-# 使用官方的、轻量级的 Python 镜像作为基础
+# 使用满足 Babel 8 / Vite 8 最低版本要求的 Node 构建 Vue 管理台
+FROM node:24.11.1-slim AS frontend-build
+
+WORKDIR /frontend
+
+COPY frontend/package.json ./
+COPY frontend/pnpm-lock.yaml ./
+RUN corepack enable && pnpm install --frozen-lockfile
+
+COPY frontend/ ./
+RUN pnpm run build
+
+# 使用官方的、轻量级的 Python 镜像作为运行时基础
 FROM python:3.11-slim
 
 # 设置容器内的工作目录
@@ -13,6 +25,9 @@ RUN python3 -m pip install --no-cache-dir -r requirements.txt
 
 # 将项目的所有文件复制到工作目录中
 COPY . .
+
+# 复制前端构建产物；源码仓库不提交 frontend/dist
+COPY --from=frontend-build /frontend/dist /app/frontend/dist
 
 # 安装 gosu，一个轻量级的 su/sudo 替代品，用于在脚本中切换用户
 # 并在同一层中进行清理以减小镜像体积

@@ -85,20 +85,77 @@ class ConfigTests(ConfigIsolationMixin, unittest.TestCase):
                 config._config_cache["CODEBUDDY_STRIP_MODEL_NAMESPACE"] = value
                 self.assertIs(config.get_strip_model_namespace(), expected)
 
-    def test_update_settings_ignores_non_hot_reloadable_keys(self):
+    def test_update_settings_persists_user_scoped_settings(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             settings_path = f"{tmp_dir}/config.json"
             with mock.patch.object(config, "_CONFIG_JSON_PATH", settings_path):
-                config.update_settings({
-                    "CODEBUDDY_LOG_LEVEL": "debug",
-                    "CODEBUDDY_ALLOWED_HOSTS": "evil.example",
-                })
+                config.update_settings(
+                    {
+                        "CODEBUDDY_MODELS": "admin-only",
+                        "CODEBUDDY_AUTO_ROTATION_ENABLED": False,
+                        "CODEBUDDY_ROTATION_COUNT": 2,
+                    },
+                    username="admin",
+                )
 
-                self.assertEqual(config.get_log_level(), "DEBUG")
-                self.assertNotEqual(config.get_allowed_hosts(), ["evil.example"])
+                self.assertEqual(config.get_available_models("admin"), ["admin-only"])
+                self.assertIs(config.get_auto_rotation_enabled("admin"), False)
+                self.assertEqual(config.get_rotation_count("admin"), 2)
                 with open(settings_path, "r", encoding="utf-8") as f:
                     persisted = json.load(f)
-                self.assertNotIn("CODEBUDDY_ALLOWED_HOSTS", persisted)
+                self.assertEqual(persisted["users"]["admin"]["CODEBUDDY_MODELS"], "admin-only")
+                self.assertNotIn("CODEBUDDY_LOG_LEVEL", persisted["users"]["admin"])
+
+    def test_get_editable_config_returns_typed_default_and_environment_values(self):
+        config._config_cache["CODEBUDDY_FORCED_TEMPERATURE"] = "1"
+        config._config_cache["CODEBUDDY_AUTO_ROTATION_ENABLED"] = "false"
+        config._config_cache["CODEBUDDY_STRIP_MODEL_NAMESPACE"] = "true"
+        config._config_cache["CODEBUDDY_ROTATION_COUNT"] = "3"
+
+        settings = config.get_editable_config(username="new-user")
+
+        self.assertEqual(settings["CODEBUDDY_FORCED_TEMPERATURE"], 1)
+        self.assertIs(settings["CODEBUDDY_AUTO_ROTATION_ENABLED"], False)
+        self.assertIs(settings["CODEBUDDY_STRIP_MODEL_NAMESPACE"], True)
+        self.assertEqual(settings["CODEBUDDY_ROTATION_COUNT"], 3)
+
+    def test_get_editable_config_returns_null_for_empty_nullable_temperature(self):
+        config._config_cache["CODEBUDDY_FORCED_TEMPERATURE"] = ""
+
+        settings = config.get_editable_config(username="new-user")
+
+        self.assertIsNone(settings["CODEBUDDY_FORCED_TEMPERATURE"])
+
+    def test_update_settings_rejects_non_user_settings_and_zero_rotation_count(self):
+        invalid_payloads = [
+            {"CODEBUDDY_LOG_LEVEL": "debug"},
+            {"CODEBUDDY_ALLOWED_HOSTS": "evil.example"},
+            {"CODEBUDDY_ROTATION_COUNT": 0},
+        ]
+
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload):
+                with self.assertRaises(ValueError):
+                    config.update_settings(payload, username="admin")
+
+    def test_load_config_rejects_flat_config_without_user_scope(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            settings_path = f"{tmp_dir}/config.json"
+            flat_config = {
+                "CODEBUDDY_LOG_LEVEL": "DEBUG",
+                "CODEBUDDY_MODELS": "flat-model",
+                "CODEBUDDY_ROTATION_COUNT": 0,
+                "CODEBUDDY_ALLOWED_HOSTS": "evil.example",
+            }
+            with open(settings_path, "w", encoding="utf-8") as f:
+                json.dump(flat_config, f)
+
+            with mock.patch.object(config, "_CONFIG_JSON_PATH", settings_path):
+                with self.assertRaises(ValueError):
+                    config.load_config()
+
+            with open(settings_path, "r", encoding="utf-8") as f:
+                self.assertEqual(json.load(f), flat_config)
 
 
 class CodeBuddyHeaderTests(ConfigIsolationMixin, unittest.TestCase):

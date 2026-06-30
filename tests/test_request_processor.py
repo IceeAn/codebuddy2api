@@ -4,6 +4,7 @@ import unittest
 import config
 from fastapi import HTTPException
 
+from src.auth_types import AuthenticatedUser
 from src.request_processor import (
     RequestProcessor,
     is_false_like,
@@ -16,6 +17,9 @@ from tests.helpers import ConfigIsolationMixin
 
 
 class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCase):
+    def _user(self, username="admin"):
+        return AuthenticatedUser(username=username, source="session_cookie")
+
     def test_prepare_payload_uses_first_configured_model_when_missing(self):
         config._config_cache["CODEBUDDY_MODELS"] = ",".join(config.DEFAULT_CODEBUDDY_MODELS)
 
@@ -173,6 +177,29 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
         })
 
         self.assertEqual(payload["temperature"], 0.7)
+
+    def test_prepare_payload_uses_user_scoped_settings(self):
+        config.update_settings(
+            {
+                "CODEBUDDY_MODELS": "alice-default",
+                "CODEBUDDY_FORCED_REASONING_MODELS": "alice-default",
+                "CODEBUDDY_FORCED_TEMPERATURE": "0.3",
+                "CODEBUDDY_STRIP_MODEL_NAMESPACE": False,
+            },
+            username="alice",
+        )
+
+        payload = RequestProcessor.prepare_payload(
+            {
+                "messages": [{"role": "user", "content": "test"}],
+            },
+            self._user("alice"),
+        )
+
+        self.assertEqual(payload["model"], "alice-default")
+        self.assertEqual(payload["temperature"], 0.3)
+        self.assertEqual(payload["reasoning_effort"], "max")
+        self.assertEqual(payload["thinking"], {"type": "enabled"})
 
     def test_prepare_payload_preserves_temperature_when_forcing_disabled(self):
         config._config_cache["CODEBUDDY_FORCED_TEMPERATURE"] = ""

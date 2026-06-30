@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from .auth_router import require_session_user
 from .auth_types import AuthenticatedUser
 from .codebuddy_oauth import (
-    forget_auth_state,
+    consume_auth_state,
     poll_codebuddy_auth_status,
     remember_auth_state,
     save_codebuddy_token,
@@ -28,8 +28,21 @@ async def start_device_auth(_user: AuthenticatedUser = Depends(require_session_u
         real_auth_result = await start_codebuddy_auth()
 
         if real_auth_result.get("success"):
-            if real_auth_result.get("auth_state"):
-                remember_auth_state(real_auth_result.get("auth_state"), _user)
+            auth_state = real_auth_result.get("auth_state")
+            if not auth_state:
+                logger.error("CodeBuddy认证API成功响应缺少auth_state")
+                return {
+                    "success": False,
+                    "error": "invalid_auth_state",
+                    "message": "认证服务返回了无效的 auth_state",
+                }
+            if not remember_auth_state(auth_state, _user):
+                logger.error("CodeBuddy认证API返回了仍被占用的auth_state")
+                return {
+                    "success": False,
+                    "error": "duplicate_auth_state",
+                    "message": "认证服务返回了重复的 auth_state，请稍后重试",
+                }
             logger.info("真实CodeBuddy认证API启动成功!")
             return real_auth_result
 
@@ -76,8 +89,9 @@ async def poll_for_token(
         if token_data:
             bearer_token = token_data.get("access_token") or token_data.get("bearer_token")
             if bearer_token:
+                if not consume_auth_state(auth_state, _user):
+                    raise HTTPException(status_code=409, detail="Invalid or already consumed auth_state")
                 token_saved = await save_codebuddy_token(token_data, _user)
-                forget_auth_state(auth_state)
                 return JSONResponse(
                     content={
                         "access_token": bearer_token,

@@ -15,12 +15,12 @@ def normalize_model_id(model: Any) -> str:
     return strip_model_namespace(model).lower()
 
 
-def should_configure_model_reasoning(model: Any) -> bool:
+def should_configure_model_reasoning(model: Any, user: Any = None) -> bool:
     from config import get_forced_reasoning_models
 
     reasoning_models = {
         normalize_model_id(model_id)
-        for model_id in get_forced_reasoning_models()
+        for model_id in get_forced_reasoning_models(user)
     }
     return normalize_model_id(model) in reasoning_models
 
@@ -63,10 +63,10 @@ def apply_default_thinking_options(payload: Dict[str, Any]) -> None:
         payload["enable_thinking"] = True
 
 
-def apply_forced_temperature(payload: Dict[str, Any]) -> None:
+def apply_forced_temperature(payload: Dict[str, Any], user: Any = None) -> None:
     from config import get_forced_temperature
 
-    forced_temperature = get_forced_temperature()
+    forced_temperature = get_forced_temperature(user)
     if forced_temperature is not None:
         payload["temperature"] = forced_temperature
 
@@ -75,25 +75,25 @@ class RequestProcessor:
     """请求预处理器。"""
 
     @staticmethod
-    def prepare_payload(request_body: Dict[str, Any]) -> Dict[str, Any]:
+    def prepare_payload(request_body: Dict[str, Any], user: Any = None) -> Dict[str, Any]:
         """准备上游请求载荷，不修改调用方传入的请求对象。"""
         payload = copy.deepcopy(request_body)
         if not payload.get("model"):
             from config import DEFAULT_CODEBUDDY_MODELS, get_available_models
 
             payload["model"] = next(
-                (model for model in get_available_models() if model),
+                (model for model in get_available_models(user) if model),
                 DEFAULT_CODEBUDDY_MODELS[0],
             )
         from config import get_strip_model_namespace
 
-        if get_strip_model_namespace():
+        if get_strip_model_namespace(user):
             payload["model"] = strip_model_namespace(payload.get("model"))
-        if should_configure_model_reasoning(payload.get("model")):
+        if should_configure_model_reasoning(payload.get("model"), user):
             apply_forced_reasoning_options(payload)
         else:
             apply_default_thinking_options(payload)
-        apply_forced_temperature(payload)
+        apply_forced_temperature(payload, user)
         stream_options = payload.get("stream_options") if isinstance(payload.get("stream_options"), dict) else {}
         payload["stream_options"] = {**stream_options, "include_usage": True}
         payload["stream"] = True  # CodeBuddy 只支持流式请求

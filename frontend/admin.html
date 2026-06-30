@@ -277,6 +277,15 @@
             box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
         }
 
+        .setting-checkbox {
+            display: block;
+            width: 1rem;
+            height: 1rem;
+            margin: 0;
+            accent-color: var(--primary-color);
+            cursor: pointer;
+        }
+
         .form-textarea {
             resize: vertical;
             min-height: 100px;
@@ -1391,9 +1400,6 @@
                             <button class="btn btn-secondary" onclick="copyAuthUrl()">
                                 <i class="fas fa-copy"></i> 复制链接
                             </button>
-                            <button class="btn btn-warning" onclick="showManualCallback()">
-                                <i class="fas fa-hand-pointer"></i> 手动回调
-                            </button>
                         </div>
                         
                         <!-- 自动回调等待区域 -->
@@ -1407,19 +1413,6 @@
                                 <button class="btn btn-secondary" onclick="waitForAutoCallback()">
                                     <i class="fas fa-sync-alt"></i> 检查认证状态
                                 </button>
-                            </div>
-                        </div>
-                        
-                        <!-- 手动回调区域 -->
-                        <div id="manualCallbackSection" class="callback-section hidden">
-                            <h5 style="margin-bottom: 1rem;">手动输入回调链接</h5>
-                            <p style="margin-bottom: 1rem; font-size: 0.9rem; color: var(--secondary-color);">
-                                如果自动检测失败，请在完成登录后，将浏览器地址栏中的完整URL粘贴到下面：
-                            </p>
-                            <input type="text" id="callbackUrl" class="form-input" placeholder="粘贴回调URL...">
-                            <div style="margin-top: 1rem; text-align: right;">
-                                <button class="btn btn-secondary" onclick="waitForAutoCallback()">返回自动模式</button>
-                                <button class="btn btn-success" onclick="submitCallbackUrl()">提交</button>
                             </div>
                         </div>
                     </div>
@@ -1455,8 +1448,8 @@
                     <div class="card-header">
                         <h3 class="card-title">已保存的凭证</h3>
                         <div>
-                            <button id="rotationToggleBtn" class="btn btn-secondary" onclick="toggleAutoRotation()" style="margin-right: 0.5rem;">
-                                <i class="fas fa-ban"></i> 恢复自动轮换
+                            <button id="rotationToggleBtn" class="btn btn-secondary" onclick="toggleAutoRotation()" style="margin-right: 0.5rem;" disabled>
+                                <i class="fas fa-ban"></i> 自动轮换
                             </button>
                             <button class="btn btn-primary" onclick="loadCredentials()">
                                 <i class="fas fa-sync-alt"></i> 刷新列表
@@ -1496,14 +1489,8 @@
                     <button class="btn btn-success" onclick="createApiKey()">
                         <i class="fas fa-plus"></i> 生成 API Key
                     </button>
-                    <div id="newApiKeySection" class="hidden" style="margin-top: 1.5rem;">
-                        <label class="form-label" for="newApiKeyValue">新 API Key</label>
-                        <input type="text" id="newApiKeyValue" class="form-input" readonly>
-                        <div style="margin-top: 1rem;">
-                            <button class="btn btn-primary" onclick="copyNewApiKey()">
-                                <i class="fas fa-copy"></i> 复制
-                            </button>
-                        </div>
+                    <div id="newApiKeysSection" class="hidden" style="margin-top: 1.5rem;">
+                        <div id="pendingApiKeysList"></div>
                     </div>
                 </div>
 
@@ -1631,8 +1618,10 @@
         let isAuthenticated = false;
         let credentialsCache = []; // 用于缓存凭证和其状态
         let apiKeysCache = [];
+        let pendingApiKeys = [];
         let apiModelsCache = [];
         const fallbackApiModels = ['glm-5.2', 'deepseek-v4-pro'];
+        const pendingApiKeysLeaveWarning = '仍有未保存的 API Key，离开后将无法再次查看。确定要离开吗？';
 
         // 初始化
         document.addEventListener('DOMContentLoaded', function() {
@@ -1748,6 +1737,11 @@
             }, duration);
         }
 
+        function isServiceAuthenticationFailure(response) {
+            const challenge = response.headers.get('WWW-Authenticate');
+            return response.status === 401 && challenge && challenge.trim().toLowerCase() === 'bearer';
+        }
+
         // 增强的API错误处理
         async function handleApiError(response, context = '') {
             let errorMessage = `${context}失败`;
@@ -1758,7 +1752,7 @@
                 errorMessage = `${context}失败 (状态码: ${response.status})`;
             }
             
-            if (response.status === 403 || response.status === 401) {
+            if (isServiceAuthenticationFailure(response)) {
                 showNotificationWithAction(
                     '认证已过期，需要重新登录', 
                     'error', 
@@ -2014,7 +2008,7 @@
             apiKeysList.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i><div>加载中...</div></div>';
 
             try {
-                const response = await fetch('/auth/api-keys', {
+                const response = await fetch('/api/admin/api-keys', {
                     headers: getAuthHeaders()
                 });
 
@@ -2071,12 +2065,41 @@
             `).join('') + '</div>';
         }
 
+        function displayPendingApiKeys() {
+            const section = document.getElementById('newApiKeysSection');
+            const list = document.getElementById('pendingApiKeysList');
+            section.classList.toggle('hidden', pendingApiKeys.length === 0);
+            list.innerHTML = pendingApiKeys.map(key => `
+                <div class="credential-item" style="margin-bottom: 1rem;">
+                    <div class="credential-info">
+                        <label class="form-label" for="pendingApiKey-${escapeHtml(key.id)}">
+                            API Key「${escapeHtml(key.name)}」仅显示一次，请立即复制保存
+                        </label>
+                        <input
+                            type="text"
+                            id="pendingApiKey-${escapeHtml(key.id)}"
+                            class="form-input"
+                            value="${escapeHtml(key.apiKey)}"
+                            readonly>
+                    </div>
+                    <div class="credential-actions">
+                        <button class="btn btn-primary" onclick="copyNewApiKey('${escapeHtml(key.id)}')">
+                            <i class="fas fa-copy"></i> 复制并关闭
+                        </button>
+                        <button class="btn btn-secondary" onclick="dismissNewApiKey('${escapeHtml(key.id)}')">
+                            我已保存
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
         async function createApiKey() {
             const nameInput = document.getElementById('apiKeyName');
             const name = nameInput.value.trim();
 
             try {
-                const response = await fetch('/auth/api-keys', {
+                const response = await fetch('/api/admin/api-keys', {
                     method: 'POST',
                     headers: getAuthHeaders(),
                     body: JSON.stringify({name})
@@ -2084,8 +2107,12 @@
 
                 if (response.ok) {
                     const data = await response.json();
-                    document.getElementById('newApiKeyValue').value = data.api_key;
-                    document.getElementById('newApiKeySection').classList.remove('hidden');
+                    pendingApiKeys.push({
+                        id: data.id,
+                        name: data.name,
+                        apiKey: data.api_key
+                    });
+                    displayPendingApiKeys();
                     nameInput.value = '';
                     showNotification('API Key 已生成', 'success');
                     loadApiKeys();
@@ -2098,10 +2125,20 @@
             }
         }
 
-        function copyNewApiKey() {
-            const input = document.getElementById('newApiKeyValue');
+        function dismissNewApiKey(keyId) {
+            pendingApiKeys = pendingApiKeys.filter(key => key.id !== keyId);
+            displayPendingApiKeys();
+        }
+
+        function copyNewApiKey(keyId) {
+            const pendingKey = pendingApiKeys.find(key => key.id === keyId);
+            const input = document.getElementById(`pendingApiKey-${pendingKey.id}`);
             input.select();
-            document.execCommand('copy');
+            if (!document.execCommand('copy')) {
+                showNotification('复制失败，请手动复制', 'error');
+                return;
+            }
+            dismissNewApiKey(keyId);
             showNotification('API Key 已复制', 'success');
         }
 
@@ -2111,7 +2148,7 @@
             }
 
             try {
-                const response = await fetch(`/auth/api-keys/${encodeURIComponent(keyId)}`, {
+                const response = await fetch(`/api/admin/api-keys/${encodeURIComponent(keyId)}`, {
                     method: 'DELETE',
                     headers: getAuthHeaders()
                 });
@@ -2149,14 +2186,14 @@
 
             // 加载凭证统计
             try {
-                const credResponse = await fetch('/codebuddy/v1/credentials', { 
+                const credResponse = await fetch('/api/admin/status', {
                     headers: getAuthHeaders() 
                 });
                 if (credResponse.ok) {
                     const credData = await credResponse.json();
-                    const credentials = credData.credentials || [];
-                    const credCount = credentials.length;
-                    const validCreds = credentials.filter(c => !c.is_expired).length;
+                    const credentialSummary = credData.credentials || {};
+                    const credCount = Number(credentialSummary.total || 0);
+                    const validCreds = Number(credentialSummary.valid || 0);
                     
                     document.getElementById('totalCredentials').textContent = credCount;
                     document.getElementById('validCredentials').textContent = validCreds;
@@ -2193,11 +2230,12 @@
 
             // 加载使用统计
             try {
-                const statsResponse = await fetch('/api/stats', { headers: getAuthHeaders() });
+                const statsResponse = await fetch('/api/admin/status', { headers: getAuthHeaders() });
                 if (statsResponse.ok) {
                     const statsData = await statsResponse.json();
-                    updateUsageTables(statsData);
-                    updateDashboardStats(statsData);
+                    const usageStats = statsData.usage || statsData;
+                    updateUsageTables(usageStats);
+                    updateDashboardStats(usageStats);
                 } else {
                     console.error('Failed to load usage stats:', statsResponse.status);
                 }
@@ -2300,7 +2338,7 @@
             credentialsList.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i><div>加载中...</div></div>';
             
             try {
-                const response = await fetch('/codebuddy/v1/credentials', { 
+                const response = await fetch('/api/admin/credentials', {
                     headers: getAuthHeaders() 
                 });
                 
@@ -2308,9 +2346,14 @@
                     const data = await response.json();
                     // 初始化凭证缓存
                     credentialsCache = (data.credentials || []).map(cred => ({...cred, status: 'unknown'}));
+                    if (data.current) {
+                        displayCurrentCredentialStatus(data.current);
+                    }
                     displayCredentials();
-                    loadCurrentCredentialStatus(); // 加载当前状态
-                } else if (response.status === 403) {
+                    if (!data.current) {
+                        loadCurrentCredentialStatus();
+                    }
+                } else if (response.status === 401 || response.status === 403) {
                     credentialsList.innerHTML = '<div class="status status-error">认证失败，请重新登录</div>';
                     logout();
                 } else {
@@ -2325,13 +2368,13 @@
             const statusDiv = document.getElementById('currentCredentialStatus');
             
             try {
-                const response = await fetch('/codebuddy/v1/credentials/current', { 
+                const response = await fetch('/api/admin/credentials', {
                     headers: getAuthHeaders() 
                 });
                 
                 if (response.ok) {
                     const data = await response.json();
-                    displayCurrentCredentialStatus(data);
+                    displayCurrentCredentialStatus(data.current || {status: 'no_credentials'});
                 } else {
                     statusDiv.innerHTML = '<div class="status status-error">无法获取当前状态</div>';
                 }
@@ -2345,29 +2388,16 @@
             window.lastCredentialStatus = data;
             
             const statusDiv = document.getElementById('currentCredentialStatus');
-            let statusHtml = '';
             let statusClass = '';
             let statusIcon = '';
             const safeFilename = escapeHtml(data.filename);
             const safeUserId = escapeHtml(data.user_id);
-            const safeIndex = Number.isInteger(data.index) ? data.index + 1 : '-';
+            const matchedIndex = credentialsCache.findIndex(cred => cred.credential_id && cred.credential_id === data.credential_id);
+            const safeIndex = matchedIndex >= 0 ? matchedIndex + 1 : (Number.isInteger(data.index) ? data.index + 1 : '-');
             const safeRotationCount = escapeHtml(data.rotation_count);
             const safeUsageCount = escapeHtml(data.usage_count);
 
             switch(data.status) {
-                case 'manual_selected':
-                    statusClass = 'status-warning';
-                    statusIcon = 'fas fa-hand-pointer';
-                    statusHtml = `
-                        <div class="status ${statusClass}">
-                            <i class="${statusIcon}"></i> 手动选择模式
-                        </div>
-                        <div style="margin-top: 0.5rem; font-size: 0.9rem;">
-                            当前使用: <strong>${safeFilename}</strong> (凭证 #${safeIndex})
-                            ${data.user_id !== 'unknown' ? `<br>用户ID: ${safeUserId}` : ''}
-                        </div>
-                    `;
-                    break;
                 case 'auto_rotation_disabled':
                     statusClass = 'status-warning';
                     statusIcon = 'fas fa-pause';
@@ -2378,21 +2408,7 @@
                         <div style="margin-top: 0.5rem; font-size: 0.9rem;">
                             固定使用: <strong>${safeFilename}</strong> (凭证 #${safeIndex})
                             <br>轮换次数: ${safeRotationCount}
-                            ${data.user_id !== 'unknown' ? `<br>用户ID: ${safeUserId}` : ''}
-                        </div>
-                    `;
-                    break;
-                case 'rotation_count_zero':
-                    statusClass = 'status-warning';
-                    statusIcon = 'fas fa-ban';
-                    statusHtml = `
-                        <div class="status ${statusClass}">
-                            <i class="${statusIcon}"></i> 轮换次数为0
-                        </div>
-                        <div style="margin-top: 0.5rem; font-size: 0.9rem;">
-                            固定使用: <strong>${safeFilename}</strong> (凭证 #${safeIndex})
-                            <br>轮换次数设为0，不进行轮换
-                            ${data.user_id !== 'unknown' ? `<br>用户ID: ${safeUserId}` : ''}
+                            ${data.user_id && data.user_id !== 'unknown' ? `<br>用户ID: ${safeUserId}` : ''}
                         </div>
                     `;
                     break;
@@ -2406,7 +2422,7 @@
                         <div style="margin-top: 0.5rem; font-size: 0.9rem;">
                             当前使用: <strong>${safeFilename}</strong> (凭证 #${safeIndex})
                             <br>使用次数: ${safeUsageCount}/${safeRotationCount}
-                            ${data.user_id !== 'unknown' ? `<br>用户ID: ${safeUserId}` : ''}
+                            ${data.user_id && data.user_id !== 'unknown' ? `<br>用户ID: ${safeUserId}` : ''}
                         </div>
                     `;
                     break;
@@ -2432,6 +2448,14 @@
             updateRotationToggleButton(data);
         }
 
+        function getCredentialRecord(index) {
+            const credential = credentialsCache[index];
+            if (!credential || !credential.credential_id) {
+                throw new Error('凭证 ID 缺失，请刷新凭证列表后重试');
+            }
+            return credential;
+        }
+
         function displayCredentials() {
             const credentialsList = document.getElementById('credentialsList');
             // 分组渲染：按邮箱或用户ID分组，添加删除按钮
@@ -2443,14 +2467,14 @@
                     groups[key].push({ cred, index });
                 });
                 
-                // 获取当前选中的凭证索引 - 修复刷新后丢失问题
-                let currentSelectedIndex = -1;
+                // 获取当前选中的凭证 ID - 修复刷新后丢失问题
+                let currentSelectedCredentialId = '';
                 try {
                     const currentStatus = window.lastCredentialStatus || {};
-                    currentSelectedIndex = currentStatus.index || -1;
+                    currentSelectedCredentialId = currentStatus.credential_id || '';
                     
                     // 如果没有缓存状态，重新获取
-                    if (currentSelectedIndex === -1 && !window.lastCredentialStatus) {
+                    if (!currentSelectedCredentialId && !window.lastCredentialStatus) {
                         loadCurrentCredentialStatus().then(() => {
                             // 状态加载完成后重新渲染
                             displayCredentials();
@@ -2495,7 +2519,10 @@
                         }
 
                         // 检查是否为当前选中的凭证
-                        const isSelected = index === currentSelectedIndex;
+                        const isSelected = Boolean(cred.credential_id && cred.credential_id === currentSelectedCredentialId);
+                        const autoRotationEnabled = window.lastCredentialStatus?.auto_rotation_enabled === true;
+                        const canSelectCredential = !isSelected || autoRotationEnabled;
+                        const selectCredentialTitle = isSelected ? '固定当前凭证' : '选择此凭证';
                         const selectedClass = isSelected ? ' credential-item-selected' : '';
                         const selectedBadge = isSelected ? '<span class="credential-selected-badge">当前使用</span>' : '';
 
@@ -2535,8 +2562,8 @@
                                     </div>
                                 </div>
                                 <div class="credential-actions">
-                                    ${!isSelected ? 
-                                        `<button class="btn btn-primary" onclick="selectCredential(${index})" title="选择此凭证">
+                                    ${canSelectCredential ?
+                                        `<button class="btn btn-primary" onclick="selectCredential(${index})" title="${selectCredentialTitle}">
                                             <i class="fas fa-hand-pointer"></i>
                                         </button>` : ''
                                     }
@@ -2571,7 +2598,6 @@
                         const safeUserId = escapeHtml(cred.user_id);
                         const safeTokenPreview = escapeHtml(cred.token_preview);
                         const safeTimeRemaining = escapeHtml(cred.time_remaining_str || 'null');
-                        let statusIcon = '';
                     switch(cred.status) {
                         case 'valid':
                             statusIcon = `<i class="fas fa-check-circle" style="color: var(--success-color); font-size: 1.5rem;" title="有效"></i>`;
@@ -2597,7 +2623,7 @@
                                 </div>
                         </div>
                         <div class="credential-actions">
-                            <button class="btn btn-warning" onclick="selectCredential(${index})" title="手动选择此凭证">
+                            <button class="btn btn-warning" onclick="selectCredential(${index})" title="设为当前凭证">
                                 <i class="fas fa-hand-pointer"></i> 选择
                             </button>
                             <button class="btn btn-success" onclick="testCredential(${index})">
@@ -2612,10 +2638,10 @@
         async function deleteCredential(index) {
             if (!confirm(`确定要删除凭证 #${index + 1} 吗？此操作不可恢复。`)) return;
             try {
-                const response = await fetch('/codebuddy/v1/credentials/delete', {
-                    method: 'POST',
+                const credential = getCredentialRecord(index);
+                const response = await fetch(`/api/admin/credentials/${encodeURIComponent(credential.credential_id)}`, {
+                    method: 'DELETE',
                     headers: getAuthHeaders(),
-                    body: JSON.stringify({ index })
                 });
                 if (response.ok) {
                     const data = await response.json();
@@ -2641,7 +2667,7 @@
             }
 
             try {
-                const response = await fetch('/codebuddy/v1/credentials', {
+                const response = await fetch('/api/admin/credentials', {
                     method: 'POST',
                     headers: getAuthHeaders(),
                     body: JSON.stringify({
@@ -2670,15 +2696,16 @@
             showNotification(`正在选择凭证 #${index + 1}...`, 'info');
             
             try {
-                const response = await fetch('/codebuddy/v1/credentials/select', {
+                const credential = getCredentialRecord(index);
+                const response = await fetch(`/api/admin/credentials/${encodeURIComponent(credential.credential_id)}/select`, {
                     method: 'POST',
                     headers: getAuthHeaders(),
-                    body: JSON.stringify({ index: index })
                 });
                 
                 if (response.ok) {
                     const data = await response.json();
-                    showNotification(`✓ ${data.message}`, 'success');
+                    const message = data.auto_rotation_disabled_by_select ? '凭证已选择，自动轮换已关闭' : '凭证已选择';
+                    showNotification(message, 'success');
                     await loadCurrentCredentialStatus(); // 刷新状态显示
                     displayCredentials(); // 刷新凭证列表显示
                 } else {
@@ -2695,70 +2722,42 @@
             if (!btn) return;
             
             // 根据当前状态更新按钮文本和图标
-            if (data.status === 'manual_selected') {
-                // 手动选择模式，显示恢复自动轮换按钮
-                btn.innerHTML = '<i class="fas fa-undo"></i> 恢复自动轮换';
-                btn.className = 'btn btn-secondary';
-            } else if (data.auto_rotation_enabled === false) {
+            if (data.auto_rotation_enabled === false) {
                 // 自动轮换已关闭，显示开启按钮
                 btn.innerHTML = '<i class="fas fa-play"></i> 开启自动轮换';
                 btn.className = 'btn btn-success';
+                btn.disabled = false;
             } else if (data.auto_rotation_enabled === true) {
                 // 自动轮换已开启，显示关闭按钮
                 btn.innerHTML = '<i class="fas fa-pause"></i> 关闭自动轮换';
                 btn.className = 'btn btn-warning';
+                btn.disabled = false;
             } else {
-                // 默认状态
-                btn.innerHTML = '<i class="fas fa-undo"></i> 恢复自动轮换';
+                btn.innerHTML = '<i class="fas fa-ban"></i> 自动轮换';
                 btn.className = 'btn btn-secondary';
+                btn.disabled = true;
             }
         }
 
         async function toggleAutoRotation() {
             const btn = document.getElementById('rotationToggleBtn');
+            if (!btn || btn.disabled) return;
             const originalHtml = btn.innerHTML;
             
             btn.disabled = true;
             btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 处理中...';
             
             try {
-                // 先获取当前状态
-                const statusResponse = await fetch('/codebuddy/v1/credentials/current', {
+                const response = await fetch('/api/admin/credentials/rotation/toggle', {
+                    method: 'POST',
                     headers: getAuthHeaders()
                 });
                 
-                if (!statusResponse.ok) {
-                    throw new Error('无法获取当前状态');
-                }
-                
-                const statusData = await statusResponse.json();
-                
-                if (statusData.status === 'manual_selected') {
-                    // 如果是手动选择状态，先清除手动选择
-                    const response = await fetch('/codebuddy/v1/credentials/auto', {
-                        method: 'POST',
-                        headers: getAuthHeaders()
-                    });
-                    
-                    if (response.ok) {
-                        const data = await response.json();
-                        showNotification(`✓ ${data.message}`, 'success');
-                    } else {
-                        throw new Error('恢复自动轮换失败');
-                    }
+                if (response.ok) {
+                    const data = await response.json();
+                    showNotification(data.message || '自动轮换状态已更新', 'success');
                 } else {
-                    // 否则切换自动轮换开关
-                    const response = await fetch('/codebuddy/v1/credentials/toggle-rotation', {
-                        method: 'POST',
-                        headers: getAuthHeaders()
-                    });
-                    
-                    if (response.ok) {
-                        const data = await response.json();
-                        showNotification(`✓ ${data.message}`, 'success');
-                    } else {
-                        throw new Error('切换自动轮换失败');
-                    }
+                    throw new Error('切换自动轮换失败');
                 }
                 
                 // 刷新状态显示和凭证列表
@@ -2772,57 +2771,31 @@
                 btn.disabled = false;
             }
         }
-        
-        async function resumeAutoRotation() {
-            showNotification('正在恢复自动轮换...', 'info');
-            
-            try {
-                const response = await fetch('/codebuddy/v1/credentials/auto', {
-                    method: 'POST',
-                    headers: getAuthHeaders()
-                });
-                
-                if (response.ok) {
-                    const data = await response.json();
-                    showNotification(`✓ ${data.message}`, 'success');
-                    loadCurrentCredentialStatus(); // 刷新状态显示
-                } else {
-                    const errorData = await response.json();
-                    showNotification(`恢复失败: ${errorData.detail}`, 'error');
-                }
-            } catch (error) {
-                showNotification(`网络错误: ${error.message}`, 'error');
-            }
-        }
-
         async function testCredential(index) {
             showNotification(`正在测试凭证 #${index + 1}...`, 'info');
             
             // 找到要测试的凭证的原始数据
-            const originalCred = credentialsCache[index];
-            if (!originalCred) return;
+            let originalCred;
+            try {
+                originalCred = getCredentialRecord(index);
+            } catch (error) {
+                showNotification(error.message, 'error');
+                return;
+            }
 
             try {
-                const model = await getSelectedOrFallbackModel();
-                const response = await fetch('/codebuddy/v1/chat/completions', {
+                const response = await fetch(`/api/admin/credentials/${encodeURIComponent(originalCred.credential_id)}/test`, {
                     method: 'POST',
                     headers: getAuthHeaders(),
-                    body: JSON.stringify({
-                        // 在后端，token管理器是轮换的，我们无法直接指定用哪个token
-                        // 所以这里的测试实际上是测试下一个将被轮换到的token
-                        // 为了更精确，理想的后端应该有一个专门的测试接口
-                        // 但在当前架构下，这是最好的模拟
-                        model: model,
-                        messages: [{ role: 'user', content: 'test' }],
-                        max_tokens: 1
-                    })
+                    body: JSON.stringify({})
                 });
+                const data = await response.json();
                 
-                if (response.ok) {
+                if (response.ok && data.ok) {
                     showNotification(`凭证 #${index + 1} 测试成功！ ✓`, 'success');
                     credentialsCache[index].status = 'valid';
                 } else {
-                     showNotification(`凭证 #${index + 1} 无效或已过期 ✗`, 'error');
+                    showNotification(`凭证 #${index + 1} 无效或已过期 ✗`, 'error');
                     credentialsCache[index].status = 'invalid';
                 }
             } catch (error) {
@@ -2909,7 +2882,8 @@
         async function testAPI() {
             const model = await getSelectedOrFallbackModel();
             const message = document.getElementById('testMessage').value;
-            const stream = document.getElementById('testStream').checked;
+            const streamInput = document.getElementById('testStream');
+            const stream = streamInput.checked;
             const resultDiv = document.getElementById('testResult');
 
             if (!message.trim()) {
@@ -2918,6 +2892,7 @@
             }
 
             resultDiv.textContent = '正在发送请求...\n';
+            streamInput.disabled = true;
 
             try {
                 const response = await fetch('/codebuddy/v1/chat/completions', {
@@ -2929,6 +2904,12 @@
                         stream: stream
                     })
                 });
+
+                if (!response.ok) {
+                    resultDiv.textContent = `错误: HTTP ${response.status}`;
+                    await handleApiError(response, 'API 调用');
+                    return;
+                }
 
                 if (stream) {
                     const reader = response.body.getReader();
@@ -2964,14 +2945,12 @@
                     resultDiv.textContent = JSON.stringify(data, null, 2);
                 }
 
-                if (!response.ok) {
-                    showNotification('API 调用失败', 'error');
-                } else {
-                    showNotification('API 测试成功！', 'success');
-                }
+                showNotification('API 测试成功！', 'success');
             } catch (error) {
                 resultDiv.textContent = `错误: ${error.message}`;
                 showNotification(`测试失败: ${error.message}`, 'error');
+            } finally {
+                streamInput.disabled = false;
             }
         }
 
@@ -3050,44 +3029,10 @@
             showNotification('已在新窗口打开认证页面，请完成登录', 'info');
         }
 
-        function showManualCallback() {
-            document.getElementById('manualCallbackSection').style.display = 'block';
-            document.getElementById('autoCallbackSection').style.display = 'none';
-            stopPolling();
-        }
-
         function waitForAutoCallback() {
-            document.getElementById('manualCallbackSection').style.display = 'none';
             document.getElementById('autoCallbackSection').style.display = 'block';
             if (currentAuthData) {
                 pollForToken();
-            }
-        }
-
-        async function submitCallbackUrl() {
-            const callbackUrl = document.getElementById('callbackUrl').value.trim();
-            if (!callbackUrl) {
-                showNotification('请输入回调链接', 'error');
-                return;
-            }
-
-            // 尝试从URL中提取授权码
-            try {
-                const url = new URL(callbackUrl);
-                const code = url.searchParams.get('code');
-                const state = url.searchParams.get('state');
-                
-                if (code) {
-                    showNotification('正在处理授权码...', 'info');
-                    // 这里需要调用后端API来处理授权码
-                    // 暂时显示成功消息
-                    showNotification('授权码已提交，正在获取token...', 'success');
-                    document.getElementById('callbackUrl').value = '';
-                } else {
-                    showNotification('URL中未找到授权码，请确认链接正确', 'error');
-                }
-            } catch (error) {
-                showNotification('无效的URL格式', 'error');
             }
         }
 
@@ -3164,207 +3109,110 @@
             }
         }
 
-        function showManualInstructions(instructions) {
-            const safeSteps = Array.isArray(instructions.steps)
-                ? instructions.steps.map(step => `<li>${escapeHtml(step)}</li>`).join('')
-                : '';
-            const safeAlternativeUrl = escapeHtml(safeExternalUrl(instructions.alternative_url));
-
-            // 创建一个模态框显示手动获取指导
-            const modal = document.createElement('div');
-            modal.style.cssText = `
-                position: fixed;
-                top: 0;
-                left: 0;
-                right: 0;
-                bottom: 0;
-                background: rgba(0, 0, 0, 0.5);
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                z-index: 1000;
-            `;
-
-            const content = document.createElement('div');
-            content.style.cssText = `
-                background: white;
-                border-radius: 0.5rem;
-                padding: 2rem;
-                max-width: 500px;
-                width: 90%;
-                max-height: 80vh;
-                overflow-y: auto;
-            `;
-
-            if (document.body.classList.contains('dark')) {
-                content.style.background = 'var(--card-dark)';
-                content.style.color = 'var(--text-dark)';
-            }
-
-            content.innerHTML = `
-                <h3 style="margin-bottom: 1rem; color: var(--primary-color);">手动获取 Bearer Token</h3>
-                <ol style="line-height: 1.8; margin-bottom: 1.5rem;">
-                    ${safeSteps}
-                </ol>
-                <div style="text-align: right;">
-                    <button class="btn btn-secondary" onclick="this.closest('div').parentElement.remove()">
-                        <i class="fas fa-times"></i> 关闭
-                    </button>
-                    <a href="${safeAlternativeUrl}" target="_blank" rel="noopener noreferrer" class="btn btn-primary" style="margin-left: 0.5rem;">
-                        <i class="fas fa-external-link-alt"></i> 打开 CodeBuddy
-                    </a>
-                </div>
-            `;
-
-            modal.appendChild(content);
-            document.body.appendChild(modal);
-
-            // 点击背景关闭
-            modal.addEventListener('click', (e) => {
-                if (e.target === modal) {
-                    modal.remove();
-                }
-            });
-        }
-
-        function showManualGuidedInstructions() {
-            // 显示手动引导说明，并提供选择
-            const autoSection = document.getElementById('autoCallbackSection');
-            autoSection.innerHTML = `
-                <div class="auth-progress">
-                    <i class="fas fa-info-circle"></i>
-                    <div>手动认证流程</div>
-                    <small style="color: var(--secondary-color);">请按照步骤获取Bearer Token</small>
-                </div>
-                <div style="text-align: center; margin-top: 1rem;">
-                    <button class="btn btn-success" onclick="openAuthUrl()" style="margin-right: 0.5rem;">
-                        <i class="fas fa-external-link-alt"></i> 打开CodeBuddy
-                    </button>
-                    <button class="btn btn-secondary" onclick="skipToManualAdd()">
-                        <i class="fas fa-edit"></i> 直接手动添加Token
-                    </button>
-                </div>
-            `;
-        }
-
-        function showManualSteps(steps) {
-            // 在通知中显示详细步骤，或者在页面上显示
-            let stepsHtml = '<div style="margin-top: 1rem;"><h4>详细操作步骤：</h4><ol>';
-            steps.forEach(step => {
-                stepsHtml += `<li>${escapeHtml(step)}</li>`;
-            });
-            stepsHtml += '</ol></div>';
-            
-            // 可以选择在页面上显示步骤，或者在模态框中显示
-            const modal = document.createElement('div');
-            modal.style.cssText = `
-                position: fixed;
-                top: 0;
-                left: 0;
-                right: 0;
-                bottom: 0;
-                background: rgba(0, 0, 0, 0.5);
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                z-index: 1000;
-            `;
-
-            const content = document.createElement('div');
-            content.style.cssText = `
-                background: white;
-                border-radius: 0.5rem;
-                padding: 2rem;
-                max-width: 600px;
-                width: 90%;
-                max-height: 80vh;
-                overflow-y: auto;
-            `;
-
-            if (document.body.classList.contains('dark')) {
-                content.style.background = 'var(--card-dark)';
-                content.style.color = 'var(--text-dark)';
-            }
-
-            content.innerHTML = `
-                <h3 style="margin-bottom: 1rem; color: var(--primary-color);">CodeBuddy 手动认证步骤</h3>
-                ${stepsHtml}
-                <div style="text-align: right; margin-top: 2rem;">
-                    <button class="btn btn-secondary" onclick="this.closest('div').parentElement.remove()">
-                        <i class="fas fa-times"></i> 我知道了
-                    </button>
-                    <button class="btn btn-primary" onclick="openAuthUrl(); this.closest('div').parentElement.remove();" style="margin-left: 0.5rem;">
-                        <i class="fas fa-external-link-alt"></i> 打开CodeBuddy
-                    </button>
-                </div>
-            `;
-
-            modal.appendChild(content);
-            document.body.appendChild(modal);
-
-            // 点击背景关闭
-            modal.addEventListener('click', (e) => {
-                if (e.target === modal) {
-                    modal.remove();
-                }
-            });
-        }
-
-        function skipToManualAdd() {
-            // 跳转到手动添加Token的区域
-            document.getElementById('authUrlSection').style.display = 'none';
-            resetAuthButton();
-            
-            // 聚焦到手动添加区域
-            document.querySelector('#bearerToken').focus();
-            showNotification('请在下方手动添加您从CodeBuddy获取的Bearer Token', 'info');
-        }
-
         // 清理函数：页面卸载时停止轮询
-        window.addEventListener('beforeunload', () => {
+        window.addEventListener('beforeunload', (event) => {
             stopPolling();
+            if (pendingApiKeys.length > 0) {
+                event.preventDefault();
+                event.returnValue = pendingApiKeysLeaveWarning;
+            }
         });
 
         // 设置页面功能
+        const AUTO_ROTATION_SETTING_KEY = 'CODEBUDDY_AUTO_ROTATION_ENABLED';
+        const ROTATION_COUNT_SETTING_KEY = 'CODEBUDDY_ROTATION_COUNT';
+
+        function isTruthySetting(value) {
+            if (typeof value === 'boolean') return value;
+            return ['true', '1', 'yes', 'on'].includes(String(value).trim().toLowerCase());
+        }
+
+        function normalizeRotationCount(value) {
+            const parsed = Number.parseInt(String(value), 10);
+            return Number.isInteger(parsed) && parsed >= 1 ? parsed : 1;
+        }
+
+        function updateRotationCountVisibility() {
+            const toggle = document.getElementById(`setting_${AUTO_ROTATION_SETTING_KEY}`);
+            const rotationGroup = document.querySelector(`[data-setting-group="${ROTATION_COUNT_SETTING_KEY}"]`);
+            const rotationInput = document.getElementById(`setting_${ROTATION_COUNT_SETTING_KEY}`);
+            if (!toggle || !rotationGroup || !rotationInput) return;
+            rotationGroup.style.display = toggle.checked ? '' : 'none';
+            if (toggle.checked) {
+                rotationInput.value = String(normalizeRotationCount(rotationInput.value));
+            }
+        }
+
+        function createSettingInput(field, settings) {
+            const input = document.createElement('input');
+            input.id = `setting_${field.key}`;
+            input.className = 'form-input';
+            input.dataset.settingKey = field.key;
+
+            if (field.type === 'boolean') {
+                input.type = 'checkbox';
+                input.className = 'setting-checkbox';
+                input.checked = isTruthySetting(settings[field.key]);
+                if (field.key === AUTO_ROTATION_SETTING_KEY) {
+                    input.addEventListener('change', updateRotationCountVisibility);
+                }
+                return input;
+            }
+
+            if (field.type === 'number') {
+                input.type = 'number';
+                if (field.min !== undefined) input.min = String(field.min);
+                if (field.max !== undefined) input.max = String(field.max);
+                input.step = String(field.step || 1);
+                input.value = field.key === ROTATION_COUNT_SETTING_KEY
+                    ? String(normalizeRotationCount(settings[field.key]))
+                    : (settings[field.key] ?? '');
+                return input;
+            }
+
+            input.type = (field.key.toLowerCase().includes('password')) ? 'password' : 'text';
+            input.value = settings[field.key] ?? '';
+            return input;
+        }
+
         async function loadSettings() {
             const settingsForm = document.getElementById('settingsForm');
             settingsForm.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i><div>加载配置中...</div></div>';
 
             try {
-                const response = await fetch('/api/settings', { headers: getAuthHeaders() });
+                const response = await fetch('/api/admin/settings', { headers: getAuthHeaders() });
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
                 const data = await response.json();
                 const settings = data.settings;
-                const labels = data.labels;
+                const fields = data.fields || Object.keys(settings).map(key => ({
+                    key,
+                    label: (data.labels || {})[key] || key,
+                    type: 'text'
+                }));
                 
                 // 清空加载提示
                 settingsForm.innerHTML = '';
 
                 // 根据从后端获取的设置动态创建表单
-                for (const key in settings) {
-                    if (settings.hasOwnProperty(key)) {
-                        const formGroup = document.createElement('div');
-                        formGroup.className = 'form-group';
-                        
-                        const label = document.createElement('label');
-                        label.className = 'form-label';
-                        label.htmlFor = `setting_${key}`;
-                        // 使用中文标签，如果不存在则回退到原始key
-                        label.textContent = labels[key] || key;
-                        
-                        const input = document.createElement('input');
-                        input.type = (key.toLowerCase().includes('password')) ? 'password' : 'text';
-                        input.id = `setting_${key}`;
-                        input.className = 'form-input';
-                        input.value = settings[key] || '';
+                for (const field of fields) {
+                    const formGroup = document.createElement('div');
+                    formGroup.className = 'form-group';
+                    formGroup.dataset.settingGroup = field.key;
+                    
+                    const label = document.createElement('label');
+                    label.className = 'form-label';
+                    label.htmlFor = `setting_${field.key}`;
+                    label.textContent = field.label || field.key;
+                    
+                    const input = createSettingInput(field, settings);
 
-                        formGroup.appendChild(label);
-                        formGroup.appendChild(input);
-                        settingsForm.appendChild(formGroup);
-                    }
+                    formGroup.appendChild(label);
+                    formGroup.appendChild(input);
+                    settingsForm.appendChild(formGroup);
                 }
+                updateRotationCountVisibility();
 
             } catch (error) {
                 settingsForm.innerHTML = `<div class="status status-error">加载配置失败: ${escapeHtml(error.message)}</div>`;
@@ -3373,19 +3221,27 @@
 
         async function saveSettings() {
             const settingsForm = document.getElementById('settingsForm');
-            const inputs = settingsForm.querySelectorAll('.form-input');
+            const inputs = settingsForm.querySelectorAll('[data-setting-key]');
             const newSettings = {};
 
             inputs.forEach(input => {
-                const key = input.id.replace('setting_', '');
-                newSettings[key] = input.value;
+                const key = input.dataset.settingKey;
+                if (input.type === 'checkbox') {
+                    newSettings[key] = input.checked;
+                } else if (input.type === 'number') {
+                    newSettings[key] = key === ROTATION_COUNT_SETTING_KEY
+                        ? normalizeRotationCount(input.value)
+                        : (String(input.value).trim() === '' ? '' : Number(input.value));
+                } else {
+                    newSettings[key] = input.value;
+                }
             });
 
             showNotification('正在保存设置...', 'info');
 
             try {
-                const response = await fetch('/api/settings', {
-                    method: 'POST',
+                const response = await fetch('/api/admin/settings', {
+                    method: 'PUT',
                     headers: getAuthHeaders(),
                     body: JSON.stringify({ settings: newSettings })
                 });

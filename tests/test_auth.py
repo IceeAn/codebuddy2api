@@ -7,16 +7,12 @@ from fastapi import HTTPException, Response
 
 from src.auth_router import (
     authenticate,
-    create_api_key,
-    delete_api_key,
-    list_api_keys,
     login as service_login,
     logout as service_logout,
     require_session_user,
 )
 from src.auth_types import (
     SESSION_COOKIE_NAME,
-    ApiKeyCreateRequest,
     LoginRequest,
 )
 from src.api_key_store import api_key_store
@@ -128,6 +124,7 @@ class AuthDependencyTests(TempConfigMixin, unittest.TestCase):
             authenticate(make_request(authorization="Bearer "))
 
         self.assertEqual(context.exception.status_code, 401)
+        self.assertEqual(context.exception.headers, {"WWW-Authenticate": "Bearer"})
 
     def test_authenticate_accepts_generated_api_key(self):
         configure_users_file(self.temp_path)
@@ -205,37 +202,10 @@ class AuthSessionTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
             authenticate(make_request(cookie=cookie))
         self.assertEqual(context.exception.status_code, 401)
 
-    async def test_session_user_can_create_list_and_delete_api_key(self):
-        cookie = await self._login_and_get_cookie()
-        user = authenticate(make_request(cookie=cookie))
-
-        created = await create_api_key(ApiKeyCreateRequest(name="opencode"), user)
-        self.assertTrue(created["api_key"].startswith("sk-"))
-        self.assertEqual(created["name"], "opencode")
-
-        listed = await list_api_keys(user)
-        self.assertEqual(len(listed["api_keys"]), 1)
-        self.assertEqual(listed["api_keys"][0]["preview"], created["preview"])
-        self.assertNotIn("api_key", listed["api_keys"][0])
-
-        deleted = await delete_api_key(created["id"], user)
-        self.assertTrue(deleted["deleted"])
-        listed_after_delete = await list_api_keys(user)
-        self.assertEqual(listed_after_delete["api_keys"], [])
-
-    async def test_delete_missing_api_key_returns_404(self):
-        cookie = await self._login_and_get_cookie()
-        user = authenticate(make_request(cookie=cookie))
-
-        with self.assertRaises(HTTPException) as context:
-            await delete_api_key("missing", user)
-
-        self.assertEqual(context.exception.status_code, 404)
-
     async def test_api_key_cannot_manage_api_keys(self):
         cookie = await self._login_and_get_cookie()
         session_user = authenticate(make_request(cookie=cookie))
-        created = await create_api_key(ApiKeyCreateRequest(name="client"), session_user)
+        created = api_key_store.create_key(session_user.username, "client")
 
         with self.assertRaises(HTTPException):
             require_session_user(make_request(authorization=f"Bearer {created['api_key']}"))

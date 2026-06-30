@@ -20,6 +20,7 @@ dist/
 .venv
 venv/
 ENV/
+env/
 
 # IDE files
 .vscode/
@@ -42,3 +43,10 @@ secrets/users.txt
 # Log files
 *.log
 logs/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+frontend/test-results/
+frontend/playwright-report/

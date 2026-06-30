@@ -5,7 +5,6 @@ from .api_key_store import api_key_store
 from .auth_types import (
     SESSION_COOKIE_NAME,
     SESSION_TTL_SECONDS,
-    ApiKeyCreateRequest,
     AuthenticatedUser,
     LoginRequest,
 )
@@ -109,26 +108,3 @@ async def get_session(_user: AuthenticatedUser = Depends(require_session_user)):
         "username": _user.username,
         "source": _user.source,
     }
-
-
-@router.get("/auth/api-keys")
-async def list_api_keys(_user: AuthenticatedUser = Depends(require_session_user)):
-    """列出当前用户创建的 API Key。"""
-    return {"api_keys": api_key_store.list_keys(_user.username)}
-
-
-@router.post("/auth/api-keys")
-async def create_api_key(
-        request_body: ApiKeyCreateRequest,
-        _user: AuthenticatedUser = Depends(require_session_user),
-):
-    """创建新的 API Key，明文只在本次响应中返回。"""
-    return api_key_store.create_key(_user.username, request_body.name)
-
-
-@router.delete("/auth/api-keys/{key_id}")
-async def delete_api_key(key_id: str, _user: AuthenticatedUser = Depends(require_session_user)):
-    """删除当前用户的 API Key。"""
-    if not api_key_store.delete_key(_user.username, key_id):
-        raise HTTPException(status_code=404, detail="API key not found")
-    return {"deleted": True}

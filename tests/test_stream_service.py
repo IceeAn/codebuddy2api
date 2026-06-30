@@ -6,7 +6,7 @@ from fastapi import HTTPException
 
 from src.auth_types import AuthenticatedUser
 from src.codebuddy_router import list_v1_models
-from src.stream_service import CodeBuddyStreamService, StreamResponseAggregator
+from src.stream_service import CodeBuddyStreamService, HTTP_CLIENT_CONFIG, StreamResponseAggregator
 
 from tests.helpers import FakeHttpClient
 
@@ -26,6 +26,11 @@ class CodeBuddyRouterModelTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(models["deepseek-v4-pro"]["created"], int)
         self.assertNotIn("reasoning", models["deepseek-v4-pro"])
         self.assertNotIn("limit", models["glm-5.1"])
+
+
+class HttpClientConfigTests(unittest.TestCase):
+    def test_global_http_client_ignores_proxy_environment(self):
+        self.assertIs(HTTP_CLIENT_CONFIG["trust_env"], False)
 
 
 class StreamResponseAggregatorTests(unittest.TestCase):

@@ -52,6 +52,7 @@ HTTP_CLIENT_CONFIG = {
     "verify": SecurityConfig.get_ssl_verify(),
     "timeout": httpx.Timeout(300.0, connect=30.0, read=300.0),
     "limits": httpx.Limits(max_keepalive_connections=20, max_connections=100),
+    "trust_env": False,
 }
 
 _http_client_pool: Optional[httpx.AsyncClient] = None

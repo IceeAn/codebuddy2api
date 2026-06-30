@@ -5,6 +5,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from .credential_store import CredentialRecord
+
 logger = logging.getLogger(__name__)
 
 
@@ -38,10 +40,9 @@ class TokenExpiry:
 class CredentialSelection:
     """轮换策略选择结果。"""
 
-    credential_record: Optional[Dict[str, Any]]
+    credential_record: Optional[CredentialRecord]
     current_index: int
     usage_count: int
-    manual_selected_index: Optional[int]
     log_message: Optional[str] = None
 
     @property
@@ -52,22 +53,21 @@ class CredentialSelection:
 
 
 class CredentialRotationPolicy:
-    """根据手动选择、自动轮换开关和轮换次数选择凭证。"""
+    """根据当前凭证、自动轮换开关和轮换次数选择凭证。"""
 
     def __init__(self, token_expiry: TokenExpiry):
         self.token_expiry = token_expiry
 
     def select(
-            self,
-            credentials: List[Dict[str, Any]],
-            current_index: int,
-            usage_count: int,
-            manual_selected_index: Optional[int],
-            auto_rotation_enabled: bool,
-            rotation_count: int,
+        self,
+        credentials: List[CredentialRecord],
+        current_index: int,
+        usage_count: int,
+        auto_rotation_enabled: bool,
+        rotation_count: int,
     ) -> CredentialSelection:
         if not credentials:
-            return CredentialSelection(None, current_index, usage_count, manual_selected_index)
+            return CredentialSelection(None, current_index, usage_count)
 
         valid_credentials = []
         for index, credential in enumerate(credentials):
@@ -79,28 +79,13 @@ class CredentialRotationPolicy:
 
         if not valid_credentials:
             logger.error("No valid (non-expired) credentials available")
-            return CredentialSelection(None, current_index, usage_count, manual_selected_index)
+            return CredentialSelection(None, current_index, usage_count)
 
         current_valid_indices = [index for index, _ in valid_credentials]
         if current_index not in current_valid_indices:
             current_index = current_valid_indices[0]
             usage_count = 0
             logger.info(f"Reset to first valid credential index: {current_index}")
-
-        if manual_selected_index is not None and 0 <= manual_selected_index < len(credentials):
-            manual_credential = credentials[manual_selected_index]
-            if not self.token_expiry.is_expired(manual_credential["data"]):
-                filename = os.path.basename(manual_credential["file_path"])
-                return CredentialSelection(
-                    manual_credential,
-                    current_index,
-                    usage_count,
-                    manual_selected_index,
-                    f"Using manually selected credential: {filename}",
-                )
-
-            logger.warning("Manually selected credential is expired, falling back to automatic rotation")
-            manual_selected_index = None
 
         try:
             current_valid_position = current_valid_indices.index(current_index)
@@ -109,19 +94,15 @@ class CredentialRotationPolicy:
             current_index = current_valid_indices[0]
             usage_count = 0
 
-        should_rotate = auto_rotation_enabled and rotation_count > 0
+        should_rotate = auto_rotation_enabled
         if not should_rotate:
             credential = credentials[current_index]
             filename = os.path.basename(credential["file_path"])
-            if rotation_count == 0:
-                message = f"Using fixed credential (rotation count is 0): {filename}"
-            else:
-                message = f"Using fixed credential (auto rotation disabled): {filename}"
+            message = f"Using fixed credential (auto rotation disabled): {filename}"
             return CredentialSelection(
                 credential,
                 current_index,
                 usage_count,
-                manual_selected_index,
                 message,
             )
 
@@ -137,6 +118,5 @@ class CredentialRotationPolicy:
             credential,
             current_index,
             usage_count,
-            manual_selected_index,
             f"Using credential: {os.path.basename(credential['file_path'])} (Usage: {usage_count}/{rotation_count})",
         )
