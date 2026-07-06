@@ -6,8 +6,9 @@ from unittest import mock
 from src.auth_types import AuthenticatedUser
 from fastapi import HTTPException
 
-from src.codebuddy_auth_router import poll_for_token, start_device_auth
-from src.codebuddy_oauth import AuthStateStore, CodeBuddyAuthClient, TokenParser
+import src.codebuddy_oauth as oauth
+from src.codebuddy_auth_router import oauth_callback, poll_for_token, start_device_auth
+from src.codebuddy_oauth import AuthStateStore, CodeBuddyAuthClient, CodeBuddyTokenSaver, TokenParser
 
 
 def jwt_with_payload(payload):
@@ -16,8 +17,8 @@ def jwt_with_payload(payload):
 
 
 class FakeAuthStateResponse:
-    def __init__(self, payload):
-        self.status_code = 200
+    def __init__(self, payload, status_code=200):
+        self.status_code = status_code
         self._payload = payload
 
     def json(self):
@@ -25,8 +26,8 @@ class FakeAuthStateResponse:
 
 
 class FakeTokenResponse:
-    def __init__(self, payload):
-        self.status_code = 200
+    def __init__(self, payload, status_code=200):
+        self.status_code = status_code
         self.text = json.dumps(payload)
         self._payload = payload
 
@@ -79,6 +80,12 @@ class AuthStateStoreTests(unittest.TestCase):
 
         self.assertFalse(store.consume("state", other))
         self.assertTrue(store.validate_owner("state", owner))
+
+    def test_missing_auth_state_cannot_be_consumed(self):
+        store = AuthStateStore()
+        owner = AuthenticatedUser(username="alice", source="session_cookie")
+
+        self.assertFalse(store.consume("missing", owner))
 
     def test_consumed_auth_state_retention_starts_when_consumed(self):
         store = AuthStateStore(ttl_seconds=60)
@@ -180,6 +187,116 @@ class CodeBuddyAuthClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second_result["auth_state"], "state-1")
         self.assertEqual(post_count, 2)
 
+    async def test_start_auth_reports_incomplete_upstream_response(self):
+        client = CodeBuddyAuthClient()
+
+        with mock.patch.object(
+            client,
+            "_request_state",
+            new=mock.AsyncMock(return_value={"auth_state": None, "auth_url": None}),
+        ):
+            result = await client.start_auth()
+
+        self.assertEqual(result, {
+            "success": False,
+            "error": "auth_start_failed",
+            "message": "无法启动认证流程",
+        })
+
+    async def test_start_auth_maps_client_exception(self):
+        class BrokenAsyncClient:
+            def __init__(self, **_kwargs):
+                raise RuntimeError("network unavailable")
+
+        with mock.patch("src.codebuddy_oauth.httpx.AsyncClient", BrokenAsyncClient):
+            result = await CodeBuddyAuthClient().start_auth()
+
+        self.assertFalse(result["success"])
+        self.assertIn("network unavailable", result["message"])
+
+    async def test_request_state_rejects_invalid_responses(self):
+        responses = [
+            FakeAuthStateResponse({}, status_code=503),
+            FakeAuthStateResponse([]),
+            FakeAuthStateResponse({"code": 1, "data": {}}),
+            FakeAuthStateResponse({"code": 0, "data": "invalid"}),
+        ]
+
+        for response in responses:
+            with self.subTest(response=response._payload):
+                fake_client = mock.Mock()
+                fake_client.post = mock.AsyncMock(return_value=response)
+
+                result = await CodeBuddyAuthClient()._request_state(fake_client, {"X-Test": "1"})
+
+                self.assertEqual(result, {"auth_state": None, "auth_url": None})
+
+    async def test_poll_status_maps_http_success_pending_unknown_and_failure(self):
+        responses = [
+            (
+                FakeTokenResponse({}, status_code=502),
+                "error",
+            ),
+            (
+                FakeTokenResponse({"code": 11217}),
+                "pending",
+            ),
+            (
+                FakeTokenResponse({
+                    "code": 0,
+                    "data": {
+                        "accessToken": "token",
+                        "tokenType": "Custom",
+                        "expiresIn": 10,
+                        "refreshToken": "refresh",
+                        "sessionState": "session",
+                        "scope": "openid",
+                        "domain": "codebuddy.example",
+                    },
+                }),
+                "success",
+            ),
+            (
+                FakeTokenResponse({"code": 0, "data": {}}),
+                "unknown",
+            ),
+        ]
+
+        class FakeAsyncClient:
+            def __init__(self, response, **_kwargs):
+                self.response = response
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, _exc_type, _exc, _tb):
+                return False
+
+            async def get(self, *_args, **_kwargs):
+                return self.response
+
+        for response, expected_status in responses:
+            with self.subTest(expected_status=expected_status):
+                factory = lambda **kwargs: FakeAsyncClient(response, **kwargs)
+                with mock.patch("src.codebuddy_oauth.httpx.AsyncClient", factory):
+                    result = await CodeBuddyAuthClient().poll_status("state")
+
+                self.assertEqual(result["status"], expected_status)
+                if expected_status == "success":
+                    self.assertEqual(result["token_data"]["access_token"], "token")
+                    self.assertEqual(result["token_data"]["token_type"], "Custom")
+
+    async def test_poll_status_maps_client_exception(self):
+        class BrokenAsyncClient:
+            def __init__(self, **_kwargs):
+                raise RuntimeError("network unavailable")
+
+        with mock.patch("src.codebuddy_oauth.httpx.AsyncClient", BrokenAsyncClient):
+            result = await CodeBuddyAuthClient().poll_status("state")
+
+        self.assertEqual(result["status"], "error")
+        self.assertIn("network unavailable", result["message"])
+
 
 class CodeBuddyAuthRouterTests(unittest.IsolatedAsyncioTestCase):
     async def test_start_device_auth_registers_new_state(self):
@@ -239,6 +356,30 @@ class CodeBuddyAuthRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["error"], "invalid_auth_state")
         remember.assert_not_called()
 
+    async def test_start_device_auth_returns_upstream_failure(self):
+        upstream_result = {"success": False, "error": "unavailable"}
+        with mock.patch(
+            "src.codebuddy_auth_router.start_codebuddy_auth",
+            new=mock.AsyncMock(return_value=upstream_result),
+        ):
+            result = await start_device_auth(
+                AuthenticatedUser(username="alice", source="session_cookie")
+            )
+
+        self.assertIs(result, upstream_result)
+
+    async def test_start_device_auth_maps_unexpected_exception(self):
+        with mock.patch(
+            "src.codebuddy_auth_router.start_codebuddy_auth",
+            new=mock.AsyncMock(side_effect=RuntimeError("broken")),
+        ):
+            result = await start_device_auth(
+                AuthenticatedUser(username="alice", source="session_cookie")
+            )
+
+        self.assertFalse(result["success"])
+        self.assertIn("broken", result["message"])
+
     async def test_successful_poll_consumes_state_before_saving_token(self):
         user = AuthenticatedUser(username="alice", source="session_cookie")
         token_data = {"access_token": "secret", "token_type": "Bearer"}
@@ -279,6 +420,60 @@ class CodeBuddyAuthRouterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(raised.exception.status_code, 409)
         save_token.assert_not_awaited()
+
+    async def test_poll_rejects_missing_or_foreign_state(self):
+        user = AuthenticatedUser(username="alice", source="session_cookie")
+
+        missing = await poll_for_token(
+            device_code="legacy",
+            code_verifier=None,
+            auth_state=None,
+            _user=user,
+        )
+        self.assertEqual(missing.status_code, 400)
+        self.assertEqual(json.loads(missing.body)["error"], "missing_parameters")
+
+        with mock.patch("src.codebuddy_auth_router.validate_auth_state_owner", return_value=False):
+            with self.assertRaises(HTTPException) as raised:
+                await poll_for_token(code_verifier="legacy", auth_state="foreign", _user=user)
+
+        self.assertEqual(raised.exception.status_code, 403)
+
+    async def test_poll_maps_invalid_token_pending_and_error_results(self):
+        user = AuthenticatedUser(username="alice", source="session_cookie")
+        results = [
+            ({"status": "success", "token_data": {"scope": "openid"}}, "invalid_token_response"),
+            ({"status": "success", "token_data": {}}, "auth_error"),
+            ({"status": "pending", "code": 11217}, "authorization_pending"),
+            ({"status": "error"}, "auth_error"),
+        ]
+
+        for poll_result, expected_error in results:
+            with self.subTest(expected_error=expected_error):
+                with (
+                    mock.patch("src.codebuddy_auth_router.validate_auth_state_owner", return_value=True),
+                    mock.patch(
+                        "src.codebuddy_auth_router.poll_codebuddy_auth_status",
+                        new=mock.AsyncMock(return_value=poll_result),
+                    ),
+                ):
+                    response = await poll_for_token(
+                        device_code=None,
+                        code_verifier=None,
+                        auth_state="state",
+                        _user=user,
+                    )
+
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(json.loads(response.body)["error"], expected_error)
+
+    async def test_oauth_callback_reports_success_or_error(self):
+        error_response = await oauth_callback(error="access_denied")
+        success_response = await oauth_callback(code="code", state="state")
+
+        self.assertEqual(error_response.status_code, 400)
+        self.assertEqual(json.loads(error_response.body)["error"], "access_denied")
+        self.assertEqual(json.loads(success_response.body)["code"], "code")
 
 
 class TokenParserTests(unittest.TestCase):
@@ -326,6 +521,128 @@ class TokenParserTests(unittest.TestCase):
         self.assertNotIn("refresh_token", data)
         self.assertNotIn("scope", data)
         self.assertEqual(data["user_id"], "unknown")
+
+    def test_extract_user_info_uses_username_sub_and_unknown_fallbacks(self):
+        cases = [
+            ({"preferred_username": "alice"}, "alice"),
+            ({"sub": "subject"}, "subject"),
+            ({}, "unknown"),
+        ]
+
+        for payload, expected in cases:
+            with self.subTest(payload=payload):
+                user_id, _ = TokenParser._extract_user_info(jwt_with_payload(payload), {})
+                self.assertEqual(user_id, expected)
+
+    def test_extract_user_info_handles_padded_and_malformed_payloads(self):
+        padded_payload = base64.urlsafe_b64encode(b'{"sub":"padded"}').decode("ascii")
+        padded_token = f"header.{padded_payload}.signature"
+        malformed_payload = base64.urlsafe_b64encode(b"not-json").decode("ascii").rstrip("=")
+
+        user_id, _ = TokenParser._extract_user_info(padded_token, {})
+        malformed_user_id, malformed_info = TokenParser._extract_user_info(
+            f"header.{malformed_payload}.signature",
+            {"domain": "fallback"},
+        )
+
+        self.assertEqual(user_id, "padded")
+        self.assertEqual(malformed_user_id, "fallback")
+        self.assertEqual(malformed_info, {})
+
+    def test_extract_user_info_handles_unexpected_decoder_error(self):
+        with mock.patch(
+            "src.codebuddy_oauth.base64.urlsafe_b64decode",
+            side_effect=RuntimeError("decoder failed"),
+        ):
+            user_id, user_info = TokenParser._extract_user_info(
+                "header.payload.signature",
+                {"domain": "fallback"},
+            )
+
+        self.assertEqual(user_id, "fallback")
+        self.assertEqual(user_info, {})
+
+
+class CodeBuddyTokenSaverTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.user = AuthenticatedUser(username="alice", source="session_cookie")
+
+    async def test_saves_sanitized_credential_data(self):
+        manager = mock.Mock()
+        manager.add_credential_with_data.return_value = True
+        credential_data = {"bearer_token": "token", "user_id": "a/b:c@example.com"}
+
+        with (
+            mock.patch(
+                "src.codebuddy_oauth.TokenParser.build_credential_data",
+                return_value=credential_data,
+            ),
+            mock.patch(
+                "src.codebuddy_token_manager.get_token_manager_for_user",
+                return_value=manager,
+            ),
+            mock.patch("src.codebuddy_oauth.time.time", return_value=123),
+        ):
+            result = await CodeBuddyTokenSaver().save({"access_token": "token"}, self.user)
+
+        self.assertTrue(result)
+        manager.add_credential_with_data.assert_called_once_with(
+            credential_data=credential_data,
+            filename="codebuddy_abcexample.com_123.json",
+        )
+
+    async def test_returns_false_for_manager_rejection_or_exception(self):
+        manager = mock.Mock()
+        manager.add_credential_with_data.return_value = False
+        with mock.patch(
+            "src.codebuddy_token_manager.get_token_manager_for_user",
+            return_value=manager,
+        ):
+            self.assertFalse(await CodeBuddyTokenSaver().save({"access_token": "token"}, self.user))
+
+        with mock.patch(
+            "src.codebuddy_oauth.TokenParser.build_credential_data",
+            side_effect=RuntimeError("invalid token"),
+        ):
+            self.assertFalse(await CodeBuddyTokenSaver().save({}, self.user))
+
+
+class OAuthWrapperTests(unittest.IsolatedAsyncioTestCase):
+    async def test_wrappers_delegate_to_global_services(self):
+        user = AuthenticatedUser(username="alice", source="session_cookie")
+        with (
+            mock.patch.object(oauth.auth_state_store, "remember", return_value=True) as remember,
+            mock.patch.object(oauth.auth_state_store, "validate_owner", return_value=True) as validate,
+            mock.patch.object(oauth.auth_state_store, "consume", return_value=True) as consume,
+            mock.patch.object(
+                oauth.codebuddy_auth_client,
+                "start_auth",
+                new=mock.AsyncMock(return_value={"started": True}),
+            ) as start,
+            mock.patch.object(
+                oauth.codebuddy_auth_client,
+                "poll_status",
+                new=mock.AsyncMock(return_value={"status": "pending"}),
+            ) as poll,
+            mock.patch.object(
+                oauth.codebuddy_token_saver,
+                "save",
+                new=mock.AsyncMock(return_value=True),
+            ) as save,
+        ):
+            self.assertTrue(oauth.remember_auth_state("state", user))
+            self.assertTrue(oauth.validate_auth_state_owner("state", user))
+            self.assertTrue(oauth.consume_auth_state("state", user))
+            self.assertEqual(await oauth.start_codebuddy_auth(), {"started": True})
+            self.assertEqual(await oauth.poll_codebuddy_auth_status("state"), {"status": "pending"})
+            self.assertTrue(await oauth.save_codebuddy_token({"token": "value"}, user))
+
+        remember.assert_called_once_with("state", user)
+        validate.assert_called_once_with("state", user)
+        consume.assert_called_once_with("state", user)
+        start.assert_awaited_once_with()
+        poll.assert_awaited_once_with("state")
+        save.assert_awaited_once_with({"token": "value"}, user)
 
 
 if __name__ == "__main__":

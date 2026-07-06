@@ -87,12 +87,7 @@ class CredentialRotationPolicy:
             usage_count = 0
             logger.info(f"Reset to first valid credential index: {current_index}")
 
-        try:
-            current_valid_position = current_valid_indices.index(current_index)
-        except ValueError:
-            current_valid_position = 0
-            current_index = current_valid_indices[0]
-            usage_count = 0
+        current_valid_position = current_valid_indices.index(current_index)
 
         should_rotate = auto_rotation_enabled
         if not should_rotate:

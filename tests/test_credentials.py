@@ -9,7 +9,7 @@ import config
 
 from src.auth_types import AuthenticatedUser
 from src.codebuddy_token_manager import CodeBuddyTokenManager, CodeBuddyTokenManagerRegistry
-from src.credential_rotation import CredentialRotationPolicy, TokenExpiry
+from src.credential_rotation import CredentialRotationPolicy, CredentialSelection, TokenExpiry
 from src.credential_store import CodeBuddyCredentialStore, build_user_credentials_dirname
 
 from tests.helpers import ConfigIsolationMixin
@@ -103,6 +103,110 @@ class CredentialStoreTests(ConfigIsolationMixin, unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 store.save_credential({"bearer_token": "second"}, "codebuddy_token_2.json", create_new=True)
 
+    def test_loader_skips_outside_invalid_and_malformed_files(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            store = CodeBuddyCredentialStore(tmp_dir)
+            invalid = Path(tmp_dir) / "invalid.json"
+            malformed = Path(tmp_dir) / "malformed.json"
+            invalid.write_text('{"user_id":"missing-token"}', encoding="utf-8")
+            malformed.write_text("not-json", encoding="utf-8")
+
+            credentials = store.load_credentials()
+
+            self.assertEqual(credentials, [])
+
+            outside = str(Path(tmp_dir).parent / "outside.json")
+            with (
+                mock.patch("src.credential_store.glob.glob", return_value=[str(invalid)]),
+                mock.patch("src.credential_store.os.path.islink", return_value=False),
+                mock.patch("src.credential_store.os.path.realpath", return_value=outside),
+            ):
+                self.assertEqual(store.load_credentials(), [])
+
+    def test_load_manager_state_rejects_symlink_and_outside_path(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            store = CodeBuddyCredentialStore(tmp_dir)
+            Path(store.state_file).write_text('{"current_index":0}', encoding="utf-8")
+
+            with mock.patch("src.credential_store.os.path.islink", return_value=True):
+                self.assertIsNone(store.load_manager_state())
+
+            outside = str(Path(tmp_dir).parent / "outside.json")
+            with (
+                mock.patch("src.credential_store.os.path.islink", return_value=False),
+                mock.patch("src.credential_store.os.path.realpath", return_value=outside),
+            ):
+                self.assertIsNone(store.load_manager_state())
+
+    def test_next_available_filename_increments_until_free(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            store = CodeBuddyCredentialStore(tmp_dir)
+            Path(tmp_dir, "token.json").touch()
+            Path(tmp_dir, "token_1.json").touch()
+
+            self.assertEqual(store.next_available_filename("token.json"), "token_2.json")
+
+    def test_delete_credential_rejects_outside_path_and_reports_missing_file(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            store = CodeBuddyCredentialStore(tmp_dir)
+
+            with self.assertRaises(ValueError):
+                store.delete_credential_file(str(Path(tmp_dir).parent / "outside.json"))
+            self.assertFalse(store.delete_credential_file(str(Path(tmp_dir) / "missing.json")))
+
+    def test_ensure_directory_creates_missing_directory(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            creds_dir = Path(tmp_dir) / "missing"
+            store = CodeBuddyCredentialStore(str(creds_dir))
+
+            store.ensure_directory()
+
+            self.assertTrue(creds_dir.is_dir())
+
+    def test_write_json_closes_descriptor_when_fdopen_fails(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            store = CodeBuddyCredentialStore(tmp_dir)
+            with (
+                mock.patch("src.credential_store.os.open", return_value=99),
+                mock.patch("src.credential_store.os.fdopen", side_effect=RuntimeError("fdopen failed")),
+                mock.patch("src.credential_store.os.close") as close,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "fdopen failed"):
+                    store.write_json_file(str(Path(tmp_dir) / "token.json"), {}, indent=2)
+
+            close.assert_called_once_with(99)
+
+    def test_write_json_does_not_close_descriptor_twice_after_fdopen_succeeds(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            store = CodeBuddyCredentialStore(tmp_dir)
+            file_handle = mock.mock_open()()
+            with (
+                mock.patch("src.credential_store.os.open", return_value=99),
+                mock.patch("src.credential_store.os.fdopen", return_value=file_handle),
+                mock.patch("src.credential_store.json.dump", side_effect=RuntimeError("dump failed")),
+                mock.patch("src.credential_store.os.close") as close,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "dump failed"):
+                    store.write_json_file(str(Path(tmp_dir) / "token.json"), {}, indent=2)
+
+            close.assert_not_called()
+
+    def test_write_json_works_without_nofollow_flag(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            store = CodeBuddyCredentialStore(tmp_dir)
+            original_hasattr = hasattr
+
+            def fake_hasattr(obj, name):
+                if obj is os and name == "O_NOFOLLOW":
+                    return False
+                return original_hasattr(obj, name)
+
+            path = str(Path(tmp_dir) / "token.json")
+            with mock.patch("builtins.hasattr", side_effect=fake_hasattr):
+                store.write_json_file(path, {"bearer_token": "token"}, indent=2)
+
+            self.assertTrue(Path(path).is_file())
+
 
 class TokenExpiryTests(unittest.TestCase):
     def test_missing_expiry_fields_are_not_expired(self):
@@ -163,8 +267,117 @@ class CredentialRotationPolicyTests(unittest.TestCase):
         self.assertEqual(selection.credential_record, credentials[0])
         self.assertEqual(selection.usage_count, 2)
 
+    def test_empty_selection_has_no_filename(self):
+        selection = CredentialSelection(None, 0, 0)
+
+        self.assertIsNone(selection.filename)
+
 
 class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
+    def test_default_credentials_directory_comes_from_config(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with mock.patch("config.get_codebuddy_creds_dir", return_value=tmp_dir):
+                manager = CodeBuddyTokenManager()
+
+            self.assertEqual(manager.creds_dir, os.path.realpath(tmp_dir))
+
+    def test_credential_id_helper_handles_invalid_and_valid_index(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
+            self.assertIsNone(manager._credential_id(None))
+            self.assertTrue(manager.add_credential("token", "user", "a"))
+            self.assertEqual(
+                manager._credential_id(0),
+                manager.get_credentials_info()[0]["credential_id"],
+            )
+
+    def test_load_state_supports_legacy_index_and_handles_read_error(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
+            self.assertTrue(manager.add_credential("token", "user", "a"))
+            manager.store.save_manager_state({"current_index": 0})
+
+            reloaded = CodeBuddyTokenManager(creds_dir=tmp_dir)
+            self.assertEqual(reloaded.current_index, 0)
+
+            reloaded.store.save_manager_state({"current_index": 99})
+            reloaded.load_state()
+            self.assertEqual(reloaded.current_index, 0)
+
+            with mock.patch.object(reloaded.store, "load_manager_state", side_effect=RuntimeError("bad state")):
+                reloaded.load_state()
+
+    def test_save_state_swallows_store_error(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
+            with mock.patch.object(manager.store, "save_manager_state", side_effect=RuntimeError("disk full")):
+                manager.save_state()
+
+    def test_get_next_credential_handles_empty_and_optional_selection_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
+            self.assertIsNone(manager.get_next_credential())
+
+            record = credential_record("selected")
+            selections = [
+                CredentialSelection(record, 0, 1, None),
+                CredentialSelection({"file_path": "", "data": record["data"]}, 0, 1, "selected"),
+            ]
+            for selection in selections:
+                with self.subTest(selection=selection):
+                    with mock.patch.object(manager.rotation_policy, "select", return_value=selection):
+                        self.assertEqual(manager.get_next_credential()["bearer_token"], "selected-token")
+
+    def test_credentials_info_calculates_expiration_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
+            self.assertTrue(manager.add_credential_with_data({
+                "bearer_token": "token",
+                "user_id": "user",
+                "created_at": 100,
+                "expires_in": 1000,
+            }, "a"))
+
+            with mock.patch("src.codebuddy_token_manager.time.time", return_value=200):
+                info = manager.get_credentials_info()[0]
+
+            self.assertEqual(info["expires_at"], 1100)
+            self.assertEqual(info["time_remaining"], 900)
+
+    def test_add_credential_with_data_returns_false_on_store_error(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
+            with mock.patch.object(manager.store, "save_credential", side_effect=RuntimeError("disk full")):
+                self.assertFalse(manager.add_credential_with_data({"bearer_token": "token"}, "a"))
+
+    def test_delete_credential_handles_invalid_missing_and_store_error(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
+            self.assertFalse(manager.delete_credential_by_index(0))
+            self.assertTrue(manager.add_credential("token", "user", "a"))
+
+            with mock.patch.object(manager.store, "delete_credential_file", return_value=False):
+                self.assertTrue(manager.delete_credential_by_index(0))
+
+            manager.load_all_tokens()
+            with mock.patch.object(manager.store, "delete_credential_file", side_effect=RuntimeError("disk error")):
+                self.assertFalse(manager.delete_credential_by_index(0))
+
+    def test_current_info_repairs_invalid_index_for_fixed_and_rotating_modes(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
+            self.assertTrue(manager.add_credential("token", "user", "a"))
+
+            manager.auto_rotation_enabled = False
+            manager.current_index = 99
+            self.assertEqual(manager.get_current_credential_info()["index"], 0)
+
+            manager.auto_rotation_enabled = True
+            manager.current_index = 99
+            self.assertEqual(manager.get_current_credential_info()["index"], 0)
+
+            manager.current_index = 0
+            self.assertEqual(manager.get_current_credential_info()["index"], 0)
     def test_add_credential_uses_non_colliding_numeric_filename_after_gap(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             manager = CodeBuddyTokenManager(creds_dir=tmp_dir)

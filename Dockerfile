@@ -44,13 +44,13 @@ ENTRYPOINT ["entrypoint.sh"]
 RUN useradd -m -u 1001 appuser
 
 # 创建运行时挂载目录。secrets 目录只用于挂载只读用户文件。
-RUN mkdir -p /app/config /app/.codebuddy_creds /app/secrets && \
-    chown -R appuser:appuser /app/config /app/.codebuddy_creds
+RUN mkdir -p /app/data /app/.codebuddy_creds /app/secrets && \
+    chown -R appuser:appuser /app/data /app/.codebuddy_creds
 
 # 声明容器将要监听的端口
 # 这个端口应该与您在配置中设置的 CODEBUDDY_PORT 一致
 EXPOSE 8001
 
 # 定义容器启动时要执行的命令
-# 使用 Hypercorn 启动，它是一个生产级的 ASGI 服务器
-CMD ["hypercorn", "web:app", "--bind", "0.0.0.0:8001"]
+# 使用 Uvicorn 启动 ASGI 应用，并保持与本地启动一致地关闭访问日志
+CMD ["uvicorn", "web:app", "--host", "0.0.0.0", "--port", "8001", "--no-access-log"]

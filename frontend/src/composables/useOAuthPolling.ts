@@ -1,7 +1,7 @@
 import { ref, onBeforeUnmount } from 'vue';
 import { useToast } from './useToast';
 import { ApiError } from '../api/client';
-import { codebuddyApi } from '../api/admin';
+import { codebuddyOAuthApi } from '../api/admin';
 
 interface OAuthPollingOptions {
   /** 轮询间隔，默认 5000ms */
@@ -57,7 +57,7 @@ export function useOAuthPolling(options: OAuthPollingOptions = {}) {
     const controller = new AbortController();
     abortController = controller;
     try {
-      const result: StartAuthResponse = await codebuddyApi.startAuth(controller.signal);
+      const result: StartAuthResponse = await codebuddyOAuthApi.startAuth(controller.signal);
       if (!isCurrentController(controller)) return;
       if (!result.verification_uri_complete || !result.auth_state) {
         toast.error(result.message || '认证启动失败');
@@ -97,7 +97,7 @@ export function useOAuthPolling(options: OAuthPollingOptions = {}) {
     }
     pollInFlight = true;
     try {
-      const result: PollAuthResponse = await codebuddyApi.pollAuth(
+      const result: PollAuthResponse = await codebuddyOAuthApi.pollAuth(
         currentAuthState,
         controller.signal,
       );

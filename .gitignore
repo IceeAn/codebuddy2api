@@ -12,6 +12,7 @@ htmlcov/
 /config/
 /secrets/users.txt
 /.codebuddy_creds/
+/data/
 /logs/
 *.log
 

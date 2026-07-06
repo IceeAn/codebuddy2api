@@ -1,7 +1,7 @@
 {
   "name": "codebuddy2api-admin",
   "private": true,
-  "version": "1.0.0",
+  "version": "0.1.0",
   "type": "module",
   "packageManager": "pnpm@10.29.2",
   "engines": {

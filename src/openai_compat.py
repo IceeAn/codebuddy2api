@@ -1,43 +1,138 @@
 """OpenAI 兼容响应转换工具。"""
-import json
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 
-def ensure_openai_stream_chunk_fields(
-        chunk_data: Dict[str, Any],
-        stream_id: str,
-        created: int,
-        model: str,
-) -> Dict[str, Any]:
-    """补齐 OpenAI 流式 chunk 必需字段。"""
-    if not isinstance(chunk_data, dict) or "choices" not in chunk_data:
-        return chunk_data
+@dataclass(frozen=True)
+class CompletionResponseContext:
+    """一次完成请求对客户端稳定可见的响应信封。"""
 
+    response_id: str
+    created: int
+    model: str
+
+
+@dataclass
+class ToolCallIndexState:
+    """优先沿用上游 index，仅在缺失时补齐稳定位置。"""
+
+    id_to_index: Dict[str, int] = field(default_factory=dict)
+    used_indexes: set[int] = field(default_factory=set)
+    current_index: Optional[int] = None
+
+    def resolve(self, tool_call: Dict[str, Any]) -> Optional[int]:
+        tool_id = tool_call.get("id")
+        upstream_index = tool_call.get("index")
+
+        if isinstance(upstream_index, int) and not isinstance(upstream_index, bool):
+            self.used_indexes.add(upstream_index)
+            if isinstance(tool_id, str) and tool_id:
+                self.id_to_index[tool_id] = upstream_index
+            self.current_index = upstream_index
+            return upstream_index
+
+        if isinstance(tool_id, str) and tool_id:
+            existing_index = self.id_to_index.get(tool_id)
+            if existing_index is not None:
+                self.current_index = existing_index
+                return existing_index
+
+            generated_index = 0
+            while generated_index in self.used_indexes:
+                generated_index += 1
+            self.id_to_index[tool_id] = generated_index
+            self.used_indexes.add(generated_index)
+            self.current_index = generated_index
+        return self.current_index
+
+
+@dataclass(frozen=True)
+class CodeBuddyResponseEvent:
+    """流式和非流式路径共享的单 choice 上游响应语义。"""
+
+    chunk_data: Dict[str, Any]
+    choice: Optional[Dict[str, Any]]
+    delta: Dict[str, Any]
+    finish_reason: Optional[str]
+
+    @classmethod
+    def parse(cls, chunk_data: Dict[str, Any]) -> "CodeBuddyResponseEvent":
+        """提取转换所需的首个 choice，不验证上游协议。"""
+        choices = chunk_data.get("choices")
+        choice = (
+            choices[0]
+            if isinstance(choices, list) and choices and isinstance(choices[0], dict)
+            else None
+        )
+        raw_delta = choice.get("delta") if choice is not None else None
+        delta = raw_delta if isinstance(raw_delta, dict) else {}
+        finish_reason = choice.get("finish_reason") if choice is not None else None
+        return cls(chunk_data=chunk_data, choice=choice, delta=delta, finish_reason=finish_reason)
+
+    @property
+    def has_choice(self) -> bool:
+        return self.choice is not None
+
+    @property
+    def reasoning_content(self) -> Any:
+        return self.delta.get("reasoning_content")
+
+    @property
+    def content(self) -> Any:
+        return self.delta.get("content")
+
+    @property
+    def tool_calls(self) -> Any:
+        tool_calls = self.delta.get("tool_calls")
+        return tool_calls if isinstance(tool_calls, list) else []
+
+    @property
+    def usage(self) -> Any:
+        return self.chunk_data.get("usage")
+
+
+def normalize_openai_stream_chunk_envelope(
+        chunk_data: Dict[str, Any],
+        context: CompletionResponseContext,
+) -> Dict[str, Any]:
+    """使用客户端响应上下文统一覆盖流式 chunk 信封。"""
     converted_chunk = chunk_data.copy()
-    converted_chunk["id"] = stream_id
+    converted_chunk["id"] = context.response_id
     converted_chunk["object"] = "chat.completion.chunk"
-    converted_chunk["created"] = created
-    if model:
-        converted_chunk["model"] = model
+    converted_chunk["created"] = context.created
+    converted_chunk["model"] = context.model
     return converted_chunk
 
 
+def _copy_first_choice_with_delta(
+        chunk_data: Dict[str, Any],
+        delta: Dict[str, Any],
+) -> Dict[str, Any]:
+    """复制首个 choice 并替换 delta，不修改上游对象。"""
+    copied_chunk = chunk_data.copy()
+    copied_choices = list(copied_chunk.get("choices", []))
+    copied_choice = copied_choices[0].copy()
+    copied_choice["delta"] = delta
+    copied_choices[0] = copied_choice
+    copied_chunk["choices"] = copied_choices
+    return copied_chunk
+
+
 class OpenAIStreamNormalizer:
-    """规范化流式 delta，避免客户端把每个 reasoning token 识别成独立块。"""
+    """规范化流式 delta 并补齐 assistant 角色。"""
 
     def __init__(self):
         self.role_sent = False
 
     def normalize(self, chunk_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         choices = chunk_data.get("choices")
-        if not choices or not isinstance(choices, list):
+        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
             return [chunk_data]
 
         choice = choices[0]
         delta = choice.get("delta", {})
         if not isinstance(delta, dict):
             return [chunk_data]
-
         delta = delta.copy()
         finish_reason = choice.get("finish_reason")
         outgoing_chunks: List[Dict[str, Any]] = []
@@ -89,109 +184,32 @@ class OpenAIStreamNormalizer:
             delta: Dict[str, Any],
             finish_reason: Optional[str],
     ) -> Dict[str, Any]:
-        copied_chunk = chunk_data.copy()
-        copied_choices = list(copied_chunk.get("choices", []))
-        copied_choice = copied_choices[0].copy()
-        copied_choice["delta"] = delta
+        copied_chunk = _copy_first_choice_with_delta(chunk_data, delta)
+        copied_choices = copied_chunk["choices"]
+        copied_choice = copied_choices[0]
         copied_choice["finish_reason"] = finish_reason
-        copied_choices[0] = copied_choice
-        copied_chunk["choices"] = copied_choices
         return copied_chunk
 
 
-class OpenAICompatibilityConverter:
-    """将 CodeBuddy 格式转换为 OpenAI 兼容格式。"""
+def add_openai_tool_call_indexes(
+        event: CodeBuddyResponseEvent,
+        tool_call_index_state: ToolCallIndexState,
+) -> Dict[str, Any]:
+    """为工具调用补齐 OpenAI 流式 index，并返回转换后的 chunk。"""
+    if not event.tool_calls:
+        return event.chunk_data
 
-    @staticmethod
-    def convert_tool_call_id(codebuddy_id: str) -> str:
-        """透传工具调用 ID。真实上游 2.107.0 已使用 OpenAI 风格 call_*。"""
-        return codebuddy_id
+    converted_tool_calls = []
+    for tool_call in event.tool_calls:
+        if not isinstance(tool_call, dict):
+            converted_tool_calls.append(tool_call)
+            continue
+        converted_tool_call = tool_call.copy()
+        index = tool_call_index_state.resolve(tool_call)
+        if index is not None:
+            converted_tool_call["index"] = index
+        converted_tool_calls.append(converted_tool_call)
 
-    @staticmethod
-    def convert_sse_chunk_to_openai_format(
-            chunk_data: Dict[str, Any],
-            tool_call_index_map: Dict[str, int],
-    ) -> Dict[str, Any]:
-        """将 CodeBuddy SSE chunk 转换为 OpenAI 格式。"""
-        if not chunk_data.get("choices"):
-            return chunk_data
-
-        choice = chunk_data["choices"][0]
-        delta = choice.get("delta", {})
-        tool_calls = delta.get("tool_calls", [])
-
-        if not tool_calls:
-            return chunk_data
-
-        converted_tool_calls = []
-        for tc in tool_calls:
-            converted_tc = tc.copy()
-
-            # 保留上游 ID，只补齐 OpenAI 流式客户端需要的 index。
-            if tc.get("id"):
-                original_id = tc["id"]
-                converted_tc["id"] = OpenAICompatibilityConverter.convert_tool_call_id(original_id)
-
-                if original_id not in tool_call_index_map:
-                    tool_call_index_map[original_id] = len(tool_call_index_map)
-
-                converted_tc["index"] = tool_call_index_map[original_id]
-            elif tool_call_index_map:
-                converted_tc["index"] = max(tool_call_index_map.values())
-
-            converted_tool_calls.append(converted_tc)
-
-        converted_chunk = chunk_data.copy()
-        converted_choices = list(converted_chunk.get("choices", []))
-        converted_choice = converted_choices[0].copy()
-        converted_delta = converted_choice.get("delta", {}).copy()
-        converted_delta["tool_calls"] = converted_tool_calls
-        converted_choice["delta"] = converted_delta
-        converted_choices[0] = converted_choice
-        converted_chunk["choices"] = converted_choices
-        return converted_chunk
-
-
-def validate_and_fix_tool_call_args(args: str) -> str:
-    """验证并修复工具调用参数，兼容上游分块拼接异常。"""
-    if not args:
-        return "{}"
-
-    args = args.strip()
-
-    if args.count("}{") > 0:
-        json_objects = []
-        current_obj = ""
-        brace_count = 0
-
-        for char in args:
-            current_obj += char
-            if char == "{":
-                brace_count += 1
-            elif char == "}":
-                brace_count -= 1
-                if brace_count == 0 and current_obj.strip():
-                    try:
-                        parsed = json.loads(current_obj.strip())
-                        json_objects.append(parsed)
-                        current_obj = ""
-                    except json.JSONDecodeError:
-                        current_obj = ""
-
-        if json_objects:
-            return json.dumps(json_objects[0], ensure_ascii=False)
-
-    try:
-        json.loads(args)
-        return args
-    except json.JSONDecodeError:
-        if not args.endswith("}") and args.count("{") > args.count("}"):
-            args += "}"
-        elif not args.endswith("]") and args.count("[") > args.count("]"):
-            args += "]"
-
-        try:
-            json.loads(args)
-            return args
-        except json.JSONDecodeError:
-            return "{}"
+    converted_delta = event.delta.copy()
+    converted_delta["tool_calls"] = converted_tool_calls
+    return _copy_first_choice_with_delta(event.chunk_data, converted_delta)

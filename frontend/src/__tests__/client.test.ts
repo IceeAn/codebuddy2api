@@ -104,7 +104,9 @@ describe('401 全局未授权处理', () => {
       vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ detail: '上游凭证失效' }, 401)),
     );
 
-    await expect(apiRequest('/codebuddy/v1/chat/completions')).rejects.toBeInstanceOf(ApiError);
+    await expect(
+      apiRequest('/api/admin/playground/openai/v1/chat/completions'),
+    ).rejects.toBeInstanceOf(ApiError);
     expect(handler).not.toHaveBeenCalled();
   });
 

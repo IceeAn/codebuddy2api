@@ -1,10 +1,10 @@
 """管理页专用 API 路由。"""
 import logging
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Annotated, Any, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, StringConstraints
 
 import config
 from .api_key_store import api_key_store
@@ -13,12 +13,13 @@ from .auth_types import ApiKeyCreateRequest, AuthenticatedUser
 from .codebuddy_api_client import codebuddy_api_client
 from .codebuddy_token_manager import get_token_manager_for_user
 from .models_manager import models_manager
+from .private_response import PrivateNoStoreRoute
 from .request_processor import RequestProcessor
 from .stream_service import CodeBuddyStreamService
 from .usage_stats_manager import usage_stats_manager
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter(route_class=PrivateNoStoreRoute)
 SERVICE_STARTED_MONOTONIC = time.monotonic()
 
 SETTING_FIELDS: List[Dict[str, Any]] = [
@@ -68,7 +69,10 @@ class AdminSettingsUpdate(BaseModel):
 
 
 class CredentialCreateRequest(BaseModel):
-    bearer_token: str
+    bearer_token: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, pattern=r"\S"),
+    ]
     user_id: Optional[str] = None
 
 
@@ -160,7 +164,7 @@ async def get_admin_status(
         "username": _user.username,
         "source": _user.source,
         "uptime_seconds": _service_uptime_seconds(),
-        "api_base_url": f"{base_url}/codebuddy/v1",
+        "api_base_url": f"{base_url}/openai/v1",
         "credentials": {
             "total": len(credentials),
             "valid": valid_count,
@@ -212,9 +216,7 @@ async def create_admin_credential(
         _user: AuthenticatedUser = Depends(require_session_user),
 ):
     """手动添加当前管理页用户的 CodeBuddy 凭证。"""
-    bearer_token = request_body.bearer_token.strip()
-    if not bearer_token:
-        raise HTTPException(status_code=422, detail="bearer_token is required")
+    bearer_token = request_body.bearer_token
 
     token_manager = get_token_manager_for_user(_user)
     before_ids = {item["credential_id"] for item in token_manager.get_credentials_info()}
@@ -292,7 +294,7 @@ async def test_admin_credential(
             "detail": str(e),
         }
 
-    payload = RequestProcessor.prepare_payload(
+    prepared_request = RequestProcessor.prepare_request(
         {
             "model": model,
             "messages": [{"role": "user", "content": request_body.message or "test"}],
@@ -300,6 +302,7 @@ async def test_admin_credential(
         },
         _user,
     )
+    payload = prepared_request.payload
     headers = codebuddy_api_client.generate_codebuddy_headers(
         bearer_token=credential.get("bearer_token"),
         user_id=credential.get("user_id"),
@@ -307,7 +310,11 @@ async def test_admin_credential(
     )
 
     try:
-        await stream_service_factory().handle_non_stream_response(payload, headers)
+        await stream_service_factory().handle_non_stream_response(
+            payload,
+            headers,
+            response_model=prepared_request.response_model,
+        )
         return {"ok": True, "status_code": 200}
     except HTTPException as e:
         return {

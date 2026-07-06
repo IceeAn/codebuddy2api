@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, reactive, ref } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
 import { Play, Square } from '@lucide/vue';
 import { ApiError } from '../api/client';
-import { codebuddyApi } from '../api/admin';
+import { openaiPlaygroundApi } from '../api/admin';
 import type { ChatCompletionRequest } from '../types';
 import { SseStreamDecoder } from '../utils/sse';
 import { useToast } from '../composables/useToast';
@@ -34,8 +34,8 @@ const consoleRules: FormRules = {
 const abortController = ref<AbortController | null>(null);
 
 const modelsQuery = useQuery({
-  queryKey: ['codebuddy-models'],
-  queryFn: codebuddyApi.models,
+  queryKey: ['openai-playground-models'],
+  queryFn: openaiPlaygroundApi.models,
 });
 
 const modelOptions = computed(() =>
@@ -69,7 +69,7 @@ async function doSend(): Promise<void> {
   abortController.value = controller;
 
   try {
-    const response = await codebuddyApi.chat(
+    const response = await openaiPlaygroundApi.chat(
       {
         model,
         messages: [{ role: 'user', content: prompt.value }],

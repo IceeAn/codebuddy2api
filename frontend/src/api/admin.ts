@@ -91,7 +91,7 @@ export const adminApi = {
     }>('/api/admin/credentials/rotation/toggle', { method: 'POST' }),
 };
 
-export const codebuddyApi = {
+export const codebuddyOAuthApi = {
   startAuth: (signal?: AbortSignal) => {
     const path = '/codebuddy/auth/start';
     if (signal) {
@@ -125,14 +125,17 @@ export const codebuddyApi = {
     }
     return apiRequest<CodeBuddyPollAuthResponse>('/codebuddy/auth/poll', options);
   },
-  models: () => apiRequest<ModelListResponse>('/codebuddy/v1/models'),
+};
+
+export const openaiPlaygroundApi = {
+  models: () => apiRequest<ModelListResponse>('/api/admin/playground/openai/v1/models'),
   /**
    * 直接使用 fetch，避免 apiRequest 先消费 body；调用方需要自行读取流式响应。
    * 仅将带 Bearer challenge 的 401 识别为本系统会话失效；上游凭证 401 交给调用方处理。
    */
   chat: (body: ChatCompletionRequest, signal?: AbortSignal) => {
     const headers = new Headers({ 'Content-Type': 'application/json' });
-    return fetch('/codebuddy/v1/chat/completions', {
+    return fetch('/api/admin/playground/openai/v1/chat/completions', {
       method: 'POST',
       credentials: 'same-origin',
       headers,

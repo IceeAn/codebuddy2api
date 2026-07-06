@@ -286,6 +286,29 @@ describe('ApiKeysView', () => {
     expect(mutationStates[1].mutate).toHaveBeenCalledWith('1');
   });
 
+  it('最近使用时间只格式化到分钟', () => {
+    const formatSpy = vi.spyOn(Date.prototype, 'toLocaleString').mockReturnValue('formatted');
+    const wrapper = mountView();
+    const state = (wrapper.vm.$ as any).setupState;
+
+    expect(
+      state.columns[3].render({
+        id: '1',
+        name: 'one',
+        preview: 'sk-a',
+        created_at: 1,
+        last_used_at: 60,
+      }),
+    ).toBe('formatted');
+    expect(formatSpy).toHaveBeenLastCalledWith(undefined, {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  });
+
   it('旧 key 复制完成后只关闭自身，不清除期间生成的新 key', async () => {
     query.isError.value = true;
     let finishCopy: (copied: boolean) => void = () => undefined;

@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useQueryClient } from '@tanstack/vue-query';
 import {
   Activity,
+  BookOpen,
   KeyRound,
   LogOut,
   Menu as MenuIcon,
@@ -34,6 +35,7 @@ const navItems = [
   { routeName: 'credentials', label: '凭证', icon: KeyRound },
   { routeName: 'api-keys', label: 'API Key', icon: ShieldCheck },
   { routeName: 'console', label: 'API 测试', icon: TerminalSquare },
+  { routeName: 'api-docs', label: '开发文档', icon: BookOpen },
   { routeName: 'settings', label: '设置', icon: Settings },
 ];
 

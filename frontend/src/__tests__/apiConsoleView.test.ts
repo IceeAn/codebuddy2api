@@ -2,7 +2,7 @@ import { defineComponent, h } from 'vue';
 import { mount } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../api/client';
-import type { codebuddyApi } from '../api/admin';
+import type { openaiPlaygroundApi } from '../api/admin';
 
 const { modelsQuery, toastMock, chatMock, validateMock } = vi.hoisted(() => {
   const refValue = <T>(value: T) => ({ __v_isRef: true as const, value });
@@ -21,7 +21,7 @@ const { modelsQuery, toastMock, chatMock, validateMock } = vi.hoisted(() => {
       warning: vi.fn<(message: string, duration?: number) => void>(),
       info: vi.fn<(message: string, duration?: number) => void>(),
     },
-    chatMock: vi.fn<typeof codebuddyApi.chat>(),
+    chatMock: vi.fn<typeof openaiPlaygroundApi.chat>(),
     validateMock: vi.fn<() => Promise<void>>(),
   };
 });
@@ -35,8 +35,8 @@ vi.mock('../composables/useToast', () => ({
 }));
 
 vi.mock('../api/admin', () => ({
-  codebuddyApi: {
-    models: vi.fn<typeof codebuddyApi.models>(),
+  openaiPlaygroundApi: {
+    models: vi.fn<typeof openaiPlaygroundApi.models>(),
     chat: chatMock,
   },
 }));

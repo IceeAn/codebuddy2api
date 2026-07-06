@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel
 
-DUMMY_PASSWORD_HASH = "pbkdf2_sha256$390000$Q2ZpaYeWHUv958nZM_Zl6A$Z7iHCysOlsWDVbFAIt2uxSfhQTD5qYNehS1W65K4DHY"
+DUMMY_PASSWORD_HASH = "pbkdf2_sha256$600000$Q2ZpaYeWHUv958nZM_Zl6A$cRI0uf1Yms6VBjzrG-XchKqQzqc6GSC1w09w2070AH8"
 SESSION_COOKIE_NAME = "codebuddy2api_session"
 SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
 API_KEY_PREFIX = "sk-"

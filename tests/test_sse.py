@@ -3,12 +3,12 @@ import unittest
 
 from src.sse import (
     SSE_DONE,
+    SSEDataError,
     format_sse_done,
     format_sse_error,
     format_sse_event,
     iter_sse_events,
     parse_sse_event,
-    parse_sse_line,
 )
 
 from tests.helpers import async_chunks
@@ -36,8 +36,7 @@ class SSEParseTests(unittest.TestCase):
             ("", None),
             (": keepalive", None),
             ("event: message", None),
-            ("data: ", None),
-            ("data: not-json", None),
+            ("data:", None),
         ]
 
         for line, expected in cases:
@@ -48,10 +47,9 @@ class SSEParseTests(unittest.TestCase):
                 else:
                     self.assertEqual(result, expected)
 
-    def test_parse_sse_line_is_legacy_dict_only_parser(self):
-        self.assertEqual(parse_sse_line('data: {"ok": true}'), {"ok": True})
-        self.assertIsNone(parse_sse_line("data: [DONE]"))
-        self.assertIsNone(parse_sse_line("data: not-json"))
+    def test_parse_sse_event_reports_invalid_json_data(self):
+        with self.assertRaisesRegex(SSEDataError, "invalid JSON"):
+            parse_sse_event("data: not-json")
 
 
 class SSEIteratorTests(unittest.IsolatedAsyncioTestCase):
@@ -72,13 +70,21 @@ class SSEIteratorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(events, [{"a": 1}])
 
-    async def test_iter_sse_events_skips_empty_and_invalid_chunks(self):
+    async def test_iter_sse_events_skips_empty_and_non_data_chunks(self):
         events = []
 
-        async for event in iter_sse_events(async_chunks("", "event: ignored\n", "data: bad\n", 'data: {"ok": true}\n')):
+        async for event in iter_sse_events(async_chunks("", "event: ignored\n", 'data: {"ok": true}\n')):
             events.append(event)
 
         self.assertEqual(events, [{"ok": True}])
+
+    async def test_iter_sse_events_ignores_final_non_data_line(self):
+        events = []
+
+        async for event in iter_sse_events(async_chunks("event: ignored")):
+            events.append(event)
+
+        self.assertEqual(events, [])
 
 
 if __name__ == "__main__":

@@ -7,14 +7,23 @@ Startup configuration priority:
 1. Environment variables (for deployment and security boundaries)
 2. Hard-coded defaults
 
-User settings are persisted under users.<username> in config/config.json.
+User settings are persisted by username in data/codebuddy2api.sqlite3.
 Users without saved settings inherit the startup defaults.
 """
 import os
-import json
 import logging
+import threading
+from pathlib import Path
 from typing import Dict, Any, Optional
 from urllib.parse import urlsplit, urlunsplit
+
+from src.sqlite_database import SQLiteDatabase, resolve_database_path
+from src.user_settings_schema import (
+    USER_SETTING_KEYS as _USER_SETTING_KEYS,
+    coerce_user_setting as _coerce_user_setting,
+    sanitize_user_settings as _sanitize_user_settings,
+)
+from src.user_settings_store import UserSettingsStore
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +41,6 @@ DEFAULT_CODEBUDDY_MODELS = (
 
 # --- Private State ---
 _config_cache: Dict[str, Any] = {}
-_CONFIG_JSON_PATH = 'config/config.json'  # Use a path inside a directory
 
 _DEFAULT_CONFIG = {
     "CODEBUDDY_HOST": "127.0.0.1",
@@ -41,6 +49,7 @@ _DEFAULT_CONFIG = {
     "CODEBUDDY_API_ENDPOINT": "https://copilot.tencent.com",
     "CODEBUDDY_ALLOWED_API_ENDPOINTS": "https://copilot.tencent.com,https://www.codebuddy.ai",
     "CODEBUDDY_CREDS_DIR": ".codebuddy_creds",
+    "CODEBUDDY_DATA_DIR": "data",
     "CODEBUDDY_ALLOWED_HOSTS": "localhost,127.0.0.1",
     "CODEBUDDY_ALLOWED_ORIGINS": "",
     "CODEBUDDY_SSL_VERIFY": True,
@@ -53,21 +62,8 @@ _DEFAULT_CONFIG = {
     "CODEBUDDY_ROTATION_COUNT": 1
 }
 
-_USER_SETTING_KEYS = {
-    "CODEBUDDY_MODELS",
-    "CODEBUDDY_FORCED_REASONING_MODELS",
-    "CODEBUDDY_FORCED_TEMPERATURE",
-    "CODEBUDDY_STRIP_MODEL_NAMESPACE",
-    "CODEBUDDY_AUTO_ROTATION_ENABLED",
-    "CODEBUDDY_ROTATION_COUNT",
-}
-_USER_SETTINGS_ROOT_KEY = "users"
 _user_settings_cache: Dict[str, Dict[str, Any]] = {}
-
-_BOOL_USER_SETTING_KEYS = {
-    "CODEBUDDY_STRIP_MODEL_NAMESPACE",
-    "CODEBUDDY_AUTO_ROTATION_ENABLED",
-}
+_USER_SETTINGS_LOCK = threading.RLock()
 
 # --- Core Functions ---
 
@@ -91,8 +87,9 @@ def load_config():
         env_value = os.getenv(key)
         if env_value is not None:
             config[key] = env_value
-    _config_cache = config
-    _user_settings_cache = _load_user_settings()
+    with _USER_SETTINGS_LOCK:
+        _config_cache = config
+        _user_settings_cache = _load_user_settings()
     logger.info("Configuration loaded successfully.")
 
 
@@ -114,10 +111,11 @@ def _username_from_user(user: Any = None, username: Optional[str] = None) -> Opt
 
 
 def _get_user_config_value(key: str, user: Any = None, username: Optional[str] = None) -> Any:
-    user_key = _username_from_user(user, username)
-    if user_key and key in _user_settings_cache.get(user_key, {}):
-        return _user_settings_cache[user_key][key]
-    return _get_config_value(key)
+    with _USER_SETTINGS_LOCK:
+        user_key = _username_from_user(user, username)
+        if user_key and key in _user_settings_cache.get(user_key, {}):
+            return _user_settings_cache[user_key][key]
+        return _get_config_value(key)
 
 
 def _to_bool(value: Any) -> bool:
@@ -127,18 +125,6 @@ def _to_bool(value: Any) -> bool:
     return str(value).strip().lower() in ("true", "1", "t", "y", "yes", "on")
 
 
-def _parse_bool_setting(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in ("true", "1", "t", "y", "yes", "on"):
-            return True
-        if normalized in ("false", "0", "f", "n", "no", "off"):
-            return False
-    raise ValueError(f"Invalid boolean setting value: {value!r}")
-
-
 def _parse_csv(value: Any) -> list:
     """解析逗号分隔配置，自动过滤空项。"""
     if value is None:
@@ -146,76 +132,11 @@ def _parse_csv(value: Any) -> list:
     return [item.strip() for item in str(value).split(",") if item.strip()]
 
 
-def _coerce_user_setting(key: str, value: Any) -> Any:
-    if key not in _USER_SETTING_KEYS:
-        raise ValueError(f"Unsupported user setting: {key}")
-
-    if key in _BOOL_USER_SETTING_KEYS:
-        return _parse_bool_setting(value)
-
-    if key == "CODEBUDDY_ROTATION_COUNT":
-        if isinstance(value, bool):
-            raise ValueError("CODEBUDDY_ROTATION_COUNT must be a positive integer")
-        try:
-            rotation_count = int(value)
-        except (TypeError, ValueError) as e:
-            raise ValueError("CODEBUDDY_ROTATION_COUNT must be a positive integer") from e
-        if str(value).strip() != str(rotation_count) and not isinstance(value, int):
-            raise ValueError("CODEBUDDY_ROTATION_COUNT must be a positive integer")
-        if rotation_count < 1:
-            raise ValueError("CODEBUDDY_ROTATION_COUNT must be a positive integer")
-        return rotation_count
-
-    if key == "CODEBUDDY_FORCED_TEMPERATURE":
-        if value is None:
-            return ""
-        raw_value = str(value).strip()
-        if not raw_value:
-            return ""
-        try:
-            temperature = float(raw_value)
-        except ValueError as e:
-            raise ValueError("CODEBUDDY_FORCED_TEMPERATURE must be a number or empty") from e
-        if not 0 <= temperature <= 2:
-            raise ValueError("CODEBUDDY_FORCED_TEMPERATURE must be between 0 and 2")
-        if temperature.is_integer():
-            return int(temperature)
-        return temperature
-
-    return str(value or "")
-
-
-def _sanitize_user_settings(raw_settings: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        key: _coerce_user_setting(key, value)
-        for key, value in raw_settings.items()
-        if key in _USER_SETTING_KEYS
-    }
-
-
 def _load_user_settings() -> Dict[str, Dict[str, Any]]:
-    if not os.path.exists(_CONFIG_JSON_PATH):
-        return {}
-
-    with open(_CONFIG_JSON_PATH, 'r', encoding='utf-8') as f:
-        content = f.read()
-    if not content:
-        return {}
-
-    raw_config = json.loads(content)
-    if not isinstance(raw_config, dict):
-        raise ValueError(f"{_CONFIG_JSON_PATH} must contain a JSON object")
-
-    if not raw_config:
-        return {}
-
-    raw_users = raw_config.get(_USER_SETTINGS_ROOT_KEY)
-    if not isinstance(raw_users, dict):
-        raise ValueError(f"{_CONFIG_JSON_PATH} must contain a users object")
+    raw_users = UserSettingsStore(get_database_path()).load_all()
     return {
         str(username): _sanitize_user_settings(settings)
         for username, settings in raw_users.items()
-        if isinstance(settings, dict)
     }
 
 
@@ -234,31 +155,6 @@ def _normalize_base_url(url: Any) -> str:
     ))
 
 
-def _save_user_settings(settings: Dict[str, Dict[str, Any]]) -> None:
-    """
-    Saves the entire current in-memory configuration to config.json.
-    This is simpler and more robust, ensuring a complete snapshot is always saved.
-    This will create the file if it doesn't exist.
-    """
-    try:
-        # Ensure the directory exists before writing the file
-        config_dir = os.path.dirname(_CONFIG_JSON_PATH)
-        if not os.path.exists(config_dir):
-            os.makedirs(config_dir)
-            logger.info(f"Created config directory at {config_dir}")
-
-        with open(_CONFIG_JSON_PATH, 'w', encoding='utf-8') as f:
-            json.dump({_USER_SETTINGS_ROOT_KEY: settings}, f, indent=4)
-        logger.info(f"User settings successfully persisted to {_CONFIG_JSON_PATH}.")
-    except Exception as e:
-        logger.error(f"Failed to save config to {_CONFIG_JSON_PATH}: {e}")
-        raise
-
-
-def save_config_to_json():
-    """将按用户隔离的可编辑设置持久化到 config.json。"""
-    _save_user_settings(_user_settings_cache)
-
 # --- Public Getter Functions ---
 
 def get_active_config() -> Dict[str, Any]:
@@ -267,10 +163,11 @@ def get_active_config() -> Dict[str, Any]:
 
 def get_editable_config(user: Any = None, username: Optional[str] = None) -> Dict[str, Any]:
     """返回当前用户可编辑设置；未保存的用户使用系统默认配置。"""
-    return {
-        key: _get_editable_config_value(key, user, username)
-        for key in _USER_SETTING_KEYS
-    }
+    with _USER_SETTINGS_LOCK:
+        return {
+            key: _get_editable_config_value(key, user, username)
+            for key in _USER_SETTING_KEYS
+        }
 
 
 def _get_editable_config_value(key: str, user: Any = None, username: Optional[str] = None) -> Any:
@@ -329,6 +226,21 @@ def get_allowed_api_endpoints() -> list:
 
 def get_codebuddy_creds_dir() -> str:
     return str(_get_config_value("CODEBUDDY_CREDS_DIR"))
+
+
+def get_data_dir() -> str:
+    return str(_get_config_value("CODEBUDDY_DATA_DIR"))
+
+
+def get_database_path() -> Path:
+    """返回 API Key 与用户设置共用的 SQLite 数据库路径。"""
+    return resolve_database_path(get_data_dir())
+
+
+def initialize_database() -> None:
+    """初始化空数据库及 schema；用户设置仍在首次保存时写入。"""
+    with SQLiteDatabase(get_database_path()).connect():
+        pass
 
 
 def get_allowed_origins() -> list:
@@ -408,9 +320,9 @@ def update_settings(new_settings: Dict[str, Any], user: Any = None, username: Op
         key: _coerce_user_setting(key, value)
         for key, value in new_settings.items()
     }
-    current = _user_settings_cache.setdefault(user_key, {})
-    current.update(sanitized)
-    save_config_to_json()
+    with _USER_SETTINGS_LOCK:
+        UserSettingsStore(get_database_path()).update(user_key, sanitized)
+        _user_settings_cache.setdefault(user_key, {}).update(sanitized)
 
 # --- Initial Load ---
 load_config()

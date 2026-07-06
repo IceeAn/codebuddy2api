@@ -1,8 +1,13 @@
 """SSE 事件解析和格式化工具。"""
 import json
-from typing import Any, AsyncIterator, Dict, Optional
+from typing import Any, AsyncIterator
 
 SSE_DONE = object()
+
+
+class SSEDataError(ValueError):
+    """上游 SSE data 字段不是可解析的 JSON。"""
+
 
 SSE_HEADERS = {
     "Cache-Control": "no-cache",
@@ -21,7 +26,7 @@ def format_sse_error(message: str, error_type: str = "stream_error") -> str:
     return format_sse_event(error_data)
 
 
-def format_sse_event(data: Dict[str, Any]) -> str:
+def format_sse_event(data: Any) -> str:
     """格式化 data-only SSE 事件，OpenAI 兼容客户端依赖空行作为事件边界。"""
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
@@ -35,10 +40,10 @@ def parse_sse_event(line: str) -> Any:
     stripped = line.strip()
     if not stripped or stripped.startswith(":"):
         return None
-    if not stripped.startswith("data: "):
+    if stripped != "data:" and not stripped.startswith("data: "):
         return None
 
-    data = stripped[6:].strip()
+    data = stripped[5:].strip()
     if not data:
         return None
     if data == "[DONE]":
@@ -46,14 +51,8 @@ def parse_sse_event(line: str) -> Any:
 
     try:
         return json.loads(data)
-    except json.JSONDecodeError:
-        return None
-
-
-def parse_sse_line(line: str) -> Optional[Dict[str, Any]]:
-    """解析单行 SSE 数据，兼容旧调用方：DONE 和无效行返回 None。"""
-    event = parse_sse_event(line)
-    return event if isinstance(event, dict) else None
+    except json.JSONDecodeError as error:
+        raise SSEDataError("upstream SSE data contains invalid JSON") from error
 
 
 async def iter_sse_events(chunks: AsyncIterator[str]) -> AsyncIterator[Any]:

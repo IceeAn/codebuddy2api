@@ -18,7 +18,14 @@ describe('router', () => {
         .map((route) => route.name)
         .filter(Boolean),
     ).toEqual(
-      expect.arrayContaining(['dashboard', 'credentials', 'api-keys', 'console', 'settings']),
+      expect.arrayContaining([
+        'dashboard',
+        'credentials',
+        'api-keys',
+        'console',
+        'api-docs',
+        'settings',
+      ]),
     );
 
     await router.push('/');

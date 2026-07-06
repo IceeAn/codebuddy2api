@@ -1,6 +1,7 @@
-import json
-import tempfile
+import sqlite3
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
 import config
@@ -11,11 +12,46 @@ from src.codebuddy_oauth import (
     get_auth_start_headers,
     get_codebuddy_auth_state_endpoint,
 )
+from src.user_settings_store import UserSettingsStore
 
 from tests.helpers import ConfigIsolationMixin
 
 
 class ConfigTests(ConfigIsolationMixin, unittest.TestCase):
+    def test_load_config_continues_when_dotenv_is_unavailable(self):
+        real_import = __import__
+        data_dir = config.get_data_dir()
+
+        def import_without_dotenv(name, *args, **kwargs):
+            if name == "dotenv":
+                raise ImportError("dotenv unavailable")
+            return real_import(name, *args, **kwargs)
+
+        with (
+            mock.patch("builtins.__import__", side_effect=import_without_dotenv),
+            mock.patch.dict(
+                "os.environ",
+                {"CODEBUDDY_DATA_DIR": data_dir},
+            ),
+        ):
+            config.load_config()
+
+        self.assertEqual(config.get_data_dir(), data_dir)
+
+    def test_config_helpers_cover_missing_and_invalid_values(self):
+        self.assertIsNone(config._username_from_user(object()))
+        self.assertEqual(config._parse_csv(None), [])
+        self.assertEqual(
+            set(config.get_active_config()),
+            set(config._DEFAULT_CONFIG),
+        )
+
+        config._config_cache["CODEBUDDY_ROTATION_COUNT"] = 0
+        with self.assertRaisesRegex(ValueError, "positive integer"):
+            config.get_rotation_count()
+        with self.assertRaisesRegex(ValueError, "username is required"):
+            config.update_settings({"CODEBUDDY_MODELS": "model"})
+
     def test_unsafe_api_endpoint_falls_back_to_default(self):
         config._config_cache["CODEBUDDY_API_ENDPOINT"] = "https://evil.example"
         config._config_cache["CODEBUDDY_ALLOWED_API_ENDPOINTS"] = "https://copilot.tencent.com,https://www.codebuddy.ai"
@@ -86,25 +122,98 @@ class ConfigTests(ConfigIsolationMixin, unittest.TestCase):
                 self.assertIs(config.get_strip_model_namespace(), expected)
 
     def test_update_settings_persists_user_scoped_settings(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            settings_path = f"{tmp_dir}/config.json"
-            with mock.patch.object(config, "_CONFIG_JSON_PATH", settings_path):
-                config.update_settings(
-                    {
-                        "CODEBUDDY_MODELS": "admin-only",
-                        "CODEBUDDY_AUTO_ROTATION_ENABLED": False,
-                        "CODEBUDDY_ROTATION_COUNT": 2,
-                    },
-                    username="admin",
-                )
+        config.update_settings(
+            {
+                "CODEBUDDY_MODELS": "admin-only",
+                "CODEBUDDY_AUTO_ROTATION_ENABLED": False,
+                "CODEBUDDY_ROTATION_COUNT": 2,
+            },
+            username="admin",
+        )
 
-                self.assertEqual(config.get_available_models("admin"), ["admin-only"])
-                self.assertIs(config.get_auto_rotation_enabled("admin"), False)
-                self.assertEqual(config.get_rotation_count("admin"), 2)
-                with open(settings_path, "r", encoding="utf-8") as f:
-                    persisted = json.load(f)
-                self.assertEqual(persisted["users"]["admin"]["CODEBUDDY_MODELS"], "admin-only")
-                self.assertNotIn("CODEBUDDY_LOG_LEVEL", persisted["users"]["admin"])
+        self.assertEqual(config.get_available_models("admin"), ["admin-only"])
+        self.assertIs(config.get_auto_rotation_enabled("admin"), False)
+        self.assertEqual(config.get_rotation_count("admin"), 2)
+        with sqlite3.connect(config.get_database_path()) as connection:
+            persisted = dict(connection.execute(
+                "SELECT setting_key, value_json FROM user_settings WHERE username = ?",
+                ("admin",),
+            ))
+        self.assertEqual(persisted["CODEBUDDY_MODELS"], '"admin-only"')
+        self.assertNotIn("CODEBUDDY_LOG_LEVEL", persisted)
+
+    def test_concurrent_settings_updates_keep_database_and_cache_consistent(self):
+        first_write_committed = threading.Event()
+        release_first_write = threading.Event()
+        second_lock_attempted = threading.Event()
+        second_write_entered_store = threading.Event()
+        original_update = UserSettingsStore.update
+        update_context = threading.local()
+
+        class ObservableRLock:
+            def __init__(self):
+                self._lock = threading.RLock()
+
+            def __enter__(self):
+                if getattr(update_context, "value", None) == "second":
+                    second_lock_attempted.set()
+                self._lock.acquire()
+                return self
+
+            def __exit__(self, _exc_type, _exc_value, _traceback):
+                self._lock.release()
+
+        def controlled_update(store, username, values):
+            original_update(store, username, values)
+            if values["CODEBUDDY_MODELS"] == "first":
+                first_write_committed.set()
+                if not release_first_write.wait(timeout=2):
+                    raise TimeoutError("first settings write was not released")
+            else:
+                second_write_entered_store.set()
+
+        def update_models(value):
+            update_context.value = value
+            config.update_settings(
+                {"CODEBUDDY_MODELS": value},
+                username="admin",
+            )
+
+        with (
+            mock.patch.object(UserSettingsStore, "update", controlled_update),
+            mock.patch.object(config, "_USER_SETTINGS_LOCK", ObservableRLock()),
+            ThreadPoolExecutor(max_workers=2) as executor,
+        ):
+            first_update = executor.submit(update_models, "first")
+            try:
+                self.assertTrue(first_write_committed.wait(timeout=2))
+                second_update = executor.submit(update_models, "second")
+                self.assertTrue(second_lock_attempted.wait(timeout=2))
+                self.assertFalse(second_write_entered_store.is_set())
+            finally:
+                release_first_write.set()
+
+            first_update.result(timeout=2)
+            second_update.result(timeout=2)
+
+        with sqlite3.connect(config.get_database_path()) as connection:
+            persisted = connection.execute(
+                "SELECT value_json FROM user_settings WHERE username = ? AND setting_key = ?",
+                ("admin", "CODEBUDDY_MODELS"),
+            ).fetchone()[0]
+        self.assertEqual(persisted, '"second"')
+        self.assertEqual(config.get_available_models("admin"), ["second"])
+
+    def test_initialize_database_creates_empty_schema_without_persisting_defaults(self):
+        config.initialize_database()
+
+        self.assertEqual(config.get_available_models("new-user"), list(config.DEFAULT_CODEBUDDY_MODELS))
+        with sqlite3.connect(config.get_database_path()) as connection:
+            settings_count = connection.execute("SELECT COUNT(*) FROM user_settings").fetchone()[0]
+            api_keys_count = connection.execute("SELECT COUNT(*) FROM api_keys").fetchone()[0]
+
+        self.assertEqual(settings_count, 0)
+        self.assertEqual(api_keys_count, 0)
 
     def test_get_editable_config_returns_typed_default_and_environment_values(self):
         config._config_cache["CODEBUDDY_FORCED_TEMPERATURE"] = "1"
@@ -138,24 +247,17 @@ class ConfigTests(ConfigIsolationMixin, unittest.TestCase):
                 with self.assertRaises(ValueError):
                     config.update_settings(payload, username="admin")
 
-    def test_load_config_rejects_flat_config_without_user_scope(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            settings_path = f"{tmp_dir}/config.json"
-            flat_config = {
-                "CODEBUDDY_LOG_LEVEL": "DEBUG",
-                "CODEBUDDY_MODELS": "flat-model",
-                "CODEBUDDY_ROTATION_COUNT": 0,
-                "CODEBUDDY_ALLOWED_HOSTS": "evil.example",
-            }
-            with open(settings_path, "w", encoding="utf-8") as f:
-                json.dump(flat_config, f)
+    def test_load_config_reloads_user_settings_from_database(self):
+        config.update_settings({"CODEBUDDY_MODELS": "persisted-model"}, username="admin")
+        config._user_settings_cache = {}
 
-            with mock.patch.object(config, "_CONFIG_JSON_PATH", settings_path):
-                with self.assertRaises(ValueError):
-                    config.load_config()
+        with mock.patch.dict(
+            "os.environ",
+            {"CODEBUDDY_DATA_DIR": config.get_data_dir()},
+        ):
+            config.load_config()
 
-            with open(settings_path, "r", encoding="utf-8") as f:
-                self.assertEqual(json.load(f), flat_config)
+        self.assertEqual(config.get_available_models("admin"), ["persisted-model"])
 
 
 class CodeBuddyHeaderTests(ConfigIsolationMixin, unittest.TestCase):

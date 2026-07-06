@@ -1,0 +1,16 @@
+[run]
+branch = True
+source =
+    .
+omit =
+    tests/*
+    venv/*
+
+[report]
+fail_under = 100
+show_missing = True
+skip_covered = False
+include =
+    config.py
+    src/*.py
+    web.py

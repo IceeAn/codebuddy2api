@@ -15,9 +15,10 @@ from .codebuddy_oauth import (
     start_codebuddy_auth,
     validate_auth_state_owner,
 )
+from .private_response import PrivateNoStoreRoute
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter(route_class=PrivateNoStoreRoute)
 
 
 @router.get("/auth/start", summary="Start CodeBuddy Authentication")
@@ -135,7 +136,10 @@ async def poll_for_token(
     )
 
 
-@router.get("/auth/callback", summary="OAuth2 callback endpoint")
+@router.get(
+    "/auth/callback",
+    summary="OAuth2 callback endpoint",
+)
 async def oauth_callback(code: str = None, state: str = None, error: str = None):
     """OAuth2 回调端点。"""
     if error:

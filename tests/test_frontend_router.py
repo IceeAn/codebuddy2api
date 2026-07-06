@@ -9,6 +9,9 @@ from src.frontend_router import (
     get_frontend_index_response,
     get_frontend_static_response,
     get_legacy_admin_response,
+    serve_admin,
+    serve_frontend,
+    serve_frontend_asset,
 )
 
 
@@ -72,6 +75,40 @@ class FrontendRouterTests(unittest.IsolatedAsyncioTestCase):
                     await get_frontend_static_response("../secret.txt")
 
         self.assertEqual(context.exception.status_code, 404)
+
+    async def test_missing_static_asset_inside_dist_returns_404(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with mock.patch("src.frontend_router.DIST_DIR", Path(tmp_dir)):
+                with self.assertRaises(HTTPException) as context:
+                    await get_frontend_static_response("assets/missing.js")
+
+        self.assertEqual(context.exception.status_code, 404)
+
+    async def test_route_handlers_delegate_to_response_helpers(self):
+        frontend_response = object()
+        admin_response = object()
+        asset_response = object()
+        with (
+            mock.patch(
+                "src.frontend_router.get_frontend_index_response",
+                new=mock.AsyncMock(return_value=frontend_response),
+            ) as get_frontend,
+            mock.patch(
+                "src.frontend_router.get_legacy_admin_response",
+                new=mock.AsyncMock(return_value=admin_response),
+            ) as get_admin,
+            mock.patch(
+                "src.frontend_router.get_frontend_static_response",
+                new=mock.AsyncMock(return_value=asset_response),
+            ) as get_asset,
+        ):
+            self.assertIs(await serve_frontend(), frontend_response)
+            self.assertIs(await serve_admin(), admin_response)
+            self.assertIs(await serve_frontend_asset("app.js"), asset_response)
+
+        get_frontend.assert_awaited_once_with()
+        get_admin.assert_awaited_once_with()
+        get_asset.assert_awaited_once_with("assets/app.js")
 
 
 if __name__ == "__main__":

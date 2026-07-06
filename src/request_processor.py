@@ -1,10 +1,20 @@
 """聊天请求验证和上游载荷预处理。"""
 import copy
+from dataclasses import dataclass
 from typing import Any, Dict
 
 from fastapi import HTTPException
 
 from .keyword_replacer import apply_keyword_replacement_to_system_message
+
+
+@dataclass(frozen=True)
+class PreparedCodeBuddyRequest:
+    """分离客户端响应契约与经过策略处理的 CodeBuddy 上游载荷。"""
+
+    payload: Dict[str, Any]
+    client_wants_stream: bool
+    response_model: str
 
 
 def strip_model_namespace(model: Any) -> str:
@@ -71,43 +81,58 @@ def apply_forced_temperature(payload: Dict[str, Any], user: Any = None) -> None:
         payload["temperature"] = forced_temperature
 
 
+def apply_request_policies(payload: Dict[str, Any], user: Any = None) -> None:
+    """应用用户级模型和消息策略，不处理上游传输约束。"""
+    if not payload.get("model"):
+        from config import DEFAULT_CODEBUDDY_MODELS, get_available_models
+
+        payload["model"] = next(
+            (model for model in get_available_models(user) if model),
+            DEFAULT_CODEBUDDY_MODELS[0],
+        )
+
+    from config import get_strip_model_namespace
+
+    if get_strip_model_namespace(user):
+        payload["model"] = strip_model_namespace(payload.get("model"))
+    if should_configure_model_reasoning(payload.get("model"), user):
+        apply_forced_reasoning_options(payload)
+    else:
+        apply_default_thinking_options(payload)
+    apply_forced_temperature(payload, user)
+
+    messages = payload.get("messages", [])
+    if len(messages) == 1 and messages[0].get("role") == "user":
+        system_msg = {"role": "system", "content": "You are a helpful assistant."}
+        payload["messages"] = [system_msg] + messages
+
+    for msg in payload.get("messages", []):
+        if msg.get("role") == "system":
+            msg["content"] = apply_keyword_replacement_to_system_message(msg.get("content"))
+
+
+def adapt_openai_payload_for_codebuddy(payload: Dict[str, Any]) -> None:
+    """应用 CodeBuddy 上游只支持流式响应的协议约束。"""
+    stream_options = payload.get("stream_options") if isinstance(payload.get("stream_options"), dict) else {}
+    payload["stream_options"] = {**stream_options, "include_usage": True}
+    payload["stream"] = True
+
+
 class RequestProcessor:
     """请求预处理器。"""
 
     @staticmethod
-    def prepare_payload(request_body: Dict[str, Any], user: Any = None) -> Dict[str, Any]:
-        """准备上游请求载荷，不修改调用方传入的请求对象。"""
+    def prepare_request(request_body: Dict[str, Any], user: Any = None) -> PreparedCodeBuddyRequest:
+        """依次应用产品策略和协议适配，同时保留客户端响应契约。"""
         payload = copy.deepcopy(request_body)
-        if not payload.get("model"):
-            from config import DEFAULT_CODEBUDDY_MODELS, get_available_models
-
-            payload["model"] = next(
-                (model for model in get_available_models(user) if model),
-                DEFAULT_CODEBUDDY_MODELS[0],
-            )
-        from config import get_strip_model_namespace
-
-        if get_strip_model_namespace(user):
-            payload["model"] = strip_model_namespace(payload.get("model"))
-        if should_configure_model_reasoning(payload.get("model"), user):
-            apply_forced_reasoning_options(payload)
-        else:
-            apply_default_thinking_options(payload)
-        apply_forced_temperature(payload, user)
-        stream_options = payload.get("stream_options") if isinstance(payload.get("stream_options"), dict) else {}
-        payload["stream_options"] = {**stream_options, "include_usage": True}
-        payload["stream"] = True  # CodeBuddy 只支持流式请求
-
-        messages = payload.get("messages", [])
-        if len(messages) == 1 and messages[0].get("role") == "user":
-            system_msg = {"role": "system", "content": "You are a helpful assistant."}
-            payload["messages"] = [system_msg] + messages
-
-        for msg in payload.get("messages", []):
-            if msg.get("role") == "system":
-                msg["content"] = apply_keyword_replacement_to_system_message(msg.get("content"))
-
-        return payload
+        apply_request_policies(payload, user)
+        response_model = str(request_body.get("model") or payload.get("model") or "unknown")
+        adapt_openai_payload_for_codebuddy(payload)
+        return PreparedCodeBuddyRequest(
+            payload=payload,
+            client_wants_stream=bool(request_body.get("stream", False)),
+            response_model=response_model,
+        )
 
     @staticmethod
     def validate_request(request_body: Dict[str, Any]) -> None:
@@ -119,13 +144,17 @@ class RequestProcessor:
         if not messages or not isinstance(messages, list):
             raise HTTPException(status_code=400, detail="Messages field is required and must be an array")
 
-        if not messages:
-            raise HTTPException(status_code=400, detail="At least one message is required")
-
         for i, msg in enumerate(messages):
             if not isinstance(msg, dict):
                 raise HTTPException(status_code=400, detail=f"Message {i} must be an object")
             if "role" not in msg:
                 raise HTTPException(status_code=400, detail=f"Message {i} must have 'role' field")
-            if "content" not in msg and not (msg.get("role") == "assistant" and msg.get("tool_calls")):
-                raise HTTPException(status_code=400, detail=f"Message {i} must have 'content' field")
+            if "content" not in msg:
+                tool_calls = msg.get("tool_calls")
+                if (
+                    msg.get("role") != "assistant"
+                    or not isinstance(tool_calls, list)
+                    or not tool_calls
+                    or not all(isinstance(tool_call, dict) for tool_call in tool_calls)
+                ):
+                    raise HTTPException(status_code=400, detail=f"Message {i} must have 'content' field")

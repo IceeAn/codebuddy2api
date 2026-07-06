@@ -9,7 +9,11 @@ export default defineConfig({
       '/auth': 'http://127.0.0.1:8001',
       '/api': 'http://127.0.0.1:8001',
       '/codebuddy': 'http://127.0.0.1:8001',
+      '/openai': 'http://127.0.0.1:8001',
       '/health': 'http://127.0.0.1:8001',
+      '/docs': 'http://127.0.0.1:8001',
+      '/redoc': 'http://127.0.0.1:8001',
+      '/openapi.json': 'http://127.0.0.1:8001',
     },
   },
   build: {

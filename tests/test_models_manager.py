@@ -313,5 +313,70 @@ class ModelsManagerTests(ConfigIsolationMixin, unittest.IsolatedAsyncioTestCase)
         self.assertEqual(models, ["manual-a"])
 
 
+    async def test_get_actual_models_rejects_selected_credential_without_id(self):
+        manager = self._make_manager(FakeConfigClient())
+        token_manager = FakeTokenManager({"bearer_token": "token"}, credential_id="")
+
+        with mock.patch("src.models_manager.get_token_manager_for_user", return_value=token_manager):
+            with self.assertRaisesRegex(RuntimeError, "credential_id"):
+                await manager.get_actual_models(self._user())
+
+    async def test_first_model_helpers_reject_empty_results(self):
+        manager = self._make_manager(FakeConfigClient())
+        with mock.patch.object(manager, "get_actual_models", new=mock.AsyncMock(return_value=[])):
+            with self.assertRaisesRegex(RuntimeError, "没有可用模型"):
+                await manager.get_first_actual_model(self._user())
+
+        with mock.patch.object(
+            manager,
+            "get_actual_models_for_credential",
+            new=mock.AsyncMock(return_value=[]),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "没有可用模型"):
+                await manager.get_first_actual_model_for_credential(self._user(), "id", {})
+
+    async def test_first_model_for_credential_returns_first_result(self):
+        manager = self._make_manager(FakeConfigClient())
+        with mock.patch.object(
+            manager,
+            "get_actual_models_for_credential",
+            new=mock.AsyncMock(return_value=["first", "second"]),
+        ):
+            result = await manager.get_first_actual_model_for_credential(self._user(), "id", {})
+
+        self.assertEqual(result, "first")
+
+    def test_credential_cache_key_rejects_blank_id(self):
+        with self.assertRaisesRegex(RuntimeError, "credential_id"):
+            ModelsManager._credential_cache_key(self._user(), " ")
+
+    async def test_fetch_models_rejects_missing_token_http_and_api_errors(self):
+        with self.assertRaisesRegex(RuntimeError, "bearer_token"):
+            await self._make_manager(FakeConfigClient())._fetch_models_from_codebuddy_credential({})
+
+        error_responses = [
+            (FakeConfigResponse({}, status_code=503, text="unavailable"), "HTTP 503"),
+            (FakeConfigResponse({"code": 42, "msg": "denied"}), "code=42"),
+        ]
+        for response, expected in error_responses:
+            with self.subTest(expected=expected):
+                manager = self._make_manager(FakeConfigClient(response=response))
+                with self.assertRaisesRegex(RuntimeError, expected):
+                    await manager._fetch_models_from_codebuddy_credential({"bearer_token": "token"})
+
+    def test_extract_model_ids_rejects_invalid_response_shapes(self):
+        invalid_bodies = [
+            ({"data": None}, "data 不是对象"),
+            ({"data": {"models": None}}, "有效 models 列表"),
+            ({"data": {"models": ["invalid"]}}, "非对象项"),
+            ({"data": {"models": [{"id": " "}]}}, "没有有效 id"),
+        ]
+
+        for body, expected in invalid_bodies:
+            with self.subTest(body=body):
+                with self.assertRaisesRegex(RuntimeError, expected):
+                    ModelsManager._extract_model_ids(body)
+
+
 if __name__ == "__main__":
     unittest.main()

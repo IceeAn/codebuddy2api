@@ -1,22 +1,29 @@
 """CodeBuddy 上游流式调用服务。"""
 import asyncio
+import json
 import logging
+import random
 import time
 import uuid
-from typing import Any, Callable, Dict, List, Optional
+from contextlib import aclosing
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
 import httpx
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
+from starlette.requests import ClientDisconnect
 
 from .openai_compat import (
-    OpenAICompatibilityConverter,
+    CodeBuddyResponseEvent,
+    CompletionResponseContext,
     OpenAIStreamNormalizer,
-    ensure_openai_stream_chunk_fields,
-    validate_and_fix_tool_call_args,
+    ToolCallIndexState,
+    add_openai_tool_call_indexes,
+    normalize_openai_stream_chunk_envelope,
 )
 from .sse import (
     SSE_DONE,
+    SSEDataError,
     SSE_HEADERS,
     format_sse_done,
     format_sse_error,
@@ -25,6 +32,45 @@ from .sse import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class UpstreamAPIError(HTTPException):
+    """可由 OpenAI 兼容入口稳定序列化的上游错误。"""
+
+    def __init__(
+            self,
+            status_code: int,
+            message: str,
+            error_type: str,
+            *,
+            code: Any = None,
+            headers: Optional[Dict[str, str]] = None,
+    ):
+        super().__init__(status_code=status_code, detail=message, headers=headers)
+        self.error = {"message": message, "type": error_type}
+        if code is not None:
+            self.error["code"] = code
+
+
+def _extract_error_fields(
+        error_value: Any,
+        fallback_message: str,
+        fallback_type: str,
+) -> tuple[str, str, Any]:
+    """从常见上游错误对象中提取安全且稳定的 OpenAI 错误字段。"""
+    candidate = error_value.get("error", error_value) if isinstance(error_value, dict) else error_value
+    if isinstance(candidate, dict):
+        message = candidate.get("message")
+        error_type = candidate.get("type")
+        code = candidate.get("code")
+        return (
+            message if isinstance(message, str) and message else fallback_message,
+            error_type if isinstance(error_type, str) and error_type else fallback_type,
+            code,
+        )
+    if isinstance(candidate, str) and candidate:
+        return candidate, fallback_type, None
+    return fallback_message, fallback_type, None
 
 
 def get_codebuddy_api_url() -> str:
@@ -100,155 +146,215 @@ lifecycle_manager = AppLifecycleManager()
 
 
 class SSEConnectionManager:
-    """SSE 连接管理器，包含重连逻辑。"""
+    """仅重试确定发生在请求发送前的连接阶段错误。"""
 
-    def __init__(self, max_retries: int = 3, retry_delay: float = 1.0):
-        self.max_retries = max_retries
+    def __init__(
+            self,
+            max_connect_retries: int = 1,
+            retry_delay: float = 0.25,
+            jitter_ratio: float = 0.2,
+            random_source: Callable[[], float] = random.random,
+    ):
+        if max_connect_retries < 0:
+            raise ValueError("max_connect_retries must be non-negative")
+        self.max_connect_retries = max_connect_retries
         self.retry_delay = retry_delay
+        self.jitter_ratio = jitter_ratio
+        self.random_source = random_source
+
+    def _retry_wait(self, attempt: int) -> float:
+        base_wait = self.retry_delay * (2 ** attempt)
+        return base_wait * (1 + self.jitter_ratio * self.random_source())
+
+    async def _wait_before_retry(self, attempt: int, error: Exception) -> None:
+        wait_time = self._retry_wait(attempt)
+        logger.warning(
+            "CodeBuddy 连接失败，%.3f 秒后重试（第 %d 次）: %s",
+            wait_time,
+            attempt + 1,
+            error,
+        )
+        await asyncio.sleep(wait_time)
 
     async def stream_with_retry(self, stream_func, *args, **kwargs):
-        """带重连的流式处理。"""
-        for attempt in range(self.max_retries + 1):
+        """流式请求只在连接错误且尚未输出下游 chunk 时重试。"""
+        has_emitted_chunk = False
+        for attempt in range(self.max_connect_retries + 1):  # pragma: no branch
             try:
-                async for chunk in stream_func(*args, **kwargs):
-                    yield chunk
-                break
-            except (httpx.TimeoutException, httpx.NetworkError) as e:
-                if attempt < self.max_retries:
-                    wait_time = self.retry_delay * (2 ** attempt)
-                    logger.warning(f"连接失败，{wait_time}秒后重试 (第{attempt + 1}次): {e}")
-                    yield format_sse_error(
-                        f"Connection lost, retrying in {wait_time}s... (attempt {attempt + 1})",
-                        "connection_retry",
-                    )
-                    await asyncio.sleep(wait_time)
+                async with aclosing(stream_func(*args, **kwargs)) as active_stream:
+                    async for chunk in active_stream:
+                        has_emitted_chunk = True
+                        yield chunk
+                return
+            except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+                if has_emitted_chunk:
+                    logger.error("流式响应已开始，连接错误后不重放请求: %s", e)
+                    raise
+                if attempt < self.max_connect_retries:
+                    await self._wait_before_retry(attempt, e)
                     continue
+                logger.error("CodeBuddy 连接重试耗尽: %s", e)
+                raise
 
-                logger.error(f"重连失败，已达到最大重试次数: {e}")
-                yield format_sse_error(
-                    f"Connection failed after {self.max_retries} retries: {str(e)}",
-                    "connection_failed",
-                )
+    async def run_with_retry(self, operation: Callable[[], Any]) -> Any:
+        """为非流式聚合路径应用相同的连接阶段重试策略。"""
+        for attempt in range(self.max_connect_retries + 1):  # pragma: no branch
+            try:
+                return await operation()
+            except (httpx.ConnectError, httpx.ConnectTimeout) as error:
+                if attempt < self.max_connect_retries:
+                    await self._wait_before_retry(attempt, error)
+                    continue
+                logger.error("CodeBuddy 连接重试耗尽: %s", error)
                 raise
-            except Exception as e:
-                logger.error(f"流式处理异常: {e}")
-                yield format_sse_error(f"Stream error: {str(e)}", "stream_error")
-                raise
+
+
+async def _prepend_chunk(first_chunk: Any, remaining: AsyncIterator[Any]) -> AsyncIterator[Any]:
+    """把已预取的首块放回响应流。"""
+    yield first_chunk
+    async for chunk in remaining:
+        yield chunk
+
+
+class _ManagedStreamingResponse(StreamingResponse):
+    """首块就绪后才发送响应头，并在等待及发送期间监听客户端断开。
+
+    标准 StreamingResponse 会先发送 200 再迭代响应体，无法让首块前的
+    上游异常进入 FastAPI 异常处理器；此类只接管首块与断连协调，实际
+    响应体发送仍委托 Starlette，避免重复实现其编码和 ASGI 消息逻辑。
+    """
+
+    def __init__(self, content, close_callback, **kwargs):
+        super().__init__(content, **kwargs)
+        self._close_callback = close_callback
+
+    async def _stream_from_first_chunk(self, first_chunk: Any, send) -> None:
+        self.body_iterator = _prepend_chunk(first_chunk, self.body_iterator)
+        await super().stream_response(send)
+
+    async def __call__(self, _scope, receive, send) -> None:
+        first_chunk_task = asyncio.create_task(anext(self.body_iterator))
+        disconnect_task = asyncio.create_task(self.listen_for_disconnect(receive))
+        tasks = [first_chunk_task, disconnect_task]
+        try:
+            completed, _pending = await asyncio.wait(
+                (first_chunk_task, disconnect_task),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if disconnect_task in completed:
+                await disconnect_task
+                return
+
+            first_chunk = await first_chunk_task
+
+            async def stream_from_first_chunk():
+                try:
+                    await self._stream_from_first_chunk(first_chunk, send)
+                except OSError as error:
+                    raise ClientDisconnect() from error
+
+            stream_task = asyncio.create_task(stream_from_first_chunk())
+            tasks.append(stream_task)
+            completed, _pending = await asyncio.wait(
+                (stream_task, disconnect_task),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if disconnect_task in completed:
+                await disconnect_task
+                return
+            await stream_task
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await self._close_callback()
 
 
 class StreamResponseAggregator:
-    """流式响应聚合器，使用工具调用 ID 保持多工具调用顺序。"""
+    """将 CodeBuddy SSE 事件聚合为 OpenAI 非流式响应。"""
 
-    def __init__(self):
+    def __init__(self, response_context: CompletionResponseContext):
+        self.response_context = response_context
         self.data = {
-            "id": None,
-            "model": None,
             "content": "",
             "reasoning_content": "",
-            "tool_calls": [],
             "finish_reason": None,
             "usage": None,
             "system_fingerprint": None,
         }
-        self.tool_call_map = {}
-        self.tool_call_order = []
-        self.current_tool_id = None
+        self.tool_call_index_state = ToolCallIndexState()
+        self.tool_call_map: Dict[int, Dict[str, Any]] = {}
 
-    def process_chunk(self, obj: Dict[str, Any]):
-        """处理单个响应 chunk。"""
-        self.data["id"] = self.data["id"] or obj.get("id")
-        self.data["model"] = self.data["model"] or obj.get("model")
+    def process_event(self, event: CodeBuddyResponseEvent):
+        """处理共享上游响应语义事件。"""
+        obj = event.chunk_data
         self.data["system_fingerprint"] = obj.get("system_fingerprint") or self.data["system_fingerprint"]
 
-        if obj.get("usage"):
-            self.data["usage"] = obj.get("usage")
+        if event.usage:
+            self.data["usage"] = event.usage
 
-        choices = obj.get("choices", [])
-        if not choices:
+        if not event.has_choice:
             return
+        if isinstance(event.reasoning_content, str) and event.reasoning_content:
+            self.data["reasoning_content"] += event.reasoning_content
 
-        choice = choices[0]
-        delta = choice.get("delta", {})
+        if isinstance(event.content, str) and event.content:
+            self.data["content"] += event.content
 
-        if delta.get("reasoning_content"):
-            self.data["reasoning_content"] += delta.get("reasoning_content")
+        if event.tool_calls:
+            self._process_tool_calls(event.tool_calls)
 
-        if delta.get("content"):
-            self.data["content"] += delta.get("content")
+        if event.finish_reason:
+            self.data["finish_reason"] = event.finish_reason
 
-        if delta.get("tool_calls"):
-            self._process_tool_calls(delta.get("tool_calls"))
-
-        if choice.get("finish_reason"):
-            self.data["finish_reason"] = choice.get("finish_reason")
-
-    def _process_tool_calls(self, tool_calls: List[Dict[str, Any]]):
-        """处理工具调用分块。"""
+    def _process_tool_calls(self, tool_calls: List[Dict[str, Any]]) -> None:
+        """按显式 index、ID 或最近上下文聚合工具调用分块。"""
         for tc in tool_calls:
+            if not isinstance(tc, dict):
+                continue
+            function = tc.get("function")
+            if not isinstance(function, dict):
+                continue
+            index = self.tool_call_index_state.resolve(tc)
+            if index is None:
+                continue
             tool_id = tc.get("id")
+            current = self.tool_call_map.get(index)
+            if current is None:
+                current = {
+                    "id": tool_id,
+                    "type": tc.get("type", "function"),
+                    "function": {"name": "", "arguments": ""},
+                }
+                self.tool_call_map[index] = current
+            elif tool_id is not None:
+                current["id"] = tool_id
 
-            if tool_id:
-                if tool_id not in self.tool_call_map:
-                    self.tool_call_map[tool_id] = {
-                        "id": tool_id,
-                        "type": tc.get("type", "function"),
-                        "function": {
-                            "name": "",
-                            "arguments": "",
-                        },
-                    }
-                    self.tool_call_order.append(tool_id)
-                    self.current_tool_id = tool_id
-                    logger.info(f"新工具调用: {tool_id}")
-                else:
-                    self.current_tool_id = tool_id
-
-                if tc.get("type"):
-                    self.tool_call_map[tool_id]["type"] = tc.get("type")
-
-                func = tc.get("function", {})
-                if func.get("name"):
-                    self.tool_call_map[tool_id]["function"]["name"] = func.get("name")
-                if func.get("arguments"):
-                    self.tool_call_map[tool_id]["function"]["arguments"] += func.get("arguments")
-
-            elif self.current_tool_id and self.current_tool_id in self.tool_call_map:
-                func = tc.get("function", {})
-                if func.get("name"):
-                    self.tool_call_map[self.current_tool_id]["function"]["name"] = func.get("name")
-                if func.get("arguments"):
-                    self.tool_call_map[self.current_tool_id]["function"]["arguments"] += func.get("arguments")
-            else:
-                logger.warning("工具调用缺少 ID 且无当前工具调用上下文，跳过处理")
+            if tc.get("type"):
+                current["type"] = tc["type"]
+            if isinstance(function.get("name"), str) and function["name"]:
+                current["function"]["name"] = function["name"]
+            if isinstance(function.get("arguments"), str) and function["arguments"]:
+                current["function"]["arguments"] += function["arguments"]
 
     def finalize(self) -> Dict[str, Any]:
         """完成聚合并返回最终非流式响应。"""
-        if self.tool_call_map:
-            self.data["tool_calls"] = []
-            for tool_id in self.tool_call_order:
-                if tool_id in self.tool_call_map:
-                    tc = self.tool_call_map[tool_id]
-                    tc["function"]["arguments"] = validate_and_fix_tool_call_args(
-                        tc["function"]["arguments"]
-                    )
-                    self.data["tool_calls"].append(tc)
-                    logger.info(f"工具调用: {tool_id} - {tc['function']['name']}")
-
-            logger.info(f"成功聚合 {len(self.data['tool_calls'])} 个工具调用")
+        indexes = sorted(self.tool_call_map)
+        tool_calls = [self.tool_call_map[index] for index in indexes]
 
         final_message = {"role": "assistant", "content": self.data["content"]}
         if self.data["reasoning_content"]:
             final_message["reasoning_content"] = self.data["reasoning_content"]
-        if self.data["tool_calls"]:
-            final_message["tool_calls"] = self.data["tool_calls"]
+        if tool_calls:
+            final_message["tool_calls"] = tool_calls
 
-        finish_reason = "tool_calls" if self.data["tool_calls"] else (self.data["finish_reason"] or "stop")
+        finish_reason = self.data["finish_reason"] or ("tool_calls" if tool_calls else "stop")
 
         final_response = {
-            "id": self.data["id"] or str(uuid.uuid4()),
+            "id": self.response_context.response_id,
             "object": "chat.completion",
-            "created": int(time.time()),
-            "model": self.data["model"] or "unknown",
+            "created": self.response_context.created,
+            "model": self.response_context.model,
             "choices": [
                 {
                     "index": 0,
@@ -274,95 +380,288 @@ class CodeBuddyStreamService:
             self,
             http_client_factory: Callable[[], Any] = get_http_client,
             api_url_factory: Callable[[], str] = get_codebuddy_api_url,
+            first_chunk_timeout: float = 310.0,
     ):
-        self.connection_manager = SSEConnectionManager(max_retries=3, retry_delay=1.0)
+        self.connection_manager = SSEConnectionManager()
         self.http_client_factory = http_client_factory
         self.api_url_factory = api_url_factory
+        self.first_chunk_timeout = first_chunk_timeout
 
-    def _handle_api_error(self, status_code: int, error_msg: str) -> None:
+    @staticmethod
+    def _create_response_context(
+            payload: Dict[str, Any],
+            response_model: Optional[str],
+    ) -> CompletionResponseContext:
+        return CompletionResponseContext(
+            response_id=f"chatcmpl-{uuid.uuid4().hex}",
+            created=int(time.time()),
+            model=str(response_model or payload.get("model") or "unknown"),
+        )
+
+    def _handle_api_error(
+            self,
+            status_code: int,
+            error_msg: str,
+            *,
+            error_type: Optional[str] = None,
+            code: Any = None,
+            headers: Optional[Dict[str, str]] = None,
+    ) -> None:
         """统一的 API 错误处理。"""
         logger.error(f"CodeBuddy API错误: {status_code} - {error_msg}")
 
         if status_code == 401:
-            raise HTTPException(status_code=401, detail="CodeBuddy API authentication failed")
-        if status_code == 429:
-            raise HTTPException(status_code=429, detail="CodeBuddy API rate limit exceeded")
-        if status_code >= 500:
-            raise HTTPException(status_code=502, detail="CodeBuddy API server error")
-        raise HTTPException(status_code=status_code, detail=f"CodeBuddy API error: {error_msg}")
+            mapped_status, default_type = 401, "authentication_error"
+        elif status_code == 429:
+            mapped_status, default_type = 429, "rate_limit_error"
+        elif status_code >= 500:
+            mapped_status, default_type = 502, "upstream_server_error"
+        elif status_code < 400:
+            mapped_status, default_type = 502, "upstream_protocol_error"
+            error_msg = f"CodeBuddy API unexpected status: {status_code}"
+            error_type = None
+            code = None
+        else:
+            mapped_status, default_type = status_code, "upstream_error"
 
-    async def handle_stream_response(self, payload: Dict[str, Any], headers: Dict[str, str]) -> StreamingResponse:
+        raise UpstreamAPIError(
+            status_code=mapped_status,
+            message=error_msg,
+            error_type=error_type or default_type,
+            code=code,
+            headers=headers,
+        )
+
+    @staticmethod
+    def _parse_upstream_error_body(error_msg: str) -> tuple[str, Optional[str], Any]:
+        try:
+            error_value = json.loads(error_msg)
+        except json.JSONDecodeError:
+            return error_msg, None, None
+        message, error_type, code = _extract_error_fields(
+            error_value,
+            error_msg,
+            "",
+        )
+        return message, error_type, code
+
+    @staticmethod
+    def _upstream_sse_error(event: Dict[str, Any]) -> UpstreamAPIError:
+        message, error_type, code = _extract_error_fields(
+            event.get("error"),
+            "CodeBuddy upstream stream error",
+            "upstream_error",
+        )
+        return UpstreamAPIError(
+            status_code=502,
+            message=message,
+            error_type=error_type,
+            code=code,
+        )
+
+    @staticmethod
+    def _incomplete_stream_error() -> UpstreamAPIError:
+        return UpstreamAPIError(
+            status_code=502,
+            message="CodeBuddy upstream stream ended without a completion marker",
+            error_type="upstream_incomplete",
+        )
+
+    async def _raise_upstream_api_error(self, response: Any) -> None:
+        """尽力读取错误体，但始终以已经收到的上游状态码为准。"""
+        try:
+            error_text = await response.aread()
+            error_msg = error_text.decode("utf-8", errors="ignore")
+        except httpx.HTTPError as error:
+            logger.warning("读取 CodeBuddy API 错误响应体失败: %s", error)
+            error_msg = "unable to read upstream error response body"
+        message, error_type, code = self._parse_upstream_error_body(error_msg)
+        retry_after = getattr(response, "headers", {}).get("Retry-After")
+        forwarded_headers = {"Retry-After": retry_after} if retry_after else None
+        self._handle_api_error(
+            response.status_code,
+            message,
+            error_type=error_type,
+            code=code,
+            headers=forwarded_headers,
+        )
+
+    async def _iter_normalized_upstream_events(
+            self,
+            response: Any,
+    ) -> AsyncIterator[Any]:
+        """统一解析上游 SSE，并把对象事件转换为共享响应语义。"""
+        try:
+            async for event in iter_sse_events(response.aiter_text()):
+                if event is SSE_DONE:
+                    yield SSE_DONE
+                    return
+                if not isinstance(event, dict):
+                    yield event
+                    continue
+                if "error" in event:
+                    raise self._upstream_sse_error(event)
+                yield CodeBuddyResponseEvent.parse(event)
+        except SSEDataError as error:
+            raise UpstreamAPIError(
+                status_code=502,
+                message=str(error),
+                error_type="upstream_protocol_error",
+            ) from error
+
+    async def handle_stream_response(
+            self,
+            payload: Dict[str, Any],
+            headers: Dict[str, str],
+            *,
+            response_model: Optional[str] = None,
+    ) -> StreamingResponse:
         """处理流式响应。"""
+        response_context = self._create_response_context(payload, response_model)
 
         async def stream_core():
             client = await self.http_client_factory()
             async with client.stream("POST", self.api_url_factory(), json=payload, headers=headers) as response:
                 if response.status_code != 200:
-                    error_text = await response.aread()
-                    error_msg = error_text.decode("utf-8", errors="ignore")
-                    yield format_sse_error(f"CodeBuddy API error: {response.status_code} - {error_msg}", "api_error")
-                    return
+                    await self._raise_upstream_api_error(response)
 
-                tool_call_index_map = {}
-                fallback_stream_id = f"chatcmpl-{uuid.uuid4().hex}"
-                fallback_created = int(time.time())
-                fallback_model = str(payload.get("model") or "unknown")
+                tool_call_index_state = ToolCallIndexState()
                 stream_normalizer = OpenAIStreamNormalizer()
+                saw_finish_reason = False
 
-                async for event in iter_sse_events(response.aiter_text(chunk_size=8192)):
+                async for event in self._iter_normalized_upstream_events(response):
                     if event is SSE_DONE:
                         yield format_sse_done()
                         return
-                    if not isinstance(event, dict):
+                    if not isinstance(event, CodeBuddyResponseEvent):
+                        yield format_sse_event(event)
                         continue
 
-                    converted_chunk = OpenAICompatibilityConverter.convert_sse_chunk_to_openai_format(
+                    if event.finish_reason is not None:
+                        saw_finish_reason = True
+                    converted_chunk = add_openai_tool_call_indexes(
                         event,
-                        tool_call_index_map,
+                        tool_call_index_state,
                     )
-                    converted_chunk = ensure_openai_stream_chunk_fields(
+                    converted_chunk = normalize_openai_stream_chunk_envelope(
                         converted_chunk,
-                        fallback_stream_id,
-                        fallback_created,
-                        fallback_model,
+                        response_context,
                     )
 
                     for outgoing_chunk in stream_normalizer.normalize(converted_chunk):
                         yield format_sse_event(outgoing_chunk)
 
-        async def stream_with_retry():
-            async for chunk in self.connection_manager.stream_with_retry(stream_core):
-                yield chunk
+                if saw_finish_reason:
+                    yield format_sse_done()
+                    return
+                raise self._incomplete_stream_error()
 
-        return StreamingResponse(stream_with_retry(), media_type="text/event-stream", headers=SSE_HEADERS)
+        managed_stream = self.connection_manager.stream_with_retry(stream_core)
 
-    async def handle_non_stream_response(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
+        async def prefetch_first_chunk():
+            try:
+                return await asyncio.wait_for(
+                    anext(managed_stream),
+                    timeout=self.first_chunk_timeout,
+                )
+            except TimeoutError:
+                logger.error("等待 CodeBuddy 首个响应事件超时")
+                raise UpstreamAPIError(
+                    status_code=504,
+                    message="CodeBuddy API first chunk timeout",
+                    error_type="upstream_timeout",
+                )
+            except httpx.TimeoutException:
+                logger.error("CodeBuddy API 超时")
+                raise UpstreamAPIError(
+                    status_code=504,
+                    message="CodeBuddy API timeout",
+                    error_type="upstream_timeout",
+                )
+            except httpx.TransportError as error:
+                logger.error("上游传输错误: %s", error)
+                raise UpstreamAPIError(
+                    status_code=502,
+                    message=f"Upstream transport error: {str(error)}",
+                    error_type="upstream_transport_error",
+                ) from error
+
+        async def response_body():
+            try:
+                first_chunk = await prefetch_first_chunk()
+                yield first_chunk
+                try:
+                    async for chunk in managed_stream:
+                        yield chunk
+                except httpx.TimeoutException as error:
+                    yield format_sse_error(str(error), "upstream_timeout")
+                except httpx.TransportError as error:
+                    yield format_sse_error(str(error), "upstream_transport_error")
+                except UpstreamAPIError as error:
+                    yield format_sse_event({"error": error.error})
+                except Exception as error:
+                    yield format_sse_error(str(error), "stream_error")
+            finally:
+                await managed_stream.aclose()
+
+        return _ManagedStreamingResponse(
+            response_body(),
+            managed_stream.aclose,
+            media_type="text/event-stream",
+            headers=SSE_HEADERS,
+        )
+
+    async def handle_non_stream_response(
+            self,
+            payload: Dict[str, Any],
+            headers: Dict[str, str],
+            *,
+            response_model: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """聚合上游流式响应，返回 OpenAI 非流式响应。"""
-        try:
+        response_context = self._create_response_context(payload, response_model)
+
+        async def request_once() -> Dict[str, Any]:
             client = await self.http_client_factory()
-            response = await client.post(self.api_url_factory(), json=payload, headers=headers)
+            async with client.stream(
+                    "POST",
+                    self.api_url_factory(),
+                    json=payload,
+                    headers=headers,
+            ) as response:
+                if response.status_code != 200:
+                    await self._raise_upstream_api_error(response)
 
-            if response.status_code != 200:
-                error_msg = response.text
-                self._handle_api_error(response.status_code, error_msg)
+                aggregator = StreamResponseAggregator(response_context)
+                saw_completion_marker = False
+                async for event in self._iter_normalized_upstream_events(response):
+                    if event is SSE_DONE:
+                        saw_completion_marker = True
+                        break
+                    if not isinstance(event, CodeBuddyResponseEvent):
+                        continue
+                    if event.finish_reason is not None:
+                        saw_completion_marker = True
+                    aggregator.process_event(event)
 
-            aggregator = StreamResponseAggregator()
-            async for event in iter_sse_events(response.aiter_text()):
-                if event is SSE_DONE:
-                    break
-                if isinstance(event, dict):
-                    aggregator.process_chunk(event)
+                if not saw_completion_marker:
+                    raise self._incomplete_stream_error()
 
             return aggregator.finalize()
 
+        try:
+            return await self.connection_manager.run_with_retry(request_once)
         except httpx.TimeoutException:
             logger.error("CodeBuddy API 超时")
-            raise HTTPException(status_code=504, detail="CodeBuddy API timeout")
-        except httpx.NetworkError as e:
-            logger.error(f"网络错误: {e}")
-            raise HTTPException(status_code=502, detail=f"Network error: {str(e)}")
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"请求异常: {e}")
-            raise HTTPException(status_code=500, detail=f"Request error: {str(e)}")
+            raise UpstreamAPIError(
+                status_code=504,
+                message="CodeBuddy API timeout",
+                error_type="upstream_timeout",
+            )
+        except httpx.TransportError as e:
+            logger.error("上游传输错误: %s", e)
+            raise UpstreamAPIError(
+                status_code=502,
+                message=f"Upstream transport error: {str(e)}",
+                error_type="upstream_transport_error",
+            )

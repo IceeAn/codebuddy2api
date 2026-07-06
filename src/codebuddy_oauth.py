@@ -289,41 +289,37 @@ class TokenParser:
         try:
             if bearer_token and "." in bearer_token:
                 parts = bearer_token.split(".")
-                if len(parts) >= 2:
-                    payload_part = parts[1]
-                    missing_padding = len(payload_part) % 4
-                    if missing_padding:
-                        payload_part += "=" * (4 - missing_padding)
+                payload_part = parts[1]
+                missing_padding = len(payload_part) % 4
+                if missing_padding:
+                    payload_part += "=" * (4 - missing_padding)
 
-                    try:
-                        payload = base64.urlsafe_b64decode(payload_part)
-                        jwt_data = json.loads(payload.decode("utf-8"))
-                        user_id = (
-                                jwt_data.get("email")
-                                or jwt_data.get("preferred_username")
-                                or jwt_data.get("sub")
-                                or "unknown"
-                        )
-                        user_info = {
-                            "sub": jwt_data.get("sub"),
-                            "email": jwt_data.get("email"),
-                            "preferred_username": jwt_data.get("preferred_username"),
-                            "name": jwt_data.get("name"),
-                            "given_name": jwt_data.get("given_name"),
-                            "family_name": jwt_data.get("family_name"),
-                            "exp": jwt_data.get("exp"),
-                            "iat": jwt_data.get("iat"),
-                            "scope": jwt_data.get("scope"),
-                            "session_state": jwt_data.get("sid"),
-                        }
-                        user_info = {key: value for key, value in user_info.items() if value is not None}
-                        logger.info(f"成功解析JWT，用户: {user_id}")
-                        logger.debug(f"JWT用户信息: {user_info}")
-                    except (json.JSONDecodeError, UnicodeDecodeError) as decode_error:
-                        logger.warning(f"JWT payload解码失败: {decode_error}")
-                        user_id = fallback_user_id
-                else:
-                    logger.warning("JWT格式无效：缺少必要的部分")
+                try:
+                    payload = base64.urlsafe_b64decode(payload_part)
+                    jwt_data = json.loads(payload.decode("utf-8"))
+                    user_id = (
+                            jwt_data.get("email")
+                            or jwt_data.get("preferred_username")
+                            or jwt_data.get("sub")
+                            or "unknown"
+                    )
+                    user_info = {
+                        "sub": jwt_data.get("sub"),
+                        "email": jwt_data.get("email"),
+                        "preferred_username": jwt_data.get("preferred_username"),
+                        "name": jwt_data.get("name"),
+                        "given_name": jwt_data.get("given_name"),
+                        "family_name": jwt_data.get("family_name"),
+                        "exp": jwt_data.get("exp"),
+                        "iat": jwt_data.get("iat"),
+                        "scope": jwt_data.get("scope"),
+                        "session_state": jwt_data.get("sid"),
+                    }
+                    user_info = {key: value for key, value in user_info.items() if value is not None}
+                    logger.info(f"成功解析JWT，用户: {user_id}")
+                    logger.debug(f"JWT用户信息: {user_info}")
+                except (json.JSONDecodeError, UnicodeDecodeError) as decode_error:
+                    logger.warning(f"JWT payload解码失败: {decode_error}")
                     user_id = fallback_user_id
             else:
                 logger.warning("Bearer token为空或格式无效")

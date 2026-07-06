@@ -13,7 +13,7 @@ vi.mock('../api/client', async (importOriginal) => {
   };
 });
 
-import { adminApi, authApi, codebuddyApi } from '../api/admin';
+import { adminApi, authApi, codebuddyOAuthApi, openaiPlaygroundApi } from '../api/admin';
 import { ApiError, setUnauthorizedHandler } from '../api/client';
 
 describe('管理 API 封装', () => {
@@ -75,17 +75,17 @@ describe('管理 API 封装', () => {
     ]);
   });
 
-  it('按约定构造 CodeBuddy 请求', async () => {
+  it('按约定构造 CodeBuddy OAuth 与 OpenAI Playground 请求', async () => {
     apiRequestMock.mockResolvedValue({});
 
-    await codebuddyApi.startAuth();
-    await codebuddyApi.pollAuth('state');
-    await codebuddyApi.models();
+    await codebuddyOAuthApi.startAuth();
+    await codebuddyOAuthApi.pollAuth('state');
+    await openaiPlaygroundApi.models();
 
     expect(apiRequestMock.mock.calls).toEqual([
       ['/codebuddy/auth/start', { timeoutMs: 35000 }],
       ['/codebuddy/auth/poll', { method: 'POST', json: { auth_state: 'state' }, timeoutMs: 35000 }],
-      ['/codebuddy/v1/models'],
+      ['/api/admin/playground/openai/v1/models'],
     ]);
   });
 
@@ -93,7 +93,7 @@ describe('管理 API 封装', () => {
     apiRequestMock.mockResolvedValue({});
     const controller = new AbortController();
 
-    await codebuddyApi.startAuth(controller.signal);
+    await codebuddyOAuthApi.startAuth(controller.signal);
 
     expect(apiRequestMock).toHaveBeenCalledWith('/codebuddy/auth/start', {
       signal: controller.signal,
@@ -105,7 +105,7 @@ describe('管理 API 封装', () => {
     apiRequestMock.mockResolvedValue({});
     const controller = new AbortController();
 
-    await codebuddyApi.pollAuth('state', controller.signal);
+    await codebuddyOAuthApi.pollAuth('state', controller.signal);
 
     expect(apiRequestMock).toHaveBeenCalledWith('/codebuddy/auth/poll', {
       method: 'POST',
@@ -116,7 +116,7 @@ describe('管理 API 封装', () => {
   });
 });
 
-describe('chat 请求', () => {
+describe('OpenAI Playground chat 请求', () => {
   afterEach(() => {
     setUnauthorizedHandler(null);
     vi.unstubAllGlobals();
@@ -129,9 +129,9 @@ describe('chat 请求', () => {
     const controller = new AbortController();
     const body = { model: 'glm', messages: [{ role: 'user', content: 'hello' }] };
 
-    await expect(codebuddyApi.chat(body, controller.signal)).resolves.toBe(response);
+    await expect(openaiPlaygroundApi.chat(body, controller.signal)).resolves.toBe(response);
     expect(fetchMock).toHaveBeenCalledWith(
-      '/codebuddy/v1/chat/completions',
+      '/api/admin/playground/openai/v1/chat/completions',
       expect.objectContaining({
         method: 'POST',
         credentials: 'same-origin',
@@ -156,7 +156,7 @@ describe('chat 请求', () => {
       ),
     );
 
-    await expect(codebuddyApi.chat({ model: 'glm', messages: [] })).rejects.toEqual(
+    await expect(openaiPlaygroundApi.chat({ model: 'glm', messages: [] })).rejects.toEqual(
       new ApiError(401, '认证过期，请重新登录'),
     );
     expect(unauthorizedHandler).toHaveBeenCalledOnce();
@@ -171,7 +171,7 @@ describe('chat 请求', () => {
     });
     vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockResolvedValue(response));
 
-    await expect(codebuddyApi.chat({ model: 'glm', messages: [] })).resolves.toBe(response);
+    await expect(openaiPlaygroundApi.chat({ model: 'glm', messages: [] })).resolves.toBe(response);
     expect(unauthorizedHandler).not.toHaveBeenCalled();
   });
 });

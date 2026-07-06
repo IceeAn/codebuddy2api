@@ -37,6 +37,7 @@ Thumbs.db
 
 # Runtime secrets and state
 config/
+data/
 .codebuddy_creds/
 secrets/users.txt
 

@@ -7,6 +7,8 @@ from fastapi import HTTPException
 from src.auth_types import AuthenticatedUser
 from src.request_processor import (
     RequestProcessor,
+    adapt_openai_payload_for_codebuddy,
+    apply_request_policies,
     is_false_like,
     normalize_model_id,
     strip_model_namespace,
@@ -20,17 +22,32 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
     def _user(self, username="admin"):
         return AuthenticatedUser(username=username, source="session_cookie")
 
+    def _prepare_payload(self, request_body, user=None):
+        return RequestProcessor.prepare_request(request_body, user).payload
+
+    def test_prepare_request_preserves_client_contract_separately_from_upstream_payload(self):
+        prepared = RequestProcessor.prepare_request({
+            "model": "codebuddy/lite",
+            "messages": [{"role": "user", "content": "test"}],
+            "stream": True,
+        })
+
+        self.assertEqual(prepared.response_model, "codebuddy/lite")
+        self.assertIs(prepared.client_wants_stream, True)
+        self.assertEqual(prepared.payload["model"], "lite")
+        self.assertIs(prepared.payload["stream"], True)
+
     def test_prepare_payload_uses_first_configured_model_when_missing(self):
         config._config_cache["CODEBUDDY_MODELS"] = ",".join(config.DEFAULT_CODEBUDDY_MODELS)
 
-        payload = RequestProcessor.prepare_payload({
+        payload = self._prepare_payload({
             "messages": [{"role": "user", "content": "test"}],
         })
 
         self.assertEqual(payload["model"], "glm-5.2")
 
     def test_prepare_payload_forces_deepseek_v4_reasoning(self):
-        payload = RequestProcessor.prepare_payload({
+        payload = self._prepare_payload({
             "model": "deepseek-v4-pro",
             "reasoning_effort": "max",
             "thinking": {"type": "enabled"},
@@ -42,7 +59,7 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
         self.assertEqual(payload["stream_options"], {"include_usage": True})
 
     def test_prepare_payload_forces_namespaced_deepseek_v4_reasoning(self):
-        payload = RequestProcessor.prepare_payload({
+        payload = self._prepare_payload({
             "model": "codebuddy/deepseek-v4-flash",
             "messages": [{"role": "user", "content": "test"}],
         })
@@ -51,7 +68,7 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
         self.assertEqual(payload["thinking"], {"type": "enabled"})
 
     def test_prepare_payload_forces_glm_5_1_reasoning(self):
-        payload = RequestProcessor.prepare_payload({
+        payload = self._prepare_payload({
             "model": "glm-5.1",
             "reasoning_effort": "low",
             "thinking": {"type": "disabled", "clear_thinking": True},
@@ -63,7 +80,7 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
         self.assertNotIn("enable_thinking", payload)
 
     def test_prepare_payload_forces_glm_5_2_reasoning(self):
-        payload = RequestProcessor.prepare_payload({
+        payload = self._prepare_payload({
             "model": "glm-5.2",
             "messages": [{"role": "user", "content": "test"}],
         })
@@ -73,7 +90,7 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
         self.assertNotIn("enable_thinking", payload)
 
     def test_prepare_payload_does_not_force_reasoning_for_other_models(self):
-        payload = RequestProcessor.prepare_payload({
+        payload = self._prepare_payload({
             "model": "lite",
             "reasoning_effort": "low",
             "thinking": {"type": "disabled"},
@@ -87,7 +104,7 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
         self.assertEqual(payload["temperature"], 1)
 
     def test_prepare_payload_enables_thinking_for_other_models_by_default(self):
-        payload = RequestProcessor.prepare_payload({
+        payload = self._prepare_payload({
             "model": "lite",
             "messages": [{"role": "user", "content": "test"}],
         })
@@ -97,7 +114,7 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
     def test_prepare_payload_strips_model_namespace_when_enabled(self):
         config._config_cache["CODEBUDDY_STRIP_MODEL_NAMESPACE"] = True
 
-        payload = RequestProcessor.prepare_payload({
+        payload = self._prepare_payload({
             "model": "codebuddy/lite",
             "messages": [{"role": "user", "content": "test"}],
         })
@@ -111,7 +128,7 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
             with self.subTest(value=value):
                 config._config_cache["CODEBUDDY_STRIP_MODEL_NAMESPACE"] = value
 
-                payload = RequestProcessor.prepare_payload({
+                payload = self._prepare_payload({
                     "model": "codebuddy/lite",
                     "messages": [{"role": "user", "content": "test"}],
                 })
@@ -123,7 +140,7 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
 
         for value in false_like_values:
             with self.subTest(value=value):
-                payload = RequestProcessor.prepare_payload({
+                payload = self._prepare_payload({
                     "model": "lite",
                     "enable_thinking": value,
                     "messages": [{"role": "user", "content": "test"}],
@@ -131,7 +148,7 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
                 self.assertEqual(payload["enable_thinking"], value)
 
     def test_prepare_payload_respects_disabled_thinking_type_for_other_models(self):
-        payload = RequestProcessor.prepare_payload({
+        payload = self._prepare_payload({
             "model": "lite",
             "thinking": {"type": "disabled"},
             "messages": [{"role": "user", "content": "test"}],
@@ -143,7 +160,7 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
     def test_prepare_payload_uses_configured_forced_reasoning_models(self):
         config._config_cache["CODEBUDDY_FORCED_REASONING_MODELS"] = "lite"
 
-        payload = RequestProcessor.prepare_payload({
+        payload = self._prepare_payload({
             "model": "lite",
             "reasoning_effort": "low",
             "thinking": {"type": "disabled"},
@@ -156,7 +173,7 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
     def test_prepare_payload_skips_forced_reasoning_when_config_empty(self):
         config._config_cache["CODEBUDDY_FORCED_REASONING_MODELS"] = ""
 
-        payload = RequestProcessor.prepare_payload({
+        payload = self._prepare_payload({
             "model": "glm-5.2",
             "reasoning_effort": "low",
             "thinking": {"type": "disabled"},
@@ -170,7 +187,7 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
     def test_prepare_payload_uses_configured_forced_temperature(self):
         config._config_cache["CODEBUDDY_FORCED_TEMPERATURE"] = "0.7"
 
-        payload = RequestProcessor.prepare_payload({
+        payload = self._prepare_payload({
             "model": "lite",
             "temperature": 0.2,
             "messages": [{"role": "user", "content": "test"}],
@@ -189,7 +206,7 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
             username="alice",
         )
 
-        payload = RequestProcessor.prepare_payload(
+        payload = self._prepare_payload(
             {
                 "messages": [{"role": "user", "content": "test"}],
             },
@@ -204,12 +221,12 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
     def test_prepare_payload_preserves_temperature_when_forcing_disabled(self):
         config._config_cache["CODEBUDDY_FORCED_TEMPERATURE"] = ""
 
-        payload = RequestProcessor.prepare_payload({
+        payload = self._prepare_payload({
             "model": "lite",
             "temperature": 0.2,
             "messages": [{"role": "user", "content": "test"}],
         })
-        payload_without_temperature = RequestProcessor.prepare_payload({
+        payload_without_temperature = self._prepare_payload({
             "model": "lite",
             "messages": [{"role": "user", "content": "test"}],
         })
@@ -250,7 +267,7 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
             ],
         }
 
-        payload = RequestProcessor.prepare_payload(request_body)
+        payload = self._prepare_payload(request_body)
 
         self.assertEqual(payload["messages"][0]["tool_calls"][0]["id"], "call_search_1")
         self.assertEqual(payload["messages"][1]["tool_call_id"], "call_search_1")
@@ -275,14 +292,14 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
         }
         original_body = json.loads(json.dumps(request_body))
 
-        payload = RequestProcessor.prepare_payload(request_body)
+        payload = self._prepare_payload(request_body)
 
         self.assertEqual(request_body, original_body)
         self.assertNotEqual(payload["messages"][0]["content"], original_body["messages"][0]["content"])
         self.assertEqual(payload["stream_options"], {"include_usage": True})
 
     def test_prepare_payload_preserves_stream_options_except_include_usage(self):
-        payload = RequestProcessor.prepare_payload({
+        payload = self._prepare_payload({
             "model": "lite",
             "messages": [{"role": "user", "content": "test"}],
             "stream_options": {"include_usage": False, "foo": "bar"},
@@ -291,7 +308,7 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
         self.assertEqual(payload["stream_options"], {"include_usage": True, "foo": "bar"})
 
     def test_prepare_payload_replaces_system_text_items_in_list_content(self):
-        payload = RequestProcessor.prepare_payload({
+        payload = self._prepare_payload({
             "model": "lite",
             "messages": [
                 {
@@ -310,11 +327,39 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
         self.assertEqual(content[1]["text"], "Claude")
 
     def test_prepare_payload_adds_default_system_message_for_single_user_message(self):
-        payload = RequestProcessor.prepare_payload({
+        payload = self._prepare_payload({
             "model": "lite",
             "messages": [{"role": "user", "content": "test"}],
         })
 
+        self.assertEqual(payload["messages"][0], {"role": "system", "content": "You are a helpful assistant."})
+
+    def test_protocol_adapter_only_forces_upstream_stream_contract(self):
+        payload = {
+            "model": "lite",
+            "messages": [{"role": "user", "content": "test"}],
+            "stream": False,
+            "stream_options": {"include_usage": False, "custom": True},
+        }
+
+        adapt_openai_payload_for_codebuddy(payload)
+
+        self.assertEqual(payload["model"], "lite")
+        self.assertEqual(payload["messages"], [{"role": "user", "content": "test"}])
+        self.assertIs(payload["stream"], True)
+        self.assertEqual(payload["stream_options"], {"include_usage": True, "custom": True})
+
+    def test_request_policy_layer_does_not_apply_transport_contract(self):
+        payload = {
+            "model": "lite",
+            "messages": [{"role": "user", "content": "test"}],
+            "stream": False,
+        }
+
+        apply_request_policies(payload)
+
+        self.assertIs(payload["stream"], False)
+        self.assertNotIn("stream_options", payload)
         self.assertEqual(payload["messages"][0], {"role": "system", "content": "You are a helpful assistant."})
 
 
@@ -368,6 +413,9 @@ class RequestProcessorValidationTests(unittest.TestCase):
             {"messages": ["bad"]},
             {"messages": [{"content": "missing role"}]},
             {"messages": [{"role": "user"}]},
+            {"messages": [{"role": "assistant", "tool_calls": "bad"}]},
+            {"messages": [{"role": "assistant", "tool_calls": []}]},
+            {"messages": [{"role": "assistant", "tool_calls": ["bad"]}]},
         ]
 
         for body in invalid_bodies:

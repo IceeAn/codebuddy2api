@@ -77,6 +77,16 @@ const apiKeysQuery = useQuery({
 
 const rows = computed(() => apiKeysQuery.data.value?.api_keys || []);
 
+function formatMinuteTimestamp(value: number): string {
+  return new Date(value * 1000).toLocaleString(undefined, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 const createMutation = useMutation({
   mutationFn: () => adminApi.createApiKey(name.value),
   onSuccess: async (created) => {
@@ -130,7 +140,7 @@ const columns: Column<ApiKeyRecord>[] = [
     title: '最近使用',
     key: 'last_used_at',
     minWidth: 180,
-    render: (row) => (row.last_used_at ? new Date(row.last_used_at * 1000).toLocaleString() : '-'),
+    render: (row) => (row.last_used_at ? formatMinuteTimestamp(row.last_used_at) : '-'),
   },
   {
     title: '操作',

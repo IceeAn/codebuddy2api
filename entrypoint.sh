@@ -6,11 +6,15 @@ set -e
 # 应用运行用户，需要与 Dockerfile 中创建的用户一致。
 APP_USER="appuser"
 
+# 容器数据库固定写入持久化挂载点，禁止环境文件将其重定向到镜像层。
+CODEBUDDY_DATA_DIR="/app/data"
+export CODEBUDDY_DATA_DIR
+
 # 确保挂载目录中的普通目录和普通文件归应用用户所有。
 # 使用 find 默认不跟随符号链接，避免递归 chown 误处理链接目标。
 echo "Ensuring ownership of mounted directories..."
-find /app/config /app/.codebuddy_creds -type d -exec chown ${APP_USER}:${APP_USER} {} +
-find /app/config /app/.codebuddy_creds -type f -exec chown ${APP_USER}:${APP_USER} {} +
+find /app/data /app/.codebuddy_creds -type d -exec chown ${APP_USER}:${APP_USER} {} +
+find /app/data /app/.codebuddy_creds -type f -exec chown ${APP_USER}:${APP_USER} {} +
 echo "Ownership fixed."
 
 # 切换到应用用户并执行 Dockerfile 中的 CMD。

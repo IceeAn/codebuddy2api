@@ -1551,7 +1551,7 @@
                         <h3 class="card-title">API 使用示例</h3>
                     </div>
                     <h4 style="margin-bottom: 1rem; color: var(--primary-color);">curl 示例:</h4>
-                    <div class="code-block">curl -X POST "http://127.0.0.1:8001/codebuddy/v1/chat/completions" \
+                    <div class="code-block">curl -X POST "http://127.0.0.1:8001/openai/v1/chat/completions" \
       -H "Authorization: Bearer sk-your_api_key" \
       -H "Content-Type: application/json" \
       -d '{
@@ -1566,7 +1566,7 @@
 
     client = openai.OpenAI(
         api_key="sk-your_api_key",
-        base_url="http://127.0.0.1:8001/codebuddy/v1"
+        base_url="http://127.0.0.1:8001/openai/v1"
     )
 
     response = client.chat.completions.create(
@@ -2002,6 +2002,16 @@
             return value ? new Date(value * 1000).toLocaleString() : '-';
         }
 
+        function formatMinuteTimestamp(value) {
+            return value ? new Date(value * 1000).toLocaleString(undefined, {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            }) : '-';
+        }
+
         // API Key 管理
         async function loadApiKeys() {
             const apiKeysList = document.getElementById('apiKeysList');
@@ -2052,7 +2062,7 @@
                             </div>
                             <div class="credential-meta-item">
                                 <i class="fas fa-clock"></i>
-                                最近使用: ${escapeHtml(formatTimestamp(key.last_used_at))}
+                                最近使用: ${escapeHtml(formatMinuteTimestamp(key.last_used_at))}
                             </div>
                         </div>
                     </div>
@@ -2225,7 +2235,7 @@
             }
 
             // 设置API端点
-            const apiEndpoint = window.location.origin + '/codebuddy/v1';
+            const apiEndpoint = window.location.origin + '/openai/v1';
             document.getElementById('apiEndpoint').textContent = apiEndpoint;
 
             // 加载使用统计
@@ -2843,7 +2853,7 @@
             select.innerHTML = '<option value="">加载模型列表中...</option>';
 
             try {
-                const response = await fetch('/codebuddy/v1/models', {
+                const response = await fetch('/api/admin/playground/openai/v1/models', {
                     headers: getAuthHeaders()
                 });
                 if (!response.ok) {
@@ -2895,7 +2905,7 @@
             streamInput.disabled = true;
 
             try {
-                const response = await fetch('/codebuddy/v1/chat/completions', {
+                const response = await fetch('/api/admin/playground/openai/v1/chat/completions', {
                     method: 'POST',
                     headers: getAuthHeaders(),
                     body: JSON.stringify({

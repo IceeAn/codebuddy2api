@@ -136,6 +136,7 @@ function mountApp(matches = true) {
         ShieldCheck: true,
         Sun: true,
         TerminalSquare: true,
+        BookOpen: true,
       },
     },
   });
@@ -218,6 +219,16 @@ describe('App', () => {
     expect(wrapper.find('nav[aria-label="主导航"]').text()).toContain('API 测试');
     expect(wrapper.find('.topbar').text()).toContain('API 测试');
     expect(wrapper.text()).not.toContain('Console');
+  });
+
+  it('开发文档菜单与页面标题使用中文名称', () => {
+    sessionMock.ready = true;
+    sessionMock.authenticated = true;
+    routeMock.name = 'api-docs';
+    const { wrapper } = mountApp();
+
+    expect(wrapper.find('nav[aria-label="主导航"]').text()).toContain('开发文档');
+    expect(wrapper.find('.topbar').text()).toContain('开发文档');
   });
 
   it('桌面侧边栏使用主题化导轨样式', () => {

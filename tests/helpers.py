@@ -1,11 +1,10 @@
+from copy import deepcopy
 import tempfile
 from pathlib import Path
-from copy import deepcopy
 
 import config
 from starlette.requests import Request
 
-from src.api_key_store import api_key_store
 from src.password_hashing import create_password_hash
 from src.session_store import session_store
 
@@ -13,19 +12,20 @@ from src.session_store import session_store
 class ConfigIsolationMixin:
     def setUp(self):
         super().setUp()
-        self._config_json_dir = tempfile.TemporaryDirectory()
-        self._original_config_json_path = config._CONFIG_JSON_PATH
-        config._CONFIG_JSON_PATH = str(Path(self._config_json_dir.name) / "config.json")
+        self._database_dir = tempfile.TemporaryDirectory()
         self._original_config = config._config_cache.copy()
         self._original_user_settings = deepcopy(config._user_settings_cache)
+        runtime_root = Path(self._database_dir.name)
+        config._config_cache["CODEBUDDY_DATA_DIR"] = str(runtime_root / "data")
+        config._config_cache["CODEBUDDY_CREDS_DIR"] = str(runtime_root / "credentials")
+        config._user_settings_cache = {}
         reset_runtime_stores()
 
     def tearDown(self):
         reset_runtime_stores()
         config._user_settings_cache = deepcopy(self._original_user_settings)
         config._config_cache = self._original_config.copy()
-        config._CONFIG_JSON_PATH = self._original_config_json_path
-        self._config_json_dir.cleanup()
+        self._database_dir.cleanup()
         super().tearDown()
 
 
@@ -44,9 +44,6 @@ class TempConfigMixin(ConfigIsolationMixin):
 
 
 def reset_runtime_stores():
-    api_key_store._keys = []
-    api_key_store._loaded_path = None
-    api_key_store._loaded_mtime = None
     session_store.sessions.clear()
 
 
@@ -92,9 +89,10 @@ def make_request(
 
 
 class FakeStreamResponse:
-    def __init__(self, chunks, status_code=200, text=""):
+    def __init__(self, chunks, status_code=200, text="", headers=None):
         self.status_code = status_code
         self.text = text
+        self.headers = headers or {}
         self._chunks = chunks
 
     async def __aenter__(self):
@@ -105,6 +103,8 @@ class FakeStreamResponse:
 
     async def aiter_text(self, chunk_size=None):
         for chunk in self._chunks:
+            if isinstance(chunk, BaseException):
+                raise chunk
             yield chunk
 
     async def aread(self):
@@ -112,19 +112,20 @@ class FakeStreamResponse:
 
 
 class FakeHttpClient:
-    def __init__(self, chunks, status_code=200, text=""):
+    def __init__(self, chunks, status_code=200, text="", headers=None):
         self._chunks = chunks
         self.status_code = status_code
         self.text = text
+        self.headers = headers or {}
         self.requests = []
 
     def stream(self, method, url, json=None, headers=None):
         self.requests.append({"method": method, "url": url, "json": json, "headers": headers})
-        return FakeStreamResponse(self._chunks, self.status_code, self.text)
+        return FakeStreamResponse(self._chunks, self.status_code, self.text, self.headers)
 
     async def post(self, url, json=None, headers=None):
         self.requests.append({"method": "POST", "url": url, "json": json, "headers": headers})
-        return FakeStreamResponse(self._chunks, self.status_code, self.text)
+        return FakeStreamResponse(self._chunks, self.status_code, self.text, self.headers)
 
 
 async def async_chunks(*chunks):

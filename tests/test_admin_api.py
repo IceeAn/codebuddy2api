@@ -3,23 +3,29 @@ from unittest import mock
 
 import config
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from src.admin_router import (
     AdminSettingsUpdate,
     ApiKeyCreateRequest,
     CredentialCreateRequest,
     CredentialTestRequest,
+    _safe_credential,
+    _safe_credentials,
+    _time_remaining_text,
     create_admin_api_key,
     create_admin_credential,
     delete_admin_api_key,
     delete_admin_credential,
     get_admin_settings,
     get_admin_status,
+    get_stream_service_factory,
     list_admin_api_keys,
     list_admin_credentials,
     save_admin_settings,
     select_admin_credential,
     test_admin_credential,
+    toggle_admin_auto_rotation,
 )
 from src.auth_types import AuthenticatedUser
 from src.codebuddy_token_manager import CodeBuddyTokenManagerRegistry
@@ -55,7 +61,7 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["username"], "admin")
         self.assertEqual(result["uptime_seconds"], 65)
         self.assertNotIn("server_time", result)
-        self.assertEqual(result["api_base_url"], "http://testserver/codebuddy/v1")
+        self.assertEqual(result["api_base_url"], "http://testserver/openai/v1")
         self.assertEqual(result["credentials"]["total"], 1)
         self.assertEqual(result["credentials"]["valid"], 1)
         self.assertEqual(result["credentials"]["current"]["credential_id"], manager.get_credentials_info()[0]["credential_id"])
@@ -71,6 +77,12 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         deleted = await delete_admin_api_key(created["id"], self.user)
         self.assertTrue(deleted["deleted"])
         self.assertEqual((await list_admin_api_keys(self.user))["api_keys"], [])
+
+    async def test_delete_missing_admin_api_key_returns_404(self):
+        with self.assertRaises(HTTPException) as context:
+            await delete_admin_api_key("missing", self.user)
+
+        self.assertEqual(context.exception.status_code, 404)
 
     async def test_admin_credentials_use_stable_id_not_index(self):
         created = await create_admin_credential(
@@ -120,6 +132,24 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(context.exception.detail, "Failed to identify newly created credential")
         safe_credentials.assert_called_once_with(manager)
 
+    async def test_create_admin_credential_reports_store_failure(self):
+        manager = mock.Mock()
+        manager.get_credentials_info.return_value = []
+        manager.add_credential.return_value = False
+        with mock.patch("src.admin_router.get_token_manager_for_user", return_value=manager):
+            with self.assertRaises(HTTPException) as save_context:
+                await create_admin_credential(
+                    CredentialCreateRequest(bearer_token="token"),
+                    self.user,
+                )
+        self.assertEqual(save_context.exception.status_code, 500)
+
+    def test_credential_create_request_rejects_blank_token(self):
+        for bearer_token in ("", " ", "\t"):
+            with self.subTest(bearer_token=bearer_token):
+                with self.assertRaises(ValidationError):
+                    CredentialCreateRequest(bearer_token=bearer_token)
+
     async def test_create_admin_credential_returns_new_row_when_numeric_filename_has_gap(self):
         manager = self._manager()
         self.assertTrue(manager.add_credential("first-token", "first-user", "codebuddy_token_1.json"))
@@ -160,9 +190,10 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         captured = {}
 
         class FakeService:
-            async def handle_non_stream_response(self, payload, headers):
+            async def handle_non_stream_response(self, payload, headers, *, response_model):
                 captured["payload"] = payload
                 captured["headers"] = headers
+                captured["response_model"] = response_model
                 return {"choices": [{"message": {"content": "ok"}}]}
 
         with (
@@ -193,6 +224,7 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured["headers"]["Authorization"], "Bearer target-token")
         self.assertEqual(captured["payload"]["model"], "target-real-model")
         self.assertIs(captured["payload"]["stream"], True)
+        self.assertEqual(captured["response_model"], "target-real-model")
 
     async def test_admin_credential_test_returns_ok_false_when_model_lookup_fails(self):
         manager = self._manager()
@@ -200,7 +232,7 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         credential_id = manager.get_credentials_info()[0]["credential_id"]
 
         class FakeService:
-            async def handle_non_stream_response(self, _payload, _headers):
+            async def handle_non_stream_response(self, _payload, _headers, *, response_model):
                 raise AssertionError("stream service should not run without a model")
 
         with (
@@ -227,6 +259,64 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(context.exception.status_code, 404)
 
+        with self.assertRaises(HTTPException) as select_context:
+            await select_admin_credential("missing", self.user)
+        self.assertEqual(select_context.exception.status_code, 404)
+
+        with self.assertRaises(HTTPException) as test_context:
+            await test_admin_credential(
+                "missing",
+                CredentialTestRequest(),
+                self.user,
+                stream_service_factory=mock.Mock,
+            )
+        self.assertEqual(test_context.exception.status_code, 404)
+
+    async def test_toggle_admin_auto_rotation_returns_new_state(self):
+        first = await toggle_admin_auto_rotation(self.user)
+        second = await toggle_admin_auto_rotation(self.user)
+
+        self.assertIs(first["auto_rotation_enabled"], not second["auto_rotation_enabled"])
+        self.assertEqual(
+            "启用" in first["message"],
+            first["auto_rotation_enabled"],
+        )
+        self.assertEqual(
+            "启用" in second["message"],
+            second["auto_rotation_enabled"],
+        )
+
+    async def test_admin_credential_test_maps_http_and_unexpected_service_errors(self):
+        manager = self._manager()
+        self.assertTrue(manager.add_credential("target-token", "target-user", "target"))
+        credential_id = manager.get_credentials_info()[0]["credential_id"]
+
+        errors = [
+            (HTTPException(status_code=401, detail="unauthorized"), 401, "unauthorized"),
+            (RuntimeError("broken service"), 500, "broken service"),
+        ]
+        for error, expected_status, expected_detail in errors:
+            with self.subTest(error=error):
+                service = mock.Mock()
+                service.handle_non_stream_response = mock.AsyncMock(side_effect=error)
+                with (
+                    mock.patch("src.admin_router.get_token_manager_for_user", return_value=manager),
+                    mock.patch(
+                        "src.admin_router.models_manager.get_first_actual_model_for_credential",
+                        new=mock.AsyncMock(return_value="model"),
+                    ),
+                ):
+                    result = await test_admin_credential(
+                        credential_id,
+                        CredentialTestRequest(message=""),
+                        self.user,
+                        stream_service_factory=lambda: service,
+                    )
+
+                self.assertFalse(result["ok"])
+                self.assertEqual(result["status_code"], expected_status)
+                self.assertEqual(result["detail"], expected_detail)
+
     async def test_settings_contract_returns_typed_fields_and_saves_hot_reloadable_values(self):
         settings = await get_admin_settings(self.user)
 
@@ -238,15 +328,14 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(field_by_key["CODEBUDDY_ROTATION_COUNT"]["type"], "number")
         self.assertEqual(field_by_key["CODEBUDDY_ROTATION_COUNT"]["min"], 1)
 
-        with mock.patch.object(config, "_CONFIG_JSON_PATH", str(self.temp_path / "config.json")):
-            result = await save_admin_settings(
-                AdminSettingsUpdate(settings={
-                    "CODEBUDDY_MODELS": "admin-only",
-                    "CODEBUDDY_AUTO_ROTATION_ENABLED": False,
-                    "CODEBUDDY_ROTATION_COUNT": 3,
-                }),
-                self.user,
-            )
+        result = await save_admin_settings(
+            AdminSettingsUpdate(settings={
+                "CODEBUDDY_MODELS": "admin-only",
+                "CODEBUDDY_AUTO_ROTATION_ENABLED": False,
+                "CODEBUDDY_ROTATION_COUNT": 3,
+            }),
+            self.user,
+        )
 
         self.assertEqual(result["settings"]["CODEBUDDY_MODELS"], "admin-only")
         self.assertIs(result["settings"]["CODEBUDDY_AUTO_ROTATION_ENABLED"], False)
@@ -290,6 +379,51 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(HTTPException) as context:
                     await save_admin_settings(AdminSettingsUpdate(settings=payload), self.user)
                 self.assertEqual(context.exception.status_code, 422)
+
+
+class AdminHelperTests(unittest.TestCase):
+    def test_time_remaining_text_formats_all_ranges(self):
+        cases = [
+            (None, "Unknown"),
+            (0, "Expired"),
+            (-1, "Expired"),
+            (30, "0m"),
+            (3660, "1h 1m"),
+            (90000, "1d 1h"),
+        ]
+
+        for seconds, expected in cases:
+            with self.subTest(seconds=seconds):
+                self.assertEqual(_time_remaining_text(seconds), expected)
+
+    def test_safe_credential_hides_index_and_token(self):
+        info = {"index": 0, "credential_id": "id", "time_remaining": 60}
+
+        with_token = _safe_credential(info, {"bearer_token": "1234567890abcdef"})
+        without_token = _safe_credential(info, None)
+
+        self.assertNotIn("index", with_token)
+        self.assertEqual(with_token["token_preview"], "1234567890...cdef")
+        self.assertTrue(with_token["has_token"])
+        self.assertEqual(without_token["token_preview"], "")
+        self.assertFalse(without_token["has_token"])
+
+    def test_safe_credentials_handles_missing_and_out_of_range_indexes(self):
+        manager = mock.Mock()
+        manager.get_all_credentials.return_value = [{"bearer_token": "token"}]
+        manager.get_credentials_info.return_value = [
+            {"credential_id": "missing", "time_remaining": None},
+            {"credential_id": "out", "index": 2, "time_remaining": None},
+        ]
+
+        credentials = _safe_credentials(manager)
+
+        self.assertEqual([item["has_token"] for item in credentials], [False, False])
+
+    def test_stream_service_factory_returns_service_class(self):
+        from src.stream_service import CodeBuddyStreamService
+
+        self.assertIs(get_stream_service_factory(), CodeBuddyStreamService)
 
 
 if __name__ == "__main__":

@@ -23,7 +23,7 @@ vi.mock('../composables/useToast', () => ({
 }));
 
 import { ApiError } from '../api/client';
-import { codebuddyApi } from '../api/admin';
+import { codebuddyOAuthApi } from '../api/admin';
 import { useOAuthPolling } from '../composables/useOAuthPolling';
 
 /**
@@ -48,10 +48,10 @@ describe('useOAuthPolling', () => {
 
   it('start() 成功后开始轮询，pollAuth 返回 access_token 时调用 onSuccess', async () => {
     const startAuth = vi
-      .spyOn(codebuddyApi, 'startAuth')
+      .spyOn(codebuddyOAuthApi, 'startAuth')
       .mockResolvedValue({ verification_uri_complete: 'https://cb/auth', auth_state: 'state-1' });
     const pollAuth = vi
-      .spyOn(codebuddyApi, 'pollAuth')
+      .spyOn(codebuddyOAuthApi, 'pollAuth')
       .mockResolvedValue({ access_token: 'tok', saved: true });
     const onSuccess = vi.fn<() => void>();
 
@@ -69,8 +69,8 @@ describe('useOAuthPolling', () => {
   });
 
   it('startAuth 缺少字段时显示错误且不开始轮询', async () => {
-    vi.spyOn(codebuddyApi, 'startAuth').mockResolvedValue({ message: '上游不可用' });
-    const pollAuth = vi.spyOn(codebuddyApi, 'pollAuth').mockResolvedValue({});
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({ message: '上游不可用' });
+    const pollAuth = vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockResolvedValue({});
 
     const oauth = useOAuthPolling();
     await oauth.start();
@@ -81,7 +81,7 @@ describe('useOAuthPolling', () => {
   });
 
   it('startAuth 缺少字段且无 message 时使用默认错误', async () => {
-    vi.spyOn(codebuddyApi, 'startAuth').mockResolvedValue({});
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({});
 
     const oauth = useOAuthPolling();
     await oauth.start();
@@ -90,7 +90,7 @@ describe('useOAuthPolling', () => {
   });
 
   it('startAuth 的 AbortError 不显示错误', async () => {
-    vi.spyOn(codebuddyApi, 'startAuth').mockRejectedValue(
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockRejectedValue(
       Object.assign(new Error('aborted'), { name: 'AbortError' }),
     );
 
@@ -106,14 +106,14 @@ describe('useOAuthPolling', () => {
       verification_uri_complete?: string;
       auth_state?: string;
     }) => void = () => {};
-    vi.spyOn(codebuddyApi, 'startAuth').mockImplementation(
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockImplementation(
       (signal?: AbortSignal) =>
         new Promise((resolve) => {
           capturedSignal = signal;
           resolveStart = resolve;
         }),
     );
-    const pollAuth = vi.spyOn(codebuddyApi, 'pollAuth').mockResolvedValue({});
+    const pollAuth = vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockResolvedValue({});
 
     const oauth = useOAuthPolling({ pollIntervalMs: 5000 });
     const startPromise = oauth.start();
@@ -132,7 +132,7 @@ describe('useOAuthPolling', () => {
   });
 
   it('startAuth 的普通异常按类型显示错误', async () => {
-    vi.spyOn(codebuddyApi, 'startAuth')
+    vi.spyOn(codebuddyOAuthApi, 'startAuth')
       .mockRejectedValueOnce(new Error('network'))
       .mockRejectedValueOnce('bad');
 
@@ -145,12 +145,12 @@ describe('useOAuthPolling', () => {
   });
 
   it('pollAuth 抛 ApiError authorization_pending 时继续轮询', async () => {
-    vi.spyOn(codebuddyApi, 'startAuth').mockResolvedValue({
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
       verification_uri_complete: 'https://cb/auth',
       auth_state: 'state-2',
     });
     const pending = new ApiError(400, 'pending', { error: 'authorization_pending' });
-    const pollAuth = vi.spyOn(codebuddyApi, 'pollAuth').mockRejectedValue(pending);
+    const pollAuth = vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockRejectedValue(pending);
 
     const oauth = useOAuthPolling({ pollIntervalMs: 5000 });
     const startPromise = oauth.start();
@@ -170,11 +170,11 @@ describe('useOAuthPolling', () => {
   });
 
   it('pollAuth 未返回 token 时保持轮询', async () => {
-    vi.spyOn(codebuddyApi, 'startAuth').mockResolvedValue({
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
       verification_uri_complete: 'https://cb/auth',
       auth_state: 'state-no-token',
     });
-    vi.spyOn(codebuddyApi, 'pollAuth').mockResolvedValue({});
+    vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockResolvedValue({});
 
     const oauth = useOAuthPolling();
     await oauth.start();
@@ -184,12 +184,12 @@ describe('useOAuthPolling', () => {
   });
 
   it('stop() 后忽略未完成 pollAuth 的迟到成功响应', async () => {
-    vi.spyOn(codebuddyApi, 'startAuth').mockResolvedValue({
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
       verification_uri_complete: 'https://cb/auth',
       auth_state: 'state-late-poll',
     });
     let resolvePoll: (value: { access_token: string; saved: boolean }) => void = () => {};
-    vi.spyOn(codebuddyApi, 'pollAuth').mockImplementation(
+    vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockImplementation(
       () =>
         new Promise((resolve) => {
           resolvePoll = resolve;
@@ -213,11 +213,11 @@ describe('useOAuthPolling', () => {
 
   it('已停止轮询时遗留的 poll 回调直接返回', async () => {
     const timeoutSpy = vi.spyOn(globalThis, 'setTimeout');
-    vi.spyOn(codebuddyApi, 'startAuth').mockResolvedValue({
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
       verification_uri_complete: 'https://cb/auth',
       auth_state: 'state-stopped',
     });
-    const pollAuth = vi.spyOn(codebuddyApi, 'pollAuth').mockResolvedValue({});
+    const pollAuth = vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockResolvedValue({});
 
     const oauth = useOAuthPolling({ pollIntervalMs: 5000 });
     await oauth.start();
@@ -238,12 +238,12 @@ describe('useOAuthPolling', () => {
   });
 
   it('pollAuth 抛 ApiError slow_down 时继续轮询', async () => {
-    vi.spyOn(codebuddyApi, 'startAuth').mockResolvedValue({
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
       verification_uri_complete: 'https://cb/auth',
       auth_state: 'state-3',
     });
     const slow = new ApiError(400, 'slow', { error: 'slow_down' });
-    vi.spyOn(codebuddyApi, 'pollAuth').mockRejectedValue(slow);
+    vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockRejectedValue(slow);
 
     const oauth = useOAuthPolling({ pollIntervalMs: 5000 });
     const startPromise = oauth.start();
@@ -259,7 +259,7 @@ describe('useOAuthPolling', () => {
   });
 
   it('pollAuth 抛不可恢复 ApiError 时停止并提示', async () => {
-    vi.spyOn(codebuddyApi, 'startAuth').mockResolvedValue({
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
       verification_uri_complete: 'https://cb/auth',
       auth_state: 'state-4',
     });
@@ -267,7 +267,7 @@ describe('useOAuthPolling', () => {
       error: 'access_denied',
       error_description: '用户拒绝授权',
     });
-    vi.spyOn(codebuddyApi, 'pollAuth').mockRejectedValue(denied);
+    vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockRejectedValue(denied);
 
     const oauth = useOAuthPolling();
     const startPromise = oauth.start();
@@ -280,11 +280,11 @@ describe('useOAuthPolling', () => {
   });
 
   it('不可恢复 ApiError 缺少 description 时使用异常消息', async () => {
-    vi.spyOn(codebuddyApi, 'startAuth').mockResolvedValue({
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
       verification_uri_complete: 'https://cb/auth',
       auth_state: 'state-error',
     });
-    vi.spyOn(codebuddyApi, 'pollAuth').mockRejectedValue(
+    vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockRejectedValue(
       new ApiError(400, 'poll failed', { error: 'access_denied' }),
     );
 
@@ -295,11 +295,11 @@ describe('useOAuthPolling', () => {
   });
 
   it('pollAuth 的普通异常停止并按类型提示', async () => {
-    vi.spyOn(codebuddyApi, 'startAuth').mockResolvedValue({
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
       verification_uri_complete: 'https://cb/auth',
       auth_state: 'state-normal-error',
     });
-    vi.spyOn(codebuddyApi, 'pollAuth')
+    vi.spyOn(codebuddyOAuthApi, 'pollAuth')
       .mockRejectedValueOnce(new Error('network'))
       .mockRejectedValueOnce('bad');
 
@@ -312,12 +312,12 @@ describe('useOAuthPolling', () => {
   });
 
   it('达到 maxAttempts 时停止并提示超时', async () => {
-    vi.spyOn(codebuddyApi, 'startAuth').mockResolvedValue({
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
       verification_uri_complete: 'https://cb/auth',
       auth_state: 'state-5',
     });
     const pending = new ApiError(400, 'pending', { error: 'authorization_pending' });
-    vi.spyOn(codebuddyApi, 'pollAuth').mockRejectedValue(pending);
+    vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockRejectedValue(pending);
 
     const oauth = useOAuthPolling({ pollIntervalMs: 1000, maxAttempts: 2 });
     const startPromise = oauth.start();
@@ -338,12 +338,12 @@ describe('useOAuthPolling', () => {
   });
 
   it('stop() 清理所有 timer 且不再继续轮询', async () => {
-    vi.spyOn(codebuddyApi, 'startAuth').mockResolvedValue({
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
       verification_uri_complete: 'https://cb/auth',
       auth_state: 'state-6',
     });
     const pending = new ApiError(400, 'pending', { error: 'authorization_pending' });
-    const pollAuth = vi.spyOn(codebuddyApi, 'pollAuth').mockRejectedValue(pending);
+    const pollAuth = vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockRejectedValue(pending);
 
     const oauth = useOAuthPolling({ pollIntervalMs: 5000 });
     const startPromise = oauth.start();
@@ -361,11 +361,11 @@ describe('useOAuthPolling', () => {
   });
 
   it('组件卸载回调停止轮询', async () => {
-    vi.spyOn(codebuddyApi, 'startAuth').mockResolvedValue({
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
       verification_uri_complete: 'https://cb/auth',
       auth_state: 'state-unmount',
     });
-    vi.spyOn(codebuddyApi, 'pollAuth').mockResolvedValue({});
+    vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockResolvedValue({});
 
     const oauth = useOAuthPolling();
     await oauth.start();
@@ -381,13 +381,13 @@ describe('useOAuthPolling', () => {
       verification_uri_complete?: string;
       auth_state?: string;
     }) => void = () => {};
-    vi.spyOn(codebuddyApi, 'startAuth').mockImplementation(
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockImplementation(
       () =>
         new Promise((resolve) => {
           resolveStart = resolve;
         }),
     );
-    const pollAuth = vi.spyOn(codebuddyApi, 'pollAuth').mockResolvedValue({});
+    const pollAuth = vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockResolvedValue({});
 
     const oauth = useOAuthPolling();
     const first = oauth.start();
@@ -401,18 +401,18 @@ describe('useOAuthPolling', () => {
     await first;
     await second;
 
-    expect(codebuddyApi.startAuth).toHaveBeenCalledTimes(1);
+    expect(codebuddyOAuthApi.startAuth).toHaveBeenCalledTimes(1);
     oauth.reset();
     pollAuth.mockClear();
   });
 
   it('防竞态：polling 中再次调用 start() 直接返回', async () => {
-    vi.spyOn(codebuddyApi, 'startAuth').mockResolvedValue({
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
       verification_uri_complete: 'https://cb/auth',
       auth_state: 'state-7',
     });
     const pending = new ApiError(400, 'pending', { error: 'authorization_pending' });
-    vi.spyOn(codebuddyApi, 'pollAuth').mockRejectedValue(pending);
+    vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockRejectedValue(pending);
 
     const oauth = useOAuthPolling({ pollIntervalMs: 5000 });
     const first = oauth.start();
@@ -420,20 +420,20 @@ describe('useOAuthPolling', () => {
     expect(oauth.polling.value).toBe(true);
 
     await oauth.start();
-    expect(codebuddyApi.startAuth).toHaveBeenCalledTimes(1);
+    expect(codebuddyOAuthApi.startAuth).toHaveBeenCalledTimes(1);
 
     oauth.reset();
     await first;
   });
 
   it('异步轮询串行执行，前一次未完成时不启动下一次请求', async () => {
-    vi.spyOn(codebuddyApi, 'startAuth').mockResolvedValue({
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
       verification_uri_complete: 'https://cb/auth',
       auth_state: 'serial-state',
     });
     const pending = new ApiError(400, 'pending', { error: 'authorization_pending' });
     const rejectPolls: Array<(error: unknown) => void> = [];
-    const pollAuth = vi.spyOn(codebuddyApi, 'pollAuth').mockImplementation(
+    const pollAuth = vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockImplementation(
       () =>
         new Promise((_, reject) => {
           rejectPolls.push(reject);
@@ -462,12 +462,12 @@ describe('useOAuthPolling', () => {
   });
 
   it('reset() 清理状态与计时', async () => {
-    vi.spyOn(codebuddyApi, 'startAuth').mockResolvedValue({
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
       verification_uri_complete: 'https://cb/auth',
       auth_state: 'state-8',
     });
     const pending = new ApiError(400, 'pending', { error: 'authorization_pending' });
-    vi.spyOn(codebuddyApi, 'pollAuth').mockRejectedValue(pending);
+    vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockRejectedValue(pending);
 
     const oauth = useOAuthPolling({ pollIntervalMs: 5000 });
     const startPromise = oauth.start();

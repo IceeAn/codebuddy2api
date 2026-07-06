@@ -100,7 +100,7 @@ describe('DashboardView', () => {
       service: 'codebuddy2api',
       status: 'healthy',
       uptime_seconds: 65,
-      api_base_url: 'http://localhost/codebuddy/v1',
+      api_base_url: 'http://localhost/openai/v1',
       credentials: {
         valid: 2,
         total: 3,
@@ -135,7 +135,7 @@ describe('DashboardView', () => {
 
     const copyButton = wrapper.findAll('button').find((button) => button.text().includes('复制'));
     await copyButton?.trigger('click');
-    expect(copyMock).toHaveBeenCalledWith('http://localhost/codebuddy/v1', '客户端入口地址已复制');
+    expect(copyMock).toHaveBeenCalledWith('http://localhost/openai/v1', '客户端入口地址已复制');
   });
 
   it('按总览页刷新策略配置状态查询', () => {
