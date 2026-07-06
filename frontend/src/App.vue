@@ -9,7 +9,6 @@ import {
   LogOut,
   Menu as MenuIcon,
   Moon,
-  PlugZap,
   Settings,
   ShieldCheck,
   Sun,
@@ -29,6 +28,7 @@ const theme = useThemeStore();
 const route = useRoute();
 const router = useRouter();
 const queryClient = useQueryClient();
+const PROJECT_ICON_URL = '/assets/codebuddy2api.svg';
 
 const navItems = [
   { routeName: 'dashboard', label: '总览', icon: Activity },
@@ -119,11 +119,7 @@ function toggleTheme() {
       class="sidebar sticky top-0 flex h-screen w-[15.5rem] shrink-0 flex-col border-r border-rail-border bg-rail"
     >
       <div class="flex h-16 items-center gap-3 border-b border-rail-border px-5">
-        <div
-          class="grid h-9 w-9 place-items-center rounded-md bg-gradient-to-br from-brand-500 to-accent-500 text-white shadow-[var(--shadow-brand-glow)]"
-        >
-          <PlugZap :size="20" />
-        </div>
+        <img class="project-icon h-9 w-9 shrink-0" :src="PROJECT_ICON_URL" alt="" />
         <div class="min-w-0">
           <div class="truncate font-display text-[15px] font-bold text-rail-text-strong">
             CodeBuddy2API

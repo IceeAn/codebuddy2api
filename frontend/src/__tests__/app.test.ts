@@ -210,6 +210,14 @@ describe('App', () => {
     expect(wrapper.find('nav[aria-label="主导航"]').exists()).toBe(true);
   });
 
+  it('侧边栏使用项目图标', () => {
+    sessionMock.ready = true;
+    sessionMock.authenticated = true;
+    const { wrapper } = mountApp();
+
+    expect(wrapper.get('img.project-icon').attributes('src')).toBe('/assets/codebuddy2api.svg');
+  });
+
   it('console 菜单与页面标题使用中文 API 测试', () => {
     sessionMock.ready = true;
     sessionMock.authenticated = true;

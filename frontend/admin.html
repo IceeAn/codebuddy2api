@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CodeBuddy2API 管理控制面板</title>
+    <link rel="icon" href="/assets/codebuddy2api.svg" type="image/svg+xml">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
         :root {
@@ -59,8 +60,21 @@
         }
 
         .header h1 {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
             font-size: 1.5rem;
             font-weight: 600;
+        }
+
+        .project-icon {
+            display: block;
+            flex-shrink: 0;
+        }
+
+        .header-project-icon {
+            width: 3.3rem;
+            height: 2rem;
         }
 
         .header-controls {
@@ -798,10 +812,19 @@
         }
 
         .login-title {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.75rem;
             font-size: 1.5rem;
             font-weight: 600;
             margin-bottom: 0.5rem;
             color: var(--primary-color);
+        }
+
+        .login-title .project-icon {
+            width: 2.5rem;
+            height: 2.5rem;
         }
 
         .login-subtitle {
@@ -1183,7 +1206,7 @@
     <div id="loginPage" class="login-page">
         <div class="login-card">
             <div class="login-title">
-                <i class="fas fa-robot"></i>
+                <img class="project-icon" src="/assets/codebuddy2api.svg" alt="">
                 CodeBuddy2API
             </div>
             <div class="login-subtitle">
@@ -1218,7 +1241,7 @@
     <div id="dashboardPage" class="hidden">
         <!-- 顶部导航 -->
         <header class="header">
-            <h1><i class="fas fa-robot"></i> CodeBuddy2API 管理面板</h1>
+            <h1><img class="project-icon header-project-icon" src="/assets/codebuddy2api-monochrome.svg" alt=""> CodeBuddy2API 管理面板</h1>
             <div class="header-controls">
                 <button class="theme-toggle" onclick="toggleTheme()">
                     <i class="fas fa-moon" id="themeIcon"></i>

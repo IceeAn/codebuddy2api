@@ -76,9 +76,29 @@ class FrontendRouterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(context.exception.status_code, 404)
 
+    async def test_static_assets_fall_back_to_public_dir_without_build(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root_dir = Path(tmp_dir)
+            dist_dir = root_dir / "dist"
+            public_dir = root_dir / "public"
+            (public_dir / "assets").mkdir(parents=True)
+            icon_file = public_dir / "assets" / "codebuddy2api.svg"
+            icon_file.write_text("<svg></svg>", encoding="utf-8")
+
+            with (
+                mock.patch("src.frontend_router.DIST_DIR", dist_dir),
+                mock.patch("src.frontend_router.PUBLIC_DIR", public_dir),
+            ):
+                response = await get_frontend_static_response("assets/codebuddy2api.svg")
+
+        self.assertEqual(Path(response.path).resolve(), icon_file.resolve())
+
     async def test_missing_static_asset_inside_dist_returns_404(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            with mock.patch("src.frontend_router.DIST_DIR", Path(tmp_dir)):
+            with (
+                mock.patch("src.frontend_router.DIST_DIR", Path(tmp_dir) / "dist"),
+                mock.patch("src.frontend_router.PUBLIC_DIR", Path(tmp_dir) / "public"),
+            ):
                 with self.assertRaises(HTTPException) as context:
                     await get_frontend_static_response("assets/missing.js")
 

@@ -104,6 +104,12 @@ describe('LoginView', () => {
     validateMock.mockResolvedValue(undefined);
   });
 
+  it('使用项目图标', () => {
+    const wrapper = mountView();
+
+    expect(wrapper.get('img.project-icon').attributes('src')).toBe('/assets/codebuddy2api.svg');
+  });
+
   it('校验通过后登录并清空密码，不额外弹成功提示', async () => {
     loginMock.mockResolvedValue(undefined);
     const wrapper = mountView();

@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1536 1536">
+  <defs>
+    <linearGradient id="a" x1="100%" x2="0%" y1="0%" y2="100%">
+      <stop offset="0%" stop-color="#643AF7"/>
+      <stop offset="28%" stop-color="#643AF7"/>
+      <stop offset="100%" stop-color="#1BA79E"/>
+    </linearGradient>
+    <!-- 1/4 { -->
+    <path id="braceQuarter" d="M1079 685 C1015 685 970 728 970 787 L970 833 C970 873 960 890 933 899 C925 902 921 908 921 918 L921 934 L998 934 C1028 909 1036 887 1038 828 L1038 792 C1038 760 1050 747 1073 746 C1085 745 1090 738 1091 725 L1091 703 C1091 690 1087 685 1079 685 Z"/>
+  </defs>
+  <path id="background" fill="url(#a)" d="
+    M768 0
+    C1120 0 1328 0 1432 104
+    C1536 208 1536 416 1536 768
+    C1536 1120 1536 1328 1432 1432
+    C1328 1536 1120 1536 768 1536
+    C416 1536 208 1536 104 1432
+    C0 1328 0 1120 0 768
+    C0 416 0 208 104 104
+    C208 0 416 0 768 0 Z
+  "/>
+  <g fill="#fff">
+    <!-- 小猫本猫 -->
+    <path fill-rule="evenodd" d="M481 405 C456 391 423 452 399 529 C333 554 281 592 230 640 C177 637 92 637 89 666 C86 707 116 780 145 823 C141 912 170 991 231 1048 C303 1115 394 1129 514 1089 C598 1061 688 994 742 913C761 893 790 882 828 881 L828 771 C800 772 783 771 773 768 C768 692 722 604 637 548 C617 535 594 529 590 522 C564 469 515 424 481 405 Z M568 615 C622 625 664 662 684 716 C707 779 687 850 618 913 C570 956 504 992 445 1011 C375 1034 307 1012 266 954 C221 889 234 795 294 739 C331 705 418 653 474 627 C504 613 537 609 568 615 Z"/>
+    <!-- 尾巴箭头 -->
+    <path d="M851 731 C833 714 819 722 819 747 L819 912 C819 938 833 945 851 928 L934 848 C948 834 948 822 934 809 Z"/>
+    <!-- 小猫右眼 -->
+    <line x1="523" y1="742" x2="561" y2="814" stroke="#fff" stroke-width="61" stroke-linecap="round"/>
+    <!-- 小猫左眼 -->
+    <line x1="379" y1="836" x2="415" y2="904" stroke="#fff" stroke-width="61" stroke-linecap="round"/>
+    <!-- 糖葫芦！ -->
+    <line x1="1191" y1="718" x2="1191" y2="1138" stroke="#fff" stroke-width="38" stroke-linecap="butt"/>
+    <circle cx="1191" cy="718" r="59"/>
+    <circle cx="1191" cy="929" r="59"/>
+    <circle cx="1191" cy="1138" r="59"/>
+    <!-- } -->
+    <use href="#braceQuarter" transform="translate(2374 0) scale(-1 1)"/>
+    <use href="#braceQuarter" transform="translate(2374 1866) scale(-1 -1)"/>
+    <!-- { -->
+    <use href="#braceQuarter"/>
+    <use href="#braceQuarter" transform="translate(0 1866) scale(1 -1)"/>
+  </g>
+</svg>

@@ -8,6 +8,7 @@ router = APIRouter()
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 DIST_DIR = FRONTEND_DIR / "dist"
+PUBLIC_DIR = FRONTEND_DIR / "public"
 INDEX_FILE = "index.html"
 LEGACY_ADMIN_FILE = FRONTEND_DIR / "admin.html"
 
@@ -18,17 +19,18 @@ NO_CACHE_HEADERS = {
 }
 
 
-def _safe_dist_file(relative_path: str) -> Path:
-    dist_root = DIST_DIR.resolve()
-    candidate = (DIST_DIR / relative_path).resolve()
-    try:
-        candidate.relative_to(dist_root)
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Frontend asset not found")
+def _safe_static_file(relative_path: str) -> Path:
+    for asset_dir in (DIST_DIR, PUBLIC_DIR):
+        asset_root = asset_dir.resolve()
+        candidate = (asset_dir / relative_path).resolve()
+        try:
+            candidate.relative_to(asset_root)
+        except ValueError:
+            continue
+        if candidate.is_file():
+            return candidate
 
-    if not candidate.is_file():
-        raise HTTPException(status_code=404, detail="Frontend asset not found")
-    return candidate
+    raise HTTPException(status_code=404, detail="Frontend asset not found")
 
 
 async def get_frontend_index_response() -> FileResponse:
@@ -60,8 +62,8 @@ async def get_legacy_admin_response() -> FileResponse:
 
 
 async def get_frontend_static_response(asset_path: str) -> FileResponse:
-    """返回 Vite 构建产物中的静态资源。"""
-    file_path = _safe_dist_file(asset_path)
+    """优先返回 Vite 构建产物，未构建时回退到公共静态资源。"""
+    file_path = _safe_static_file(asset_path)
     return FileResponse(file_path)
 
 

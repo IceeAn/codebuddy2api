@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue';
-import { LogIn, PlugZap } from '@lucide/vue';
+import { LogIn } from '@lucide/vue';
 import CForm, { type FormRules } from '../components/ui/CForm.vue';
 import CFormItem from '../components/ui/CFormItem.vue';
 import CInput from '../components/ui/CInput.vue';
@@ -12,6 +12,7 @@ import { createLoginSubmitter } from '../utils/loginSubmit';
 const session = useSessionStore();
 const toast = useToast();
 const formRef = ref<InstanceType<typeof CForm> | null>(null);
+const PROJECT_ICON_URL = '/assets/codebuddy2api.svg';
 const model = reactive({
   username: '',
   password: '',
@@ -59,11 +60,7 @@ async function handleSubmit() {
       class="w-[min(26rem,calc(100vw-2rem))] rounded-2xl border border-border bg-surface p-7 shadow-[var(--shadow-card-lg)]"
     >
       <div class="mb-6 flex items-center gap-3">
-        <div
-          class="grid h-12 w-12 place-items-center rounded-md bg-gradient-to-br from-brand-500 to-accent-500 text-white shadow-[var(--shadow-brand-glow)]"
-        >
-          <PlugZap :size="24" />
-        </div>
+        <img class="project-icon h-12 w-12 shrink-0" :src="PROJECT_ICON_URL" alt="" />
         <div>
           <h1 class="font-display text-2xl font-bold text-text-strong">CodeBuddy2API</h1>
           <span class="text-sm text-muted">管理台</span>
