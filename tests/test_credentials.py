@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import tempfile
@@ -8,11 +9,23 @@ from unittest import mock
 import config
 
 from src.auth_types import AuthenticatedUser
+from src.codebuddy_oauth import TokenParser
 from src.codebuddy_token_manager import CodeBuddyTokenManager, CodeBuddyTokenManagerRegistry
 from src.credential_rotation import CredentialRotationPolicy, CredentialSelection, TokenExpiry
 from src.credential_store import CodeBuddyCredentialStore, build_user_credentials_dirname
 
 from tests.helpers import ConfigIsolationMixin
+
+
+def jwt_with_payload(payload):
+    encoded_payload = base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii").rstrip("=")
+    return f"header.{encoded_payload}.signature"
+
+
+def add_credential(manager, bearer_token, user_id, filename=None, **extra):
+    credential_data = {"bearer_token": bearer_token, "user_id": user_id}
+    credential_data.update(extra)
+    return manager.add_credential_with_data(credential_data, filename)
 
 
 def credential_record(name, expired=False):
@@ -68,7 +81,7 @@ class CredentialStoreTests(ConfigIsolationMixin, unittest.TestCase):
             manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
             outside_path = Path(tmp_dir).parent / "outside.json"
 
-            self.assertTrue(manager.add_credential("token-value", "user", "../../outside"))
+            self.assertTrue(add_credential(manager, "token-value", "user", "../../outside"))
             self.assertFalse(outside_path.exists())
 
             files = list(Path(tmp_dir).glob("*.json"))
@@ -285,7 +298,7 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
             self.assertIsNone(manager._credential_id(None))
-            self.assertTrue(manager.add_credential("token", "user", "a"))
+            self.assertTrue(add_credential(manager, "token", "user", "a"))
             self.assertEqual(
                 manager._credential_id(0),
                 manager.get_credentials_info()[0]["credential_id"],
@@ -294,7 +307,7 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
     def test_load_state_supports_legacy_index_and_handles_read_error(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
-            self.assertTrue(manager.add_credential("token", "user", "a"))
+            self.assertTrue(add_credential(manager, "token", "user", "a"))
             manager.store.save_manager_state({"current_index": 0})
 
             reloaded = CodeBuddyTokenManager(creds_dir=tmp_dir)
@@ -354,7 +367,7 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
             self.assertFalse(manager.delete_credential_by_index(0))
-            self.assertTrue(manager.add_credential("token", "user", "a"))
+            self.assertTrue(add_credential(manager, "token", "user", "a"))
 
             with mock.patch.object(manager.store, "delete_credential_file", return_value=False):
                 self.assertTrue(manager.delete_credential_by_index(0))
@@ -366,7 +379,7 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
     def test_current_info_repairs_invalid_index_for_fixed_and_rotating_modes(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
-            self.assertTrue(manager.add_credential("token", "user", "a"))
+            self.assertTrue(add_credential(manager, "token", "user", "a"))
 
             manager.auto_rotation_enabled = False
             manager.current_index = 99
@@ -378,22 +391,54 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
 
             manager.current_index = 0
             self.assertEqual(manager.get_current_credential_info()["index"], 0)
+
     def test_add_credential_uses_non_colliding_numeric_filename_after_gap(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
-            self.assertTrue(manager.add_credential("first-token", "first-user", "codebuddy_token_1.json"))
-            self.assertTrue(manager.add_credential("second-token", "second-user", "codebuddy_token_2.json"))
+            self.assertTrue(add_credential(manager, "first-token", "first-user", "codebuddy_token_1.json"))
+            self.assertTrue(add_credential(manager, "second-token", "second-user", "codebuddy_token_2.json"))
             os.remove(Path(tmp_dir) / "codebuddy_token_1.json")
             manager.load_all_tokens()
 
-            self.assertTrue(manager.add_credential("third-token", "third-user"))
+            third_token = jwt_with_payload({"sub": "third-user"})
+            self.assertTrue(manager.add_credential(third_token))
 
             files = sorted(path.name for path in Path(tmp_dir).glob("codebuddy_token_*.json"))
             self.assertEqual(files, ["codebuddy_token_2.json", "codebuddy_token_3.json"])
             with (Path(tmp_dir) / "codebuddy_token_2.json").open("r", encoding="utf-8") as f:
                 self.assertEqual(json.load(f)["bearer_token"], "second-token")
             with (Path(tmp_dir) / "codebuddy_token_3.json").open("r", encoding="utf-8") as f:
-                self.assertEqual(json.load(f)["bearer_token"], "third-token")
+                data = json.load(f)
+            self.assertEqual(data["bearer_token"], third_token)
+            self.assertEqual(data["user_id"], "third-user")
+
+    def test_add_credential_parses_manual_token_with_shared_token_parser(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
+            bearer_token = jwt_with_payload({
+                "sub": "manual-user",
+                "email": "manual@example.com",
+            })
+
+            self.assertTrue(manager.add_credential(bearer_token, filename="manual"))
+
+            credential = manager.get_credentials_info()[0]
+            self.assertEqual(credential["user_id"], "manual-user")
+            self.assertEqual(credential["email"], "manual@example.com")
+
+    def test_add_credential_uses_stable_anonymous_suffix_for_non_jwt_token(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
+            bearer_token = "plain-token-1a2B.c_D"
+
+            self.assertTrue(manager.add_credential(bearer_token, filename="manual"))
+
+            credential = manager.get_credentials_info()[0]
+            self.assertEqual(credential["user_id"], "anonymous_1a2B.c_D")
+            self.assertEqual(
+                TokenParser.build_credential_data({"bearer_token": bearer_token})["user_id"],
+                credential["user_id"],
+            )
 
     def test_add_credential_with_data_generates_unique_timestamp_filename(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -436,9 +481,9 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
             manager.disable_auto_rotation()
-            self.assertTrue(manager.add_credential("a-token", "a-user", "a"))
-            self.assertTrue(manager.add_credential("b-token", "b-user", "b"))
-            self.assertTrue(manager.add_credential("c-token", "c-user", "c"))
+            self.assertTrue(add_credential(manager, "a-token", "a-user", "a"))
+            self.assertTrue(add_credential(manager, "b-token", "b-user", "b"))
+            self.assertTrue(add_credential(manager, "c-token", "c-user", "c"))
             manager.current_index = 1
 
             self.assertTrue(manager.delete_credential_by_index(0))
@@ -450,11 +495,11 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
             manager.disable_auto_rotation()
-            self.assertTrue(manager.add_credential("b-token", "b-user", "b"))
-            self.assertTrue(manager.add_credential("c-token", "c-user", "c"))
+            self.assertTrue(add_credential(manager, "b-token", "b-user", "b"))
+            self.assertTrue(add_credential(manager, "c-token", "c-user", "c"))
             manager.current_index = 0
 
-            self.assertTrue(manager.add_credential("a-token", "a-user", "a"))
+            self.assertTrue(add_credential(manager, "a-token", "a-user", "a"))
 
             self.assertEqual(manager.current_index, 1)
             self.assertEqual(manager.get_next_credential()["bearer_token"], "b-token")
@@ -462,9 +507,9 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
     def test_token_manager_preserves_fixed_credential_after_deleting_prior_file(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
-            self.assertTrue(manager.add_credential("a-token", "a-user", "a"))
-            self.assertTrue(manager.add_credential("b-token", "b-user", "b"))
-            self.assertTrue(manager.add_credential("c-token", "c-user", "c"))
+            self.assertTrue(add_credential(manager, "a-token", "a-user", "a"))
+            self.assertTrue(add_credential(manager, "b-token", "b-user", "b"))
+            self.assertTrue(add_credential(manager, "c-token", "c-user", "c"))
             self.assertTrue(manager.set_current_credential(1))
 
             self.assertTrue(manager.delete_credential_by_index(0))
@@ -475,9 +520,9 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
     def test_token_manager_restores_current_credential_by_filename_after_prior_file_removed(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
-            self.assertTrue(manager.add_credential("a-token", "a-user", "a"))
-            self.assertTrue(manager.add_credential("b-token", "b-user", "b"))
-            self.assertTrue(manager.add_credential("c-token", "c-user", "c"))
+            self.assertTrue(add_credential(manager, "a-token", "a-user", "a"))
+            self.assertTrue(add_credential(manager, "b-token", "b-user", "b"))
+            self.assertTrue(add_credential(manager, "c-token", "c-user", "c"))
             manager.current_index = 1
             manager.save_state()
             os.remove(Path(tmp_dir) / "a.json")
@@ -490,9 +535,9 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
     def test_token_manager_does_not_restore_missing_current_filename_by_index(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
-            self.assertTrue(manager.add_credential("a-token", "a-user", "a"))
-            self.assertTrue(manager.add_credential("b-token", "b-user", "b"))
-            self.assertTrue(manager.add_credential("c-token", "c-user", "c"))
+            self.assertTrue(add_credential(manager, "a-token", "a-user", "a"))
+            self.assertTrue(add_credential(manager, "b-token", "b-user", "b"))
+            self.assertTrue(add_credential(manager, "c-token", "c-user", "c"))
             manager.current_index = 1
             manager.save_state()
             os.remove(Path(tmp_dir) / "b.json")
@@ -505,7 +550,7 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
     def test_token_manager_rejects_invalid_current_credential_boundaries(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
-            self.assertTrue(manager.add_credential("a-token", "a-user", "a"))
+            self.assertTrue(add_credential(manager, "a-token", "a-user", "a"))
 
             self.assertFalse(manager.set_current_credential(-1))
             self.assertFalse(manager.set_current_credential(1))
@@ -526,8 +571,8 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
     def test_token_manager_exposes_stable_credential_ids(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
-            self.assertTrue(manager.add_credential("a-token", "a-user", "a"))
-            self.assertTrue(manager.add_credential("b-token", "b-user", "b"))
+            self.assertTrue(add_credential(manager, "a-token", "a-user", "a"))
+            self.assertTrue(add_credential(manager, "b-token", "b-user", "b"))
 
             credentials = manager.get_credentials_info()
             first_id = credentials[0]["credential_id"]
@@ -544,8 +589,8 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
     def test_selecting_credential_disables_rotation_and_enabling_starts_from_current(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
-            self.assertTrue(manager.add_credential("a-token", "a-user", "a"))
-            self.assertTrue(manager.add_credential("b-token", "b-user", "b"))
+            self.assertTrue(add_credential(manager, "a-token", "a-user", "a"))
+            self.assertTrue(add_credential(manager, "b-token", "b-user", "b"))
 
             self.assertTrue(manager.set_current_credential(1))
             self.assertFalse(manager._is_auto_rotation_enabled())
@@ -566,8 +611,8 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
             bob_manager = registry.for_username("bob@example.com")
             self.assertNotEqual(alice_manager.creds_dir, bob_manager.creds_dir)
 
-            self.assertTrue(alice_manager.add_credential("alice-token", "alice-upstream"))
-            self.assertTrue(bob_manager.add_credential("bob-token", "bob-upstream"))
+            self.assertTrue(add_credential(alice_manager, "alice-token", "alice-upstream"))
+            self.assertTrue(add_credential(bob_manager, "bob-token", "bob-upstream"))
 
             self.assertEqual(
                 [cred["bearer_token"] for cred in alice_manager.get_all_credentials()],
@@ -600,8 +645,8 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
             )
             registry = CodeBuddyTokenManagerRegistry()
             manager = registry.for_user(AuthenticatedUser(username="alice", source="session_cookie"))
-            self.assertTrue(manager.add_credential("a-token", "a-user", "a"))
-            self.assertTrue(manager.add_credential("b-token", "b-user", "b"))
+            self.assertTrue(add_credential(manager, "a-token", "a-user", "a"))
+            self.assertTrue(add_credential(manager, "b-token", "b-user", "b"))
 
             first = manager.get_next_credential()
             second = manager.get_next_credential()

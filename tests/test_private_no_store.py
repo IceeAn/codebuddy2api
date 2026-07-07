@@ -86,6 +86,7 @@ class PrivateNoStoreResponseTests(TempConfigMixin, unittest.IsolatedAsyncioTestC
                 422,
             ),
             ("POST", "/codebuddy/auth/poll", {"session": True}, {}, 400),
+            ("POST", "/codebuddy/auth/cancel", {"session": True}, {}, 400),
         ]
 
         for method, path, auth, body, expected_status in cases:

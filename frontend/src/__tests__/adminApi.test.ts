@@ -46,7 +46,6 @@ describe('管理 API 封装', () => {
     await adminApi.deleteApiKey('key/id');
     await adminApi.credentials();
     await adminApi.createCredential('token');
-    await adminApi.createCredential('token', 'user');
     await adminApi.selectCredential('cred/id');
     await adminApi.deleteCredential('cred/id');
     await adminApi.testCredential('cred/id');
@@ -62,11 +61,7 @@ describe('管理 API 封装', () => {
       ['/api/admin/credentials'],
       [
         '/api/admin/credentials',
-        { method: 'POST', json: { bearer_token: 'token', user_id: undefined } },
-      ],
-      [
-        '/api/admin/credentials',
-        { method: 'POST', json: { bearer_token: 'token', user_id: 'user' } },
+        { method: 'POST', json: { bearer_token: 'token' } },
       ],
       ['/api/admin/credentials/cred%2Fid/select', { method: 'POST' }],
       ['/api/admin/credentials/cred%2Fid', { method: 'DELETE' }],
@@ -80,11 +75,13 @@ describe('管理 API 封装', () => {
 
     await codebuddyOAuthApi.startAuth();
     await codebuddyOAuthApi.pollAuth('state');
+    await codebuddyOAuthApi.cancelAuth('state');
     await openaiPlaygroundApi.models();
 
     expect(apiRequestMock.mock.calls).toEqual([
       ['/codebuddy/auth/start', { timeoutMs: 35000 }],
       ['/codebuddy/auth/poll', { method: 'POST', json: { auth_state: 'state' }, timeoutMs: 35000 }],
+      ['/codebuddy/auth/cancel', { method: 'POST', json: { auth_state: 'state' } }],
       ['/api/admin/playground/openai/v1/models'],
     ]);
   });
@@ -112,6 +109,19 @@ describe('管理 API 封装', () => {
       json: { auth_state: 'state' },
       signal: controller.signal,
       timeoutMs: 35000,
+    });
+  });
+
+  it('CodeBuddy OAuth 取消请求透传 signal', async () => {
+    apiRequestMock.mockResolvedValue({});
+    const controller = new AbortController();
+
+    await codebuddyOAuthApi.cancelAuth('state', controller.signal);
+
+    expect(apiRequestMock).toHaveBeenCalledWith('/codebuddy/auth/cancel', {
+      method: 'POST',
+      json: { auth_state: 'state' },
+      signal: controller.signal,
     });
   });
 });

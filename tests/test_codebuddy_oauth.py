@@ -7,7 +7,7 @@ from src.auth_types import AuthenticatedUser
 from fastapi import HTTPException
 
 import src.codebuddy_oauth as oauth
-from src.codebuddy_auth_router import oauth_callback, poll_for_token, start_device_auth
+from src.codebuddy_auth_router import cancel_auth, oauth_callback, poll_for_token, start_device_auth
 from src.codebuddy_oauth import AuthStateStore, CodeBuddyAuthClient, CodeBuddyTokenSaver, TokenParser
 
 
@@ -252,6 +252,7 @@ class CodeBuddyAuthClientTests(unittest.IsolatedAsyncioTestCase):
                         "sessionState": "session",
                         "scope": "openid",
                         "domain": "codebuddy.example",
+                        "enterpriseId": "enterprise-1",
                     },
                 }),
                 "success",
@@ -285,6 +286,7 @@ class CodeBuddyAuthClientTests(unittest.IsolatedAsyncioTestCase):
                 if expected_status == "success":
                     self.assertEqual(result["token_data"]["access_token"], "token")
                     self.assertEqual(result["token_data"]["token_type"], "Custom")
+                    self.assertEqual(result["token_data"]["enterprise_id"], "enterprise-1")
 
     async def test_poll_status_maps_client_exception(self):
         class BrokenAsyncClient:
@@ -397,8 +399,86 @@ class CodeBuddyAuthRouterTests(unittest.IsolatedAsyncioTestCase):
             response = await poll_for_token(auth_state="state", _user=user)
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            json.loads(response.body),
+            {"saved": True, "message": "认证成功"},
+        )
         consume.assert_called_once_with("state", user)
         save_token.assert_awaited_once_with(token_data, user)
+
+    async def test_successful_poll_never_exposes_sensitive_token_fields(self):
+        user = AuthenticatedUser(username="alice", source="session_cookie")
+        token_data = {
+            "access_token": "access-secret",
+            "refresh_token": "refresh-secret",
+            "user_info": {"email": "alice@example.com"},
+            "full_response": {"private": "value"},
+        }
+
+        with (
+            mock.patch("src.codebuddy_auth_router.validate_auth_state_owner", return_value=True),
+            mock.patch(
+                "src.codebuddy_auth_router.poll_codebuddy_auth_status",
+                new=mock.AsyncMock(return_value={"status": "success", "token_data": token_data}),
+            ),
+            mock.patch("src.codebuddy_auth_router.consume_auth_state", return_value=True),
+            mock.patch(
+                "src.codebuddy_auth_router.save_codebuddy_token",
+                new=mock.AsyncMock(return_value=True),
+            ),
+        ):
+            response = await poll_for_token(auth_state="state", _user=user)
+
+        body = json.loads(response.body)
+        self.assertEqual(body, {"saved": True, "message": "认证成功"})
+        for field in ("access_token", "refresh_token", "user_info", "full_response"):
+            self.assertNotIn(field, body)
+
+    async def test_successful_poll_returns_500_when_token_save_fails(self):
+        user = AuthenticatedUser(username="alice", source="session_cookie")
+
+        with (
+            mock.patch("src.codebuddy_auth_router.validate_auth_state_owner", return_value=True),
+            mock.patch(
+                "src.codebuddy_auth_router.poll_codebuddy_auth_status",
+                new=mock.AsyncMock(
+                    return_value={"status": "success", "token_data": {"access_token": "secret"}}
+                ),
+            ),
+            mock.patch("src.codebuddy_auth_router.consume_auth_state", return_value=True) as consume,
+            mock.patch(
+                "src.codebuddy_auth_router.save_codebuddy_token",
+                new=mock.AsyncMock(return_value=False),
+            ),
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                await poll_for_token(auth_state="state", _user=user)
+
+        self.assertEqual(raised.exception.status_code, 500)
+        consume.assert_called_once_with("state", user)
+
+    async def test_cancel_auth_consumes_owned_state(self):
+        user = AuthenticatedUser(username="alice", source="session_cookie")
+
+        with mock.patch("src.codebuddy_auth_router.consume_auth_state", return_value=True) as consume:
+            response = await cancel_auth(auth_state="state", _user=user)
+
+        self.assertEqual(response, {"cancelled": True})
+        consume.assert_called_once_with("state", user)
+
+    async def test_cancel_auth_rejects_missing_foreign_and_already_consumed_state(self):
+        user = AuthenticatedUser(username="alice", source="session_cookie")
+
+        with self.assertRaises(HTTPException) as missing:
+            await cancel_auth(auth_state=None, _user=user)
+        self.assertEqual(missing.exception.status_code, 400)
+
+        for state in ("foreign", "already-consumed"):
+            with self.subTest(state=state):
+                with mock.patch("src.codebuddy_auth_router.consume_auth_state", return_value=False):
+                    with self.assertRaises(HTTPException) as rejected:
+                        await cancel_auth(auth_state=state, _user=user)
+                self.assertEqual(rejected.exception.status_code, 403)
 
     async def test_successful_poll_fails_closed_when_state_cannot_be_consumed(self):
         user = AuthenticatedUser(username="alice", source="session_cookie")
@@ -477,13 +557,15 @@ class CodeBuddyAuthRouterTests(unittest.IsolatedAsyncioTestCase):
 
 
 class TokenParserTests(unittest.TestCase):
-    def test_build_credential_data_extracts_user_info_from_jwt_email(self):
+    def test_build_credential_data_uses_jwt_sub_for_user_id_and_keeps_display_fields(self):
         token = jwt_with_payload({
             "sub": "sub-id",
             "email": "alice@example.com",
             "preferred_username": "alice",
+            "nickname": "AliceNick",
             "name": "Alice",
             "sid": "session",
+            "iss": "https://accounts.example.com/oauth/sso-enterprise-1",
         })
 
         with mock.patch("src.codebuddy_oauth.time.time", return_value=123):
@@ -493,46 +575,82 @@ class TokenParserTests(unittest.TestCase):
                 "refresh_token": "refresh",
                 "token_type": "Bearer",
                 "scope": "openid",
-                "domain": "codebuddy.example",
             })
 
         self.assertEqual(data["bearer_token"], token)
-        self.assertEqual(data["user_id"], "alice@example.com")
+        self.assertEqual(data["user_id"], "sub-id")
         self.assertEqual(data["created_at"], 123)
+        self.assertEqual(data["domain"], "accounts.example.com")
+        self.assertEqual(data["enterprise_id"], "enterprise-1")
         self.assertEqual(data["user_info"]["sub"], "sub-id")
+        self.assertEqual(data["user_info"]["email"], "alice@example.com")
+        self.assertEqual(data["user_info"]["preferred_username"], "alice")
+        self.assertEqual(data["user_info"]["nickname"], "AliceNick")
         self.assertEqual(data["user_info"]["session_state"], "session")
+        self.assertEqual(data["user_info"]["iss"], "https://accounts.example.com/oauth/sso-enterprise-1")
+        self.assertEqual(data["user_info"]["domain"], "accounts.example.com")
+        self.assertEqual(data["user_info"]["enterprise_id"], "enterprise-1")
 
-    def test_build_credential_data_falls_back_to_domain_for_invalid_token(self):
+    def test_build_credential_data_prefers_explicit_enterprise_and_domain(self):
+        token = jwt_with_payload({
+            "sub": "sub-id",
+            "preferred_username": "alice",
+            "iss": "https://issuer.example.com/auth/sso-derived",
+        })
+
         data = TokenParser.build_credential_data({
-            "bearer_token": "not-a-jwt",
+            "bearer_token": token,
+            "domain": "configured.example.com",
+            "enterprise_id": "configured-enterprise",
+        })
+
+        self.assertEqual(data["domain"], "configured.example.com")
+        self.assertEqual(data["enterprise_id"], "configured-enterprise")
+        self.assertEqual(data["user_info"]["domain"], "configured.example.com")
+        self.assertEqual(data["user_info"]["enterprise_id"], "configured-enterprise")
+        self.assertEqual(data["user_info"]["nickname"], "alice")
+
+    def test_build_credential_data_falls_back_to_stable_anonymous_id_for_invalid_token(self):
+        token = "plain-token-12345678"
+        data = TokenParser.build_credential_data({
+            "bearer_token": token,
             "domain": "www.codebuddy.cn",
         })
 
-        self.assertEqual(data["user_id"], "www.codebuddy.cn")
-        self.assertEqual(data["bearer_token"], "not-a-jwt")
+        self.assertEqual(data["user_id"], "anonymous_12345678")
+        self.assertEqual(data["domain"], "www.codebuddy.cn")
+        self.assertEqual(data["bearer_token"], token)
 
     def test_build_credential_data_omits_none_values(self):
+        token = "plain-token-abcdefgh"
         data = TokenParser.build_credential_data({
-            "access_token": "not-a-jwt",
+            "access_token": token,
             "refresh_token": None,
             "scope": None,
         })
 
         self.assertNotIn("refresh_token", data)
         self.assertNotIn("scope", data)
-        self.assertEqual(data["user_id"], "unknown")
+        self.assertEqual(data["user_id"], "anonymous_abcdefgh")
 
-    def test_extract_user_info_uses_username_sub_and_unknown_fallbacks(self):
+    def test_extract_user_info_uses_sub_and_stable_anonymous_fallback(self):
         cases = [
-            ({"preferred_username": "alice"}, "alice"),
+            ({}, None),
+            ({"preferred_username": "alice"}, None),
             ({"sub": "subject"}, "subject"),
-            ({}, "unknown"),
         ]
 
         for payload, expected in cases:
             with self.subTest(payload=payload):
-                user_id, _ = TokenParser._extract_user_info(jwt_with_payload(payload), {})
-                self.assertEqual(user_id, expected)
+                token = jwt_with_payload(payload)
+                user_id, _ = TokenParser._extract_user_info(token, {})
+                self.assertEqual(user_id, expected or f"anonymous_{token[-8:]}")
+
+    def test_extract_user_info_falls_back_to_plain_anonymous_without_token(self):
+        user_id, user_info = TokenParser._extract_user_info(None, {})
+
+        self.assertEqual(user_id, "anonymous")
+        self.assertEqual(user_info, {})
 
     def test_extract_user_info_handles_padded_and_malformed_payloads(self):
         padded_payload = base64.urlsafe_b64encode(b'{"sub":"padded"}').decode("ascii")
@@ -546,7 +664,7 @@ class TokenParserTests(unittest.TestCase):
         )
 
         self.assertEqual(user_id, "padded")
-        self.assertEqual(malformed_user_id, "fallback")
+        self.assertEqual(malformed_user_id, "anonymous_ignature")
         self.assertEqual(malformed_info, {})
 
     def test_extract_user_info_handles_unexpected_decoder_error(self):
@@ -559,8 +677,15 @@ class TokenParserTests(unittest.TestCase):
                 {"domain": "fallback"},
             )
 
-        self.assertEqual(user_id, "fallback")
+        self.assertEqual(user_id, "anonymous_ignature")
         self.assertEqual(user_info, {})
+
+    def test_extract_issuer_info_ignores_invalid_or_non_sso_issuer(self):
+        self.assertEqual(TokenParser._extract_issuer_info("not-a-url"), {})
+        self.assertEqual(
+            TokenParser._extract_issuer_info("https://issuer.example.com/auth/regular"),
+            {"domain": "issuer.example.com"},
+        )
 
 
 class CodeBuddyTokenSaverTests(unittest.IsolatedAsyncioTestCase):

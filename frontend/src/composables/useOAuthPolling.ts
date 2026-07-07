@@ -8,7 +8,7 @@ interface OAuthPollingOptions {
   pollIntervalMs?: number;
   /** 最大轮询次数（含 start 时立即执行的那一次），默认 60（约 5 分钟） */
   maxAttempts?: number;
-  /** 认证成功回调，通常用于 invalidate credentials 查询 */
+  /** 认证成功回调，通常用于刷新凭证列表 */
   onSuccess?: () => void;
 }
 
@@ -20,17 +20,15 @@ interface StartAuthResponse {
 }
 
 interface PollAuthResponse {
-  access_token?: string;
   saved?: boolean;
+  message?: string;
 }
 
 /**
- * CodeBuddy OAuth 设备授权轮询 composable。
+ * CodeBuddy OAuth 登录轮询状态机。
  *
- * 集中处理设备授权中的状态竞态、轮询超时、卸载清理和慢网络下的轮询重叠。
- * 上一轮 pollAuth 完成后才会安排下一轮，避免并发轮询写入旧状态。
- *
- * 必须在组件 setup 上下文中调用（依赖 `useToast` 与 `onBeforeUnmount`）。
+ * 点击开始时同步预打开空白页，避免异步响应返回后再打开窗口而被浏览器拦截。
+ * 每次轮询完成后才安排下一次，保证慢网络下不会出现并发轮询。
  */
 export function useOAuthPolling(options: OAuthPollingOptions = {}) {
   const toast = useToast();
@@ -42,41 +40,52 @@ export function useOAuthPolling(options: OAuthPollingOptions = {}) {
   const starting = ref(false);
   const polling = ref(false);
   const elapsedSeconds = ref(0);
+  const manualOpenRequired = ref(false);
 
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let elapsedTimer: ReturnType<typeof setInterval> | null = null;
   let attemptCount = 0;
   let abortController: AbortController | null = null;
   let pollInFlight = false;
+  let authWindow: Window | null = null;
 
   async function start(): Promise<void> {
-    // 防竞态：startAuth 进行中或已在轮询中，直接返回
     if (starting.value || polling.value) return;
-    stop();
+
+    reset();
+    preopenAuthWindow();
     starting.value = true;
     const controller = new AbortController();
     abortController = controller;
+
     try {
       const result: StartAuthResponse = await codebuddyOAuthApi.startAuth(controller.signal);
       if (!isCurrentController(controller)) return;
       if (!result.verification_uri_complete || !result.auth_state) {
-        toast.error(result.message || '认证启动失败');
+        const message = result.message || '认证启动失败';
+        reset();
+        toast.error(message);
         return;
       }
+
       authUrl.value = result.verification_uri_complete;
       authState.value = result.auth_state;
       polling.value = true;
+      starting.value = false;
       attemptCount = 0;
       elapsedSeconds.value = 0;
-      // 使用全局 setInterval/clearInterval 而非 window.setInterval：
-      // 浏览器中两者等价；node 测试环境中 window 不存在，全局 setInterval 仍可用且被 fake timers 拦截。
+      navigateAuthWindow(authUrl.value);
       elapsedTimer = setInterval(() => {
         elapsedSeconds.value += 1;
+        if (authWindow?.closed) {
+          authWindow = null;
+          manualOpenRequired.value = true;
+        }
       }, 1000);
-      // 立即执行一次轮询，避免首次需要等满一个周期
       await poll();
     } catch (error) {
       if ((error as Error)?.name === 'AbortError' || !isCurrentController(controller)) return;
+      reset();
       toast.error(error instanceof Error ? error.message : '认证启动失败');
     } finally {
       if (abortController === controller) {
@@ -90,11 +99,13 @@ export function useOAuthPolling(options: OAuthPollingOptions = {}) {
     const controller = abortController!;
     const currentAuthState = authState.value;
     attemptCount++;
+
     if (attemptCount > maxAttempts) {
+      await cancelAndReset(false);
       toast.warning('授权等待超时，请重试');
-      stop();
       return;
     }
+
     pollInFlight = true;
     try {
       const result: PollAuthResponse = await codebuddyOAuthApi.pollAuth(
@@ -108,24 +119,26 @@ export function useOAuthPolling(options: OAuthPollingOptions = {}) {
       ) {
         return;
       }
-      if (result.access_token) {
-        stop();
-        authUrl.value = '';
-        authState.value = '';
+
+      if (result.saved === true) {
+        reset(false);
         toast.success('认证成功');
         options.onSuccess?.();
+        return;
       }
+
+      await cancelAndReset(false);
+      toast.error('认证响应无效，请重新认证');
     } catch (error) {
       if ((error as Error)?.name === 'AbortError' || !isCurrentController(controller)) return;
       if (error instanceof ApiError) {
         const detail = error.detail as { error?: string; error_description?: string };
-        // authorization_pending / slow_down 是可恢复的，继续轮询
         if (detail?.error === 'authorization_pending' || detail?.error === 'slow_down') return;
-        stop();
+        await cancelAndReset(false);
         toast.error(detail?.error_description || error.message);
         return;
       }
-      stop();
+      await cancelAndReset(false);
       toast.error(error instanceof Error ? error.message : '认证失败');
     } finally {
       if (abortController === controller) {
@@ -133,6 +146,38 @@ export function useOAuthPolling(options: OAuthPollingOptions = {}) {
         scheduleNextPoll();
       }
     }
+  }
+
+  function preopenAuthWindow(): void {
+    try {
+      authWindow = window.open('about:blank', '_blank');
+    } catch {
+      authWindow = null;
+    }
+    manualOpenRequired.value = authWindow === null;
+  }
+
+  function navigateAuthWindow(url: string): void {
+    if (!authWindow || authWindow.closed) {
+      authWindow = null;
+      manualOpenRequired.value = true;
+      return;
+    }
+    try {
+      authWindow.opener = null;
+      authWindow.location.href = url;
+      manualOpenRequired.value = false;
+    } catch {
+      releaseAuthWindow(true);
+      manualOpenRequired.value = true;
+    }
+  }
+
+  function openAuthUrl(): void {
+    if (!authUrl.value) return;
+    releaseAuthWindow(false);
+    preopenAuthWindow();
+    if (authWindow) navigateAuthWindow(authUrl.value);
   }
 
   function isCurrentController(controller: AbortController): boolean {
@@ -146,7 +191,7 @@ export function useOAuthPolling(options: OAuthPollingOptions = {}) {
     }, pollIntervalMs);
   }
 
-  function stop(): void {
+  function clearRuntime(closeWindow: boolean): void {
     if (pollTimer !== null) {
       clearTimeout(pollTimer);
       pollTimer = null;
@@ -159,20 +204,69 @@ export function useOAuthPolling(options: OAuthPollingOptions = {}) {
       abortController.abort();
       abortController = null;
     }
+    releaseAuthWindow(closeWindow);
     pollInFlight = false;
     polling.value = false;
     starting.value = false;
   }
 
-  function reset(): void {
-    stop();
+  function releaseAuthWindow(closeWindow: boolean): void {
+    if (closeWindow && authWindow && !authWindow.closed) {
+      try {
+        authWindow.close();
+      } catch {
+        // 跨域窗口或浏览器策略可能拒绝关闭；状态仍必须清理。
+      }
+    }
+    authWindow = null;
+  }
+
+  /** 仅本地停止；保留给组件卸载和测试清理，用户取消应调用 cancel。 */
+  function stop(): void {
+    clearRuntime(true);
+  }
+
+  function reset(closeWindow = true): void {
+    clearRuntime(closeWindow);
     authUrl.value = '';
     authState.value = '';
     elapsedSeconds.value = 0;
+    manualOpenRequired.value = false;
     attemptCount = 0;
   }
 
-  onBeforeUnmount(stop);
+  async function cancelAndReset(reportFailure: boolean): Promise<void> {
+    const state = authState.value;
+    reset();
+    if (!state) return;
+    try {
+      await codebuddyOAuthApi.cancelAuth(state);
+    } catch (error) {
+      if (reportFailure) {
+        toast.error(error instanceof Error ? error.message : '取消认证失败');
+      }
+    }
+  }
 
-  return { authUrl, authState, starting, polling, elapsedSeconds, start, stop, reset };
+  async function cancel(): Promise<void> {
+    await cancelAndReset(true);
+  }
+
+  onBeforeUnmount(() => {
+    void cancelAndReset(false);
+  });
+
+  return {
+    authUrl,
+    authState,
+    starting,
+    polling,
+    elapsedSeconds,
+    manualOpenRequired,
+    start,
+    stop,
+    reset,
+    cancel,
+    openAuthUrl,
+  };
 }

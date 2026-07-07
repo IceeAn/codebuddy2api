@@ -76,6 +76,7 @@ class ApiDocumentationTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
             ("/auth/session", "get"),
             ("/codebuddy/auth/start", "get"),
             ("/codebuddy/auth/poll", "post"),
+            ("/codebuddy/auth/cancel", "post"),
             ("/api/admin/status", "get"),
             ("/api/admin/api-keys", "get"),
             ("/api/admin/api-keys", "post"),
@@ -120,9 +121,9 @@ class ApiDocumentationTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
             {"type": "array", "minItems": 1, "items": {"type": "object"}},
         )
 
-        token_schema = schema["components"]["schemas"]["CredentialCreateRequest"][
-            "properties"
-        ]["bearer_token"]
+        credential_create_schema = schema["components"]["schemas"]["CredentialCreateRequest"]
+        self.assertEqual(set(credential_create_schema["properties"]), {"bearer_token"})
+        token_schema = credential_create_schema["properties"]["bearer_token"]
         self.assertEqual(token_schema["minLength"], 1)
         self.assertEqual(token_schema["pattern"], "\\S")
         self.assertTrue(
@@ -147,6 +148,7 @@ class ApiDocumentationTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.assertIn("/auth/login", paths)
         self.assertIn("/api/admin/status", paths)
         self.assertIn("/codebuddy/auth/start", paths)
+        self.assertIn("/codebuddy/auth/cancel", paths)
         self.assertIn("/health", paths)
         self.assertNotIn("/api/admin/playground/openai/v1/models", paths)
         self.assertNotIn("/api/admin/playground/openai/v1/chat/completions", paths)

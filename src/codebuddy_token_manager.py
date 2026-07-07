@@ -195,6 +195,7 @@ class CodeBuddyTokenManager:
                     "token_type": data.get("token_type", "Bearer"),
                     "scope": data.get("scope"),
                     "domain": data.get("domain"),
+                    "enterprise_id": data.get("enterprise_id"),
                     "has_refresh_token": bool(data.get("refresh_token")),
                     "session_state": data.get("session_state"),
                 }
@@ -209,7 +210,7 @@ class CodeBuddyTokenManager:
             return None
         return self.credentials[index]["data"]
 
-    def add_credential(self, bearer_token: str, user_id: Optional[str] = None, filename: Optional[str] = None) -> bool:
+    def add_credential(self, bearer_token: str, filename: Optional[str] = None) -> bool:
         """添加新的凭证。"""
         if not filename:
             next_index = len(self.credentials) + 1
@@ -220,11 +221,9 @@ class CodeBuddyTokenManager:
                     break
                 next_index += 1
 
-        credential_data = {
-            "bearer_token": bearer_token,
-            "user_id": user_id,
-            "created_at": int(time.time()),
-        }
+        from .codebuddy_oauth import TokenParser
+
+        credential_data = TokenParser.build_credential_data({"bearer_token": bearer_token})
         return self.add_credential_with_data(credential_data, filename)
 
     def add_credential_with_data(self, credential_data: Dict[str, Any], filename: Optional[str] = None) -> bool:
@@ -351,6 +350,7 @@ class CodeBuddyTokenManager:
                 "index": self.current_index,
                 "filename": filename,
                 "user_id": credential["data"].get("user_id", "unknown"),
+                "enterprise_id": credential["data"].get("enterprise_id"),
                 "rotation_count": rotation_count,
                 "auto_rotation_enabled": False,
             }
@@ -365,6 +365,7 @@ class CodeBuddyTokenManager:
             "index": self.current_index,
             "filename": filename,
             "user_id": credential["data"].get("user_id", "unknown"),
+            "enterprise_id": credential["data"].get("enterprise_id"),
             "usage_count": self.usage_count,
             "rotation_count": rotation_count,
             "auto_rotation_enabled": True,

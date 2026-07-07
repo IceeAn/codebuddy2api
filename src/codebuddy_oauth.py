@@ -6,6 +6,7 @@ import secrets
 import time
 import uuid
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
 import httpx
 
@@ -238,6 +239,7 @@ class CodeBuddyAuthClient:
                         "session_state": data.get("sessionState"),
                         "scope": data.get("scope"),
                         "domain": data.get("domain"),
+                        "enterprise_id": data.get("enterprise_id") or data.get("enterpriseId"),
                         "full_response": result,
                     },
                 }
@@ -262,19 +264,27 @@ class TokenParser:
 
     @staticmethod
     def build_credential_data(token_data: Dict[str, Any]) -> Dict[str, Any]:
-        token_data["created_at"] = int(time.time())
+        created_at = int(time.time())
+        token_data["created_at"] = created_at
         bearer_token = token_data.get("access_token") or token_data.get("bearer_token")
         user_id, user_info = TokenParser._extract_user_info(bearer_token, token_data)
+        domain = token_data.get("domain") or user_info.get("domain")
+        enterprise_id = token_data.get("enterprise_id") or user_info.get("enterprise_id")
+        if domain:
+            user_info["domain"] = domain
+        if enterprise_id:
+            user_info["enterprise_id"] = enterprise_id
 
         credential_data = {
             "bearer_token": bearer_token,
             "user_id": user_id,
-            "created_at": int(time.time()),
+            "created_at": created_at,
             "expires_in": token_data.get("expires_in"),
             "refresh_token": token_data.get("refresh_token"),
             "token_type": token_data.get("token_type", "Bearer"),
             "scope": token_data.get("scope"),
-            "domain": token_data.get("domain"),
+            "domain": domain,
+            "enterprise_id": enterprise_id,
             "session_state": token_data.get("session_state"),
             "user_info": user_info,
             "full_response": token_data,
@@ -283,7 +293,7 @@ class TokenParser:
 
     @staticmethod
     def _extract_user_info(bearer_token: Optional[str], token_data: Dict[str, Any]):
-        fallback_user_id = token_data.get("domain", "unknown")
+        del token_data
         user_info = {}
 
         try:
@@ -297,38 +307,60 @@ class TokenParser:
                 try:
                     payload = base64.urlsafe_b64decode(payload_part)
                     jwt_data = json.loads(payload.decode("utf-8"))
-                    user_id = (
-                            jwt_data.get("email")
-                            or jwt_data.get("preferred_username")
-                            or jwt_data.get("sub")
-                            or "unknown"
-                    )
+                    user_id = jwt_data.get("sub") or TokenParser._fallback_user_id(bearer_token)
+                    issuer_info = TokenParser._extract_issuer_info(jwt_data.get("iss"))
+                    nickname = jwt_data.get("nickname") or jwt_data.get("preferred_username")
                     user_info = {
                         "sub": jwt_data.get("sub"),
                         "email": jwt_data.get("email"),
                         "preferred_username": jwt_data.get("preferred_username"),
+                        "nickname": nickname,
                         "name": jwt_data.get("name"),
                         "given_name": jwt_data.get("given_name"),
                         "family_name": jwt_data.get("family_name"),
+                        "iss": jwt_data.get("iss"),
                         "exp": jwt_data.get("exp"),
                         "iat": jwt_data.get("iat"),
                         "scope": jwt_data.get("scope"),
                         "session_state": jwt_data.get("sid"),
+                        **issuer_info,
                     }
                     user_info = {key: value for key, value in user_info.items() if value is not None}
                     logger.info(f"成功解析JWT，用户: {user_id}")
                     logger.debug(f"JWT用户信息: {user_info}")
                 except (json.JSONDecodeError, UnicodeDecodeError) as decode_error:
                     logger.warning(f"JWT payload解码失败: {decode_error}")
-                    user_id = fallback_user_id
+                    user_id = TokenParser._fallback_user_id(bearer_token)
             else:
                 logger.warning("Bearer token为空或格式无效")
-                user_id = fallback_user_id
+                user_id = TokenParser._fallback_user_id(bearer_token)
         except Exception as e:
             logger.error(f"JWT解析过程发生异常: {e}")
-            user_id = fallback_user_id
+            user_id = TokenParser._fallback_user_id(bearer_token)
 
         return user_id, user_info
+
+    @staticmethod
+    def _fallback_user_id(bearer_token: Optional[str]) -> str:
+        if not bearer_token:
+            return "anonymous"
+        return f"anonymous_{bearer_token[-8:]}"
+
+    @staticmethod
+    def _extract_issuer_info(issuer: Optional[str]) -> Dict[str, str]:
+        if not issuer:
+            return {}
+
+        parsed = urlparse(issuer)
+        info = {}
+        if parsed.hostname:
+            info["domain"] = parsed.hostname
+
+        last_path_part = parsed.path.rstrip("/").rsplit("/", 1)[-1]
+        if last_path_part.startswith("sso-") and len(last_path_part) > len("sso-"):
+            info["enterprise_id"] = last_path_part[len("sso-"):]
+
+        return info
 
 
 class CodeBuddyTokenSaver:

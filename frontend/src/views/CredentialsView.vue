@@ -9,7 +9,6 @@ import CDataTable, { type Column } from '../components/ui/CDataTable.vue';
 import CForm, { type FormRules } from '../components/ui/CForm.vue';
 import CFormItem from '../components/ui/CFormItem.vue';
 import CInput from '../components/ui/CInput.vue';
-import CInputGroup from '../components/ui/CInputGroup.vue';
 import CRadioGroup from '../components/ui/CRadioGroup.vue';
 import CRadioButton from '../components/ui/CRadioButton.vue';
 import CTag from '../components/ui/CTag.vue';
@@ -26,7 +25,7 @@ const queryClient = useQueryClient();
 const toast = useToast();
 const { copy } = useClipboard();
 
-const credentialForm = reactive({ bearerToken: '', userId: '' });
+const credentialForm = reactive({ bearerToken: '' });
 const credentialFormRef = ref<InstanceType<typeof CForm> | null>(null);
 const credentialRules: FormRules = {
   bearerToken: {
@@ -98,9 +97,6 @@ const emptyDescription = computed(() => {
 });
 
 const currentId = computed(() => credentialsQuery.data.value?.current.credential_id || '');
-const currentStatus = computed(
-  () => credentialsQuery.data.value?.current.status || 'no_credentials',
-);
 const autoRotationSetting = computed(
   () => credentialsQuery.data.value?.current.auto_rotation_enabled,
 );
@@ -121,17 +117,26 @@ const errorMessage = computed(() => {
  * 竞态、超时、组件卸载清理均由 composable 内部处理；认证成功后刷新凭证列表。
  * onSuccess 不能是 async（composable 签名为 () => void），用 void 包裹 invalidate。
  */
-const { authUrl, starting, polling, elapsedSeconds, start, stop } = useOAuthPolling({
+const {
+  authUrl,
+  starting,
+  polling,
+  elapsedSeconds,
+  manualOpenRequired,
+  start,
+  cancel,
+  openAuthUrl,
+} = useOAuthPolling({
   onSuccess: () => {
     void invalidateCredentials();
   },
 });
+const authInProgress = computed(() => starting.value || polling.value);
 
 const createMutation = useMutation({
-  mutationFn: () => adminApi.createCredential(credentialForm.bearerToken, credentialForm.userId),
+  mutationFn: () => adminApi.createCredential(credentialForm.bearerToken),
   onSuccess: async () => {
     credentialForm.bearerToken = '';
-    credentialForm.userId = '';
     credentialFormRef.value?.restoreValidation();
     toast.success('凭证已添加');
     await invalidateCredentials();
@@ -211,12 +216,6 @@ function formatElapsed(totalSeconds: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-function reopenAuthUrl() {
-  if (authUrl.value) {
-    window.open(authUrl.value, '_blank', 'noopener,noreferrer');
-  }
-}
-
 async function submitCredential(): Promise<void> {
   try {
     await credentialFormRef.value?.validate();
@@ -242,7 +241,7 @@ const columns: Column<CredentialRecord>[] = [
     },
   },
   { title: '用户', key: 'email', minWidth: 180, render: (row) => row.email || row.user_id || '-' },
-  { title: 'Token', key: 'token_preview', minWidth: 180, className: 'mono' },
+  { title: 'Token', key: 'token_display', minWidth: 180, className: 'mono' },
   { title: '剩余', key: 'time_remaining_str', width: 120 },
   { title: '文件', key: 'filename', minWidth: 180, ellipsis: { tooltip: true } },
   {
@@ -274,39 +273,53 @@ const tableRows = computed(() => rows.value as unknown as Record<string, unknown
     <div
       class="grid split-grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(20rem,0.8fr)]"
     >
-      <CCard title="CodeBuddy OAuth">
-        <div class="flex flex-col gap-3">
-          <div class="toolbar">
-            <CTag :type="polling ? 'warning' : 'default'">
-              {{ polling ? '等待授权' : currentStatus }}
-            </CTag>
-            <CTag v-if="polling" type="warning">已等待 {{ formatElapsed(elapsedSeconds) }}</CTag>
-            <CButton variant="primary" :loading="starting || polling" @click="start">
+      <CCard title="CodeBuddy 登录认证" class="credential-auth-card">
+        <div class="credential-auth-card-content flex flex-col gap-3">
+          <div v-if="!authInProgress" class="credential-auth-idle flex flex-col gap-3">
+            <p class="text-sm opacity-70">
+              登录 CodeBuddy 后，认证凭证会自动保存到当前管理用户的凭证池。
+            </p>
+            <CButton
+              variant="primary"
+              :loading="starting || polling"
+              class="credential-auth-start-button"
+              @click="start"
+            >
               <template #icon>
                 <ExternalLink :size="16" />
               </template>
               开始认证
             </CButton>
-            <CButton v-if="polling" @click="stop">取消</CButton>
           </div>
-          <CAlert v-if="polling" type="info">
-            请在弹出的浏览器窗口中完成授权。授权完成后将自动检测，无需手动操作。若浏览器未弹出，请点击"重新打开"按钮。
-          </CAlert>
-          <template v-if="authUrl">
-            <CInputGroup>
-              <CInput :model-value="authUrl" readonly />
-              <CButton @click="copy(authUrl, '认证链接已复制')">
+          <div v-else class="credential-auth-pending flex flex-col gap-3">
+            <div class="flex flex-wrap items-center gap-2">
+              <CTag type="warning">等待登录认证</CTag>
+              <CTag type="warning">已等待 {{ formatElapsed(elapsedSeconds) }}</CTag>
+            </div>
+            <CAlert type="info">
+              <template v-if="manualOpenRequired && authUrl">
+                登录页未能自动打开，请点击“打开登录页”继续认证。
+              </template>
+              <template v-else>
+                请在打开的 CodeBuddy 登录页中完成认证，完成后此处会自动更新。
+              </template>
+            </CAlert>
+            <div class="flex flex-wrap items-center gap-2">
+              <CButton :disabled="!authUrl" @click="openAuthUrl">
+                <template #icon>
+                  <ExternalLink :size="16" />
+                </template>
+                打开登录页
+              </CButton>
+              <CButton :disabled="!authUrl" @click="copy(authUrl, '认证链接已复制')">
                 <template #icon>
                   <Copy :size="16" />
                 </template>
-                复制
+                复制链接
               </CButton>
-            </CInputGroup>
-            <div class="flex items-center gap-2">
-              <span class="text-xs opacity-60">若未自动打开，请手动复制链接到浏览器打开</span>
-              <CButton size="sm" @click="reopenAuthUrl">重新打开</CButton>
+              <CButton @click="cancel">取消认证</CButton>
             </div>
-          </template>
+          </div>
         </div>
       </CCard>
 
@@ -324,9 +337,6 @@ const tableRows = computed(() => rows.value as unknown as Record<string, unknown
                 type="password"
                 placeholder="Bearer Token"
               />
-            </CFormItem>
-            <CFormItem path="userId">
-              <CInput v-model="credentialForm.userId" placeholder="用户 ID" />
             </CFormItem>
             <CButton
               variant="primary"
@@ -393,3 +403,20 @@ const tableRows = computed(() => rows.value as unknown as Record<string, unknown
     </CCard>
   </div>
 </template>
+
+<style scoped>
+@media (min-width: 1024px) {
+  .credential-auth-card :deep(.c-card-body),
+  .credential-auth-card-content,
+  .credential-auth-idle {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+  }
+
+  .credential-auth-start-button {
+    align-self: flex-start;
+    margin-top: auto;
+  }
+}
+</style>

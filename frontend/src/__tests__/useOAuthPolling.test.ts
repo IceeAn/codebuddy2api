@@ -38,6 +38,8 @@ describe('useOAuthPolling', () => {
     toastMock.warning.mockReset();
     toastMock.info.mockReset();
     beforeUnmountCallbacks.length = 0;
+    vi.spyOn(window, 'open').mockReturnValue(null);
+    vi.spyOn(codebuddyOAuthApi, 'cancelAuth').mockResolvedValue({ cancelled: true });
   });
 
   afterEach(() => {
@@ -46,13 +48,13 @@ describe('useOAuthPolling', () => {
     vi.unstubAllGlobals();
   });
 
-  it('start() 成功后开始轮询，pollAuth 返回 access_token 时调用 onSuccess', async () => {
+  it('start() 成功后开始轮询，pollAuth 严格返回 saved=true 时调用 onSuccess', async () => {
     const startAuth = vi
       .spyOn(codebuddyOAuthApi, 'startAuth')
       .mockResolvedValue({ verification_uri_complete: 'https://cb/auth', auth_state: 'state-1' });
     const pollAuth = vi
       .spyOn(codebuddyOAuthApi, 'pollAuth')
-      .mockResolvedValue({ access_token: 'tok', saved: true });
+      .mockResolvedValue({ saved: true, message: '认证成功' });
     const onSuccess = vi.fn<() => void>();
 
     const oauth = useOAuthPolling({ pollIntervalMs: 5000, onSuccess });
@@ -66,6 +68,235 @@ describe('useOAuthPolling', () => {
     expect(oauth.authUrl.value).toBe('');
     expect(oauth.authState.value).toBe('');
     oauth.reset();
+  });
+
+  it('saved 不为 true 时快速失败且绝不误报成功', async () => {
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
+      verification_uri_complete: 'https://cb/auth',
+      auth_state: 'state-invalid-success',
+    });
+    vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockResolvedValue({ saved: false });
+    vi.spyOn(codebuddyOAuthApi, 'cancelAuth').mockResolvedValue({ cancelled: true });
+
+    const onSuccess = vi.fn<() => void>();
+    const oauth = useOAuthPolling({ onSuccess });
+    await oauth.start();
+
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(toastMock.success).not.toHaveBeenCalled();
+    expect(toastMock.error).toHaveBeenCalledWith('认证响应无效，请重新认证');
+    expect(oauth.authUrl.value).toBe('');
+    expect(oauth.authState.value).toBe('');
+  });
+
+  it('点击开始时同步预打开窗口，拿到认证链接后自动跳转', async () => {
+    const popup = {
+      closed: false,
+      close: vi.fn<() => void>(),
+      location: { href: 'about:blank' },
+      opener: window,
+    } as unknown as Window;
+    vi.mocked(window.open).mockReturnValue(popup);
+    let resolveStart: (value: {
+      verification_uri_complete: string;
+      auth_state: string;
+    }) => void = () => {};
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockImplementation(
+      () => new Promise((resolve) => (resolveStart = resolve)),
+    );
+    vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockRejectedValue(
+      new ApiError(400, 'pending', { error: 'authorization_pending' }),
+    );
+
+    const oauth = useOAuthPolling();
+    const startPromise = oauth.start();
+
+    expect(window.open).toHaveBeenCalledWith('about:blank', '_blank');
+    resolveStart({ verification_uri_complete: 'https://cb/auth', auth_state: 'state-popup' });
+    await startPromise;
+
+    expect(popup.location.href).toBe('https://cb/auth');
+    expect(popup.opener).toBeNull();
+    expect(oauth.manualOpenRequired.value).toBe(false);
+    oauth.reset();
+  });
+
+  it('弹窗被拦截或在响应前关闭时保留手动打开入口', async () => {
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
+      verification_uri_complete: 'https://cb/auth',
+      auth_state: 'state-blocked',
+    });
+    vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockRejectedValue(
+      new ApiError(400, 'pending', { error: 'authorization_pending' }),
+    );
+
+    const blocked = useOAuthPolling();
+    await blocked.start();
+    expect(blocked.manualOpenRequired.value).toBe(true);
+    blocked.reset();
+
+    const closedPopup = {
+      closed: true,
+      close: vi.fn<() => void>(),
+      location: { href: 'about:blank' },
+      opener: window,
+    } as unknown as Window;
+    vi.mocked(window.open).mockReturnValue(closedPopup);
+    const closed = useOAuthPolling();
+    await closed.start();
+    expect(closed.manualOpenRequired.value).toBe(true);
+    closed.reset();
+  });
+
+  it('登录窗口在轮询期间被关闭时切换为手动打开提示', async () => {
+    const popupState = {
+      closed: false,
+      close: vi.fn<() => void>(),
+      location: { href: 'about:blank' },
+      opener: window,
+    };
+    vi.mocked(window.open).mockReturnValue(popupState as unknown as Window);
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
+      verification_uri_complete: 'https://cb/auth',
+      auth_state: 'state-closed-later',
+    });
+    vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockRejectedValue(
+      new ApiError(400, 'pending', { error: 'authorization_pending' }),
+    );
+    const oauth = useOAuthPolling();
+    await oauth.start();
+
+    popupState.closed = true;
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(oauth.manualOpenRequired.value).toBe(true);
+    oauth.reset();
+  });
+
+  it('预打开窗口或窗口跳转抛错时保留手动打开入口', async () => {
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
+      verification_uri_complete: 'https://cb/auth',
+      auth_state: 'state-popup-errors',
+    });
+    vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockRejectedValue(
+      new ApiError(400, 'pending', { error: 'authorization_pending' }),
+    );
+
+    vi.mocked(window.open).mockImplementationOnce(() => {
+      throw new Error('blocked');
+    });
+    const openFailed = useOAuthPolling();
+    await openFailed.start();
+    expect(openFailed.manualOpenRequired.value).toBe(true);
+    openFailed.reset();
+
+    const close = vi.fn<() => void>();
+    const location = {} as Location;
+    Object.defineProperty(location, 'href', {
+      set: () => {
+        throw new Error('navigation denied');
+      },
+    });
+    vi.mocked(window.open).mockReturnValue({
+      closed: false,
+      close,
+      location,
+      opener: window,
+    } as unknown as Window);
+    const navigationFailed = useOAuthPolling();
+    await navigationFailed.start();
+    expect(close).toHaveBeenCalledOnce();
+    expect(navigationFailed.manualOpenRequired.value).toBe(true);
+    navigationFailed.reset();
+  });
+
+  it('可手动重新打开认证链接并记录再次被拦截', async () => {
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
+      verification_uri_complete: 'https://cb/auth',
+      auth_state: 'state-reopen',
+    });
+    vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockRejectedValue(
+      new ApiError(400, 'pending', { error: 'authorization_pending' }),
+    );
+    const oauth = useOAuthPolling();
+    await oauth.start();
+
+    vi.mocked(window.open).mockClear();
+    const reopened = {
+      closed: false,
+      close: vi.fn<() => void>(),
+      location: { href: 'about:blank' },
+      opener: window,
+    } as unknown as Window;
+    vi.mocked(window.open).mockReturnValue(reopened);
+    oauth.openAuthUrl();
+    expect(window.open).toHaveBeenCalledWith('about:blank', '_blank');
+    expect(reopened.location.href).toBe('https://cb/auth');
+    expect(oauth.manualOpenRequired.value).toBe(false);
+
+    vi.mocked(window.open).mockReturnValue(null);
+    oauth.openAuthUrl();
+    expect(oauth.manualOpenRequired.value).toBe(true);
+    oauth.reset();
+  });
+
+  it('没有认证链接时手动打开操作直接返回', () => {
+    const oauth = useOAuthPolling();
+    vi.mocked(window.open).mockClear();
+
+    oauth.openAuthUrl();
+
+    expect(window.open).not.toHaveBeenCalled();
+  });
+
+  it('取消认证先完整重置本地状态，再通知后端消费 state', async () => {
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
+      verification_uri_complete: 'https://cb/auth',
+      auth_state: 'state-cancel',
+    });
+    vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockRejectedValue(
+      new ApiError(400, 'pending', { error: 'authorization_pending' }),
+    );
+    const cancelAuth = vi
+      .spyOn(codebuddyOAuthApi, 'cancelAuth')
+      .mockResolvedValue({ cancelled: true });
+    const oauth = useOAuthPolling();
+    await oauth.start();
+
+    await oauth.cancel();
+
+    expect(cancelAuth).toHaveBeenCalledWith('state-cancel');
+    expect(oauth.polling.value).toBe(false);
+    expect(oauth.starting.value).toBe(false);
+    expect(oauth.authUrl.value).toBe('');
+    expect(oauth.authState.value).toBe('');
+    expect(oauth.elapsedSeconds.value).toBe(0);
+    expect(oauth.manualOpenRequired.value).toBe(false);
+  });
+
+  it('没有 state 时取消不发远端请求，远端取消失败时按错误类型提示', async () => {
+    const cancelAuth = vi.mocked(codebuddyOAuthApi.cancelAuth);
+    const empty = useOAuthPolling();
+    await empty.cancel();
+    expect(cancelAuth).not.toHaveBeenCalled();
+
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
+      verification_uri_complete: 'https://cb/auth',
+      auth_state: 'state-cancel-error',
+    });
+    vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockRejectedValue(
+      new ApiError(400, 'pending', { error: 'authorization_pending' }),
+    );
+    const oauth = useOAuthPolling();
+    await oauth.start();
+    cancelAuth.mockRejectedValueOnce(new Error('远端取消失败'));
+    await oauth.cancel();
+    expect(toastMock.error).toHaveBeenLastCalledWith('远端取消失败');
+
+    await oauth.start();
+    cancelAuth.mockRejectedValueOnce('bad');
+    await oauth.cancel();
+    expect(toastMock.error).toHaveBeenLastCalledWith('取消认证失败');
   });
 
   it('startAuth 缺少字段时显示错误且不开始轮询', async () => {
@@ -169,7 +400,7 @@ describe('useOAuthPolling', () => {
     await startPromise;
   });
 
-  it('pollAuth 未返回 token 时保持轮询', async () => {
+  it('pollAuth 未返回 saved=true 时停止并提示协议错误', async () => {
     vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
       verification_uri_complete: 'https://cb/auth',
       auth_state: 'state-no-token',
@@ -179,7 +410,8 @@ describe('useOAuthPolling', () => {
     const oauth = useOAuthPolling();
     await oauth.start();
 
-    expect(oauth.polling.value).toBe(true);
+    expect(oauth.polling.value).toBe(false);
+    expect(toastMock.error).toHaveBeenCalledWith('认证响应无效，请重新认证');
     oauth.reset();
   });
 
@@ -188,7 +420,7 @@ describe('useOAuthPolling', () => {
       verification_uri_complete: 'https://cb/auth',
       auth_state: 'state-late-poll',
     });
-    let resolvePoll: (value: { access_token: string; saved: boolean }) => void = () => {};
+    let resolvePoll: (value: { saved: boolean }) => void = () => {};
     vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockImplementation(
       () =>
         new Promise((resolve) => {
@@ -203,7 +435,7 @@ describe('useOAuthPolling', () => {
     expect(oauth.polling.value).toBe(true);
 
     oauth.stop();
-    resolvePoll({ access_token: 'late-token', saved: true });
+    resolvePoll({ saved: true });
     await startPromise;
 
     expect(oauth.polling.value).toBe(false);
@@ -217,7 +449,9 @@ describe('useOAuthPolling', () => {
       verification_uri_complete: 'https://cb/auth',
       auth_state: 'state-stopped',
     });
-    const pollAuth = vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockResolvedValue({});
+    const pollAuth = vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockRejectedValue(
+      new ApiError(400, 'pending', { error: 'authorization_pending' }),
+    );
 
     const oauth = useOAuthPolling({ pollIntervalMs: 5000 });
     await oauth.start();
@@ -365,15 +599,20 @@ describe('useOAuthPolling', () => {
       verification_uri_complete: 'https://cb/auth',
       auth_state: 'state-unmount',
     });
-    vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockResolvedValue({});
+    vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockRejectedValue(
+      new ApiError(400, 'pending', { error: 'authorization_pending' }),
+    );
 
     const oauth = useOAuthPolling();
     await oauth.start();
     expect(oauth.polling.value).toBe(true);
     expect(beforeUnmountCallbacks).toHaveLength(1);
 
+    vi.mocked(codebuddyOAuthApi.cancelAuth).mockRejectedValueOnce(new Error('ignore on unmount'));
     beforeUnmountCallbacks[0]();
+    await Promise.resolve();
     expect(oauth.polling.value).toBe(false);
+    expect(toastMock.error).not.toHaveBeenCalled();
   });
 
   it('防竞态：starting 中再次调用 start() 直接返回', async () => {

@@ -30,7 +30,7 @@ const credential: CredentialRecord = {
   token_type: 'Bearer',
   has_refresh_token: false,
   has_token: true,
-  token_preview: 'token...view',
+  token_display: 'token...view',
 };
 
 function mountActions(

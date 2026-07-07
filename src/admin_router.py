@@ -4,7 +4,7 @@ import time
 from typing import Annotated, Any, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, ConfigDict, StringConstraints
 
 import config
 from .api_key_store import api_key_store
@@ -69,11 +69,12 @@ class AdminSettingsUpdate(BaseModel):
 
 
 class CredentialCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     bearer_token: Annotated[
         str,
         StringConstraints(strip_whitespace=True, min_length=1, pattern=r"\S"),
     ]
-    user_id: Optional[str] = None
 
 
 class CredentialTestRequest(BaseModel):
@@ -98,10 +99,10 @@ def _time_remaining_text(seconds: Optional[int]) -> str:
 
 def _safe_credential(info: Dict[str, Any], credential: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     bearer_token = (credential or {}).get("bearer_token", "")
-    token_preview = (
-        f"{bearer_token[:10]}...{bearer_token[-4:]}"
+    token_display = (
+        f"{bearer_token[:6]}...{bearer_token[-8:]}"
         if len(bearer_token) > 14
-        else ""
+        else "********" if bearer_token else ""
     )
     safe_info = {
         key: value
@@ -110,7 +111,7 @@ def _safe_credential(info: Dict[str, Any], credential: Optional[Dict[str, Any]])
     }
     safe_info["time_remaining_str"] = _time_remaining_text(info.get("time_remaining"))
     safe_info["has_token"] = bool(bearer_token)
-    safe_info["token_preview"] = token_preview
+    safe_info["token_display"] = token_display
     return safe_info
 
 
@@ -220,7 +221,7 @@ async def create_admin_credential(
 
     token_manager = get_token_manager_for_user(_user)
     before_ids = {item["credential_id"] for item in token_manager.get_credentials_info()}
-    if not token_manager.add_credential(bearer_token, request_body.user_id):
+    if not token_manager.add_credential(bearer_token):
         raise HTTPException(status_code=500, detail="Failed to save credential file")
 
     for credential in _safe_credentials(token_manager):
@@ -307,6 +308,7 @@ async def test_admin_credential(
         bearer_token=credential.get("bearer_token"),
         user_id=credential.get("user_id"),
         domain=credential.get("domain"),
+        enterprise_id=credential.get("enterprise_id"),
     )
 
     try:

@@ -159,6 +159,7 @@ class ModelsManager:
             bearer_token=bearer_token,
             user_id=credential.get("user_id"),
             domain=credential.get("domain"),
+            enterprise_id=credential.get("enterprise_id"),
         )
         self._apply_config_api_headers(headers)
 

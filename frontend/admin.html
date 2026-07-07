@@ -1405,9 +1405,14 @@
                     <p style="margin-bottom: 1rem; color: var(--secondary-color);">
                         点击下方按钮自动启动CodeBuddy OAuth2认证流程，系统将自动获取并保存您的认证凭证。
                     </p>
-                    <button class="btn btn-primary" id="getAuthBtn" onclick="startAuth()">
-                        <i class="fas fa-play"></i> 开始认证
-                    </button>
+                    <div class="auth-buttons" style="justify-content: flex-start;">
+                        <button class="btn btn-primary" id="getAuthBtn" onclick="startAuth()">
+                            <i class="fas fa-play"></i> 开始认证
+                        </button>
+                        <button class="btn btn-secondary hidden" id="cancelAuthBtn" onclick="cancelAuth()">
+                            <i class="fas fa-times"></i> 取消认证
+                        </button>
+                    </div>
                     
                     <!-- 认证URL显示区域 -->
                     <div id="authUrlSection" class="auth-url-section hidden">
@@ -1453,14 +1458,6 @@
                             class="form-input form-textarea"
                             placeholder="输入您的 CodeBuddy Bearer Token..."
                             rows="3"></textarea>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label" for="userId">用户ID (可选)</label>
-                        <input
-                            type="text"
-                            id="userId"
-                            class="form-input"
-                            placeholder="输入用户ID (可选)">
                     </div>
                     <button class="btn btn-success" onclick="addCredential()">
                         <i class="fas fa-plus"></i> 添加凭证
@@ -1638,6 +1635,8 @@
         let serviceUsername = '';
         let currentAuthData = null;
         let authPollingInterval = null;
+        let authPollingAttempts = 0;
+        let authFlowGeneration = 0;
         let isAuthenticated = false;
         let credentialsCache = []; // 用于缓存凭证和其状态
         let apiKeysCache = [];
@@ -2629,7 +2628,7 @@
             credentialsList.innerHTML = '<div class="credential-list">' +
                     credentialsCache.map((cred, index) => {
                         const safeUserId = escapeHtml(cred.user_id);
-                        const safeTokenPreview = escapeHtml(cred.token_preview);
+                        const safeTokenDisplay = escapeHtml(cred.token_display);
                         const safeTimeRemaining = escapeHtml(cred.time_remaining_str || 'null');
                     switch(cred.status) {
                         case 'valid':
@@ -2649,7 +2648,7 @@
                                 <div class="credential-id">凭证 #${index + 1}</div>
                                 <div class="credential-details">
                                     ${cred.user_id ? `用户ID: ${safeUserId}<br>` : ''}
-                                    ${cred.token_preview ? `Token: ${safeTokenPreview}<br>` : ''}
+                                    ${cred.token_display ? `Token: ${safeTokenDisplay}<br>` : ''}
                                     ${cred.created_at ? `创建时间: ${new Date(cred.created_at * 1000).toLocaleString()}<br>` : ''}
                                     过期时间: ${cred.expires_at != null ? new Date(cred.expires_at * 1000).toLocaleString() : 'null'}<br>
                                     剩余: ${safeTimeRemaining}
@@ -2692,7 +2691,6 @@
 
         async function addCredential() {
             const bearerToken = document.getElementById('bearerToken').value.trim();
-            const userId = document.getElementById('userId').value.trim();
 
             if (!bearerToken) {
                 showNotification('请输入 Bearer Token', 'error');
@@ -2704,8 +2702,7 @@
                     method: 'POST',
                     headers: getAuthHeaders(),
                     body: JSON.stringify({
-                        bearer_token: bearerToken,
-                        user_id: userId || undefined
+                        bearer_token: bearerToken
                     })
                 });
 
@@ -2713,7 +2710,6 @@
                     const data = await response.json();
                     showNotification('凭证添加成功！', 'success');
                     document.getElementById('bearerToken').value = '';
-                    document.getElementById('userId').value = '';
                     loadCredentials();
                     loadModelOptions(true);
                 } else {
@@ -2989,19 +2985,13 @@
 
         // OAuth2认证相关功能
         async function startAuth() {
+            await cancelAuth(false);
+            const flowGeneration = ++authFlowGeneration;
             const btn = document.getElementById('getAuthBtn');
             btn.disabled = true;
             btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 正在获取认证链接...';
-            // 确保清理旧的轮询和状态，并显示链接区域
-            try { stopPolling(); } catch (e) {}
-            currentAuthData = null;
-            const authUrlSection = document.getElementById('authUrlSection');
-            const authUrlInput = document.getElementById('authUrlInput');
-            if (authUrlInput) authUrlInput.value = '';
-            if (authUrlSection) {
-                authUrlSection.classList.remove('hidden');
-                authUrlSection.style.display = 'block';
-            }
+            showAuthCancelButton();
+            hideAuthSection();
             
             try {
                 const response = await fetch('/codebuddy/auth/start', {
@@ -3009,13 +2999,20 @@
                     headers: getAuthHeaders()
                 });
                 const data = await response.json();
+                if (!isCurrentAuthFlow(flowGeneration)) {
+                    if (data.auth_state && currentAuthData?.auth_state !== data.auth_state) {
+                        await cancelAuthState(data.auth_state, false);
+                    }
+                    return;
+                }
                 
                 // 修正：检查正确的响应字段 `verification_uri_complete`
-                if (response.ok && data.verification_uri_complete) {
+                if (response.ok && data.verification_uri_complete && data.auth_state) {
                     // 保存所有必要信息以供轮询使用
                     currentAuthData = {
                         auth_state: data.auth_state
                     };
+                    authPollingAttempts = 0;
 
                     // 修正：使用正确的字段来设置输入框的值，并显示该区域
                     document.getElementById('authUrlInput').value = safeExternalUrl(data.verification_uri_complete);
@@ -3026,13 +3023,14 @@
                     showNotification('✅ 认证链接已生成，请点击链接完成登录', 'success');
                     
                     // 立即开始轮询
-                    pollForToken();
+                    pollForToken(flowGeneration);
                 } else {
                     let errorMessage = data.message || '获取认证链接失败';
                     showNotification(`❌ ${errorMessage}`, 'error');
                     resetAuthButton();
                 }
             } catch (error) {
+                if (!isCurrentAuthFlow(flowGeneration)) return;
                 showNotification(`❌ 网络错误: ${error.message}`, 'error');
                 resetAuthButton();
             }
@@ -3042,6 +3040,27 @@
             const btn = document.getElementById('getAuthBtn');
             btn.disabled = false;
             btn.innerHTML = '<i class="fas fa-play"></i> 开始认证';
+            hideAuthCancelButton();
+        }
+
+        function showAuthCancelButton() {
+            const btn = document.getElementById('cancelAuthBtn');
+            if (btn) btn.classList.remove('hidden');
+        }
+
+        function hideAuthCancelButton() {
+            const btn = document.getElementById('cancelAuthBtn');
+            if (btn) btn.classList.add('hidden');
+        }
+
+        function hideAuthSection() {
+            const authUrlInput = document.getElementById('authUrlInput');
+            if (authUrlInput) authUrlInput.value = '';
+            const section = document.getElementById('authUrlSection');
+            if (section) {
+                section.classList.add('hidden');
+                section.style.display = 'none';
+            }
         }
 
         function copyAuthUrl() {
@@ -3062,37 +3081,80 @@
             showNotification('已在新窗口打开认证页面，请完成登录', 'info');
         }
 
-        function waitForAutoCallback() {
-            document.getElementById('autoCallbackSection').style.display = 'block';
-            if (currentAuthData) {
-                pollForToken();
+        async function cancelAuth(showMessage = true) {
+            authFlowGeneration += 1;
+            const authState = currentAuthData?.auth_state;
+            stopPolling();
+            currentAuthData = null;
+            authPollingAttempts = 0;
+            hideAuthSection();
+            resetAuthButton();
+
+            await cancelAuthState(authState, showMessage);
+        }
+
+        async function cancelAuthState(authState, showMessage = true) {
+            if (!authState) return;
+            try {
+                const response = await fetch('/codebuddy/auth/cancel', {
+                    method: 'POST',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({ auth_state: authState })
+                });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                if (showMessage) showNotification('认证已取消', 'info');
+            } catch (error) {
+                if (showMessage) showNotification(`取消认证失败: ${error.message}`, 'error');
             }
         }
 
-        function pollForToken() {
-            if (!currentAuthData) return;
+        function isCurrentAuthFlow(flowGeneration, authState = null) {
+            if (flowGeneration !== authFlowGeneration) return false;
+            if (authState !== null && currentAuthData?.auth_state !== authState) return false;
+            return true;
+        }
+
+        function waitForAutoCallback() {
+            document.getElementById('autoCallbackSection').style.display = 'block';
+            if (currentAuthData) {
+                pollForToken(authFlowGeneration);
+            }
+        }
+
+        function pollForToken(flowGeneration = authFlowGeneration) {
+            if (!currentAuthData || !isCurrentAuthFlow(flowGeneration)) return;
+            const authState = currentAuthData.auth_state;
             
             stopPolling(); // 清除之前的轮询
             
             const poll = async () => {
+                if (!isCurrentAuthFlow(flowGeneration, authState)) return;
+                authPollingAttempts += 1;
+                if (authPollingAttempts > 60) {
+                    await cancelAuth(false);
+                    showNotification('认证等待超时，请重新开始认证', 'warning');
+                    return;
+                }
                 try {
                     const response = await fetch('/codebuddy/auth/poll', {
                         method: 'POST',
                         headers: getAuthHeaders(),
                         body: JSON.stringify({
-                            auth_state: currentAuthData.auth_state // 修正：发送auth_state
+                            auth_state: authState // 修正：发送auth_state
                         })
                     });
 
                     const data = await response.json();
+                    if (!isCurrentAuthFlow(flowGeneration, authState)) return;
 
-                    if (response.ok && data.access_token) {
+                    if (response.ok && data.saved === true) {
                         // 认证成功
                         stopPolling();
+                        authFlowGeneration += 1;
                         showNotification('🎉 认证成功！Token已自动保存', 'success');
                         
                         // 隐藏认证区域
-                        document.getElementById('authUrlSection').style.display = 'none';
+                        hideAuthSection();
                         resetAuthButton();
                         
                         // 刷新凭证列表
@@ -3109,22 +3171,20 @@
                         console.log('减慢轮询频率');
                     } else if (data.error === 'expired_token') {
                         // Token过期，停止轮询
-                        stopPolling();
+                        await cancelAuth(false);
                         showNotification('认证链接已过期，请重新开始认证', 'warning');
-                        resetAuthButton();
-                        document.getElementById('authUrlSection').style.display = 'none';
                     } else if (data.error === 'access_denied') {
                         // 用户拒绝授权
-                        stopPolling();
+                        await cancelAuth(false);
                         showNotification('用户拒绝了授权请求', 'warning');
-                        resetAuthButton();
-                        document.getElementById('authUrlSection').style.display = 'none';
                     } else {
-                        // 其他错误
-                        console.error('轮询错误:', data);
+                        await cancelAuth(false);
+                        showNotification(`认证失败: ${data.error_description || data.detail || '未知错误'}`, 'error');
                     }
                 } catch (error) {
-                    console.error('轮询网络错误:', error);
+                    if (!isCurrentAuthFlow(flowGeneration, authState)) return;
+                    await cancelAuth(false);
+                    showNotification(`认证失败: ${error.message}`, 'error');
                 }
             };
 

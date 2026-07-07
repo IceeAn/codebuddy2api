@@ -278,6 +278,9 @@ class CodeBuddyHeaderTests(ConfigIsolationMixin, unittest.TestCase):
         self.assertEqual(headers["X-Agent-Purpose"], "conversation")
         self.assertEqual(headers["X-Private-Data"], "false")
         self.assertEqual(headers["X-CodeBuddy-Request"], "1")
+        self.assertEqual(headers["X-User-Id"], "user-id")
+        self.assertNotIn("X-Enterprise-Id", headers)
+        self.assertNotIn("X-Tenant-Id", headers)
 
     def test_codebuddy_headers_use_credential_domain_when_available(self):
         headers = codebuddy_api_client.generate_codebuddy_headers(
@@ -302,6 +305,7 @@ class CodeBuddyHeaderTests(ConfigIsolationMixin, unittest.TestCase):
         headers = codebuddy_api_client.generate_codebuddy_headers(
             "token-value",
             "user-id",
+            enterprise_id="enterprise-1",
             conversation_id="conv",
             conversation_request_id="req",
             conversation_message_id="msg",
@@ -312,6 +316,8 @@ class CodeBuddyHeaderTests(ConfigIsolationMixin, unittest.TestCase):
         self.assertEqual(headers["X-Conversation-Request-ID"], "req")
         self.assertEqual(headers["X-Conversation-Message-ID"], "msg")
         self.assertEqual(headers["X-Request-ID"], "request")
+        self.assertEqual(headers["X-Enterprise-Id"], "enterprise-1")
+        self.assertEqual(headers["X-Tenant-Id"], "enterprise-1")
 
     def test_codebuddy_auth_endpoint_follows_configured_china_endpoint(self):
         self.assertEqual(

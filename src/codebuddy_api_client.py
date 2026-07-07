@@ -54,8 +54,9 @@ class CodeBuddyAPIClient:
     def generate_codebuddy_headers(
             self,
             bearer_token: str,
-            user_id: str = None,
+            user_id: Optional[str] = None,
             domain: str = None,
+            enterprise_id: Optional[str] = None,
             conversation_id: Optional[str] = None,
             conversation_request_id: Optional[str] = None,
             conversation_message_id: Optional[str] = None,
@@ -66,6 +67,9 @@ class CodeBuddyAPIClient:
         优先使用传入的会话ID，如果未提供则随机生成。
         """
         from config import get_codebuddy_api_host
+        if not user_id:
+            raise ValueError("CodeBuddy 凭证缺少 user_id")
+
         codebuddy_host = get_codebuddy_api_host()
         codebuddy_domain = _safe_domain_header(domain, codebuddy_host)
         headers = {
@@ -95,8 +99,11 @@ class CodeBuddyAPIClient:
             'X-Private-Data': 'false',
             'X-CodeBuddy-Request': '1',
             'X-Product': 'SaaS',
-            'X-User-Id': user_id or 'b5be3a67-237e-4ee6-9b9a-0b9ecd7b454b'
+            'X-User-Id': user_id
         }
+        if enterprise_id:
+            headers["X-Enterprise-Id"] = enterprise_id
+            headers["X-Tenant-Id"] = enterprise_id
         return headers
 
 

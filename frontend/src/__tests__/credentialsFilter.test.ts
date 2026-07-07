@@ -16,7 +16,7 @@ function makeCredential(id: string, isExpired: boolean): CredentialRecord {
     token_type: '',
     has_refresh_token: false,
     has_token: true,
-    token_preview: '',
+    token_display: '',
   } as CredentialRecord;
 }
 

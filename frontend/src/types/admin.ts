@@ -12,6 +12,7 @@ export interface CurrentCredential {
   credential_id?: string;
   filename?: string;
   user_id?: string;
+  enterprise_id?: string;
   usage_count?: number;
   rotation_count?: number;
   auto_rotation_enabled?: boolean;
@@ -59,9 +60,10 @@ export interface CredentialRecord {
   token_type: string;
   scope?: string;
   domain?: string;
+  enterprise_id?: string;
   has_refresh_token: boolean;
   has_token: boolean;
-  token_preview: string;
+  token_display: string;
 }
 
 export interface CredentialsResponse {

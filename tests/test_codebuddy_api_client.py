@@ -53,7 +53,7 @@ class CodeBuddyAPIClientTests(unittest.TestCase):
             mock.patch("src.codebuddy_api_client.secrets.token_hex", return_value="hex-value"),
         ):
             client = CodeBuddyAPIClient()
-            headers = client.generate_codebuddy_headers("token")
+            headers = client.generate_codebuddy_headers("token", user_id="user-id")
 
         self.assertEqual(client.base_url, "https://api.example")
         self.assertEqual(client.api_endpoint, "https://api.example")
@@ -61,7 +61,22 @@ class CodeBuddyAPIClientTests(unittest.TestCase):
         self.assertEqual(headers["X-Conversation-Request-ID"], "hex-value")
         self.assertEqual(headers["X-Conversation-Message-ID"], "uuidvalue")
         self.assertEqual(headers["X-Request-ID"], "uuidvalue")
-        self.assertEqual(headers["X-User-Id"], "b5be3a67-237e-4ee6-9b9a-0b9ecd7b454b")
+        self.assertEqual(headers["X-User-Id"], "user-id")
+
+    def test_client_rejects_missing_user_id_and_adds_enterprise_headers(self):
+        client = CodeBuddyAPIClient()
+
+        with self.assertRaises(ValueError):
+            client.generate_codebuddy_headers("token")
+
+        headers = client.generate_codebuddy_headers(
+            "token",
+            user_id="user-id",
+            enterprise_id="enterprise-1",
+        )
+
+        self.assertEqual(headers["X-Enterprise-Id"], "enterprise-1")
+        self.assertEqual(headers["X-Tenant-Id"], "enterprise-1")
 
 
 if __name__ == "__main__":

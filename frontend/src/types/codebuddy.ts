@@ -29,21 +29,10 @@ export interface ChatCompletionRequest {
   [key: string]: unknown;
 }
 
-/**
- * CodeBuddy OAuth 授权轮询返回的完整字段。
- *
- * token 保存成功后 `saved` 标识是否已落盘；`access_token` 仅用于本地调试和测试观察。
- */
+/** CodeBuddy OAuth 授权成功后仅确认凭证已安全落盘。 */
 export interface CodeBuddyPollAuthResponse {
-  access_token?: string;
-  token_type?: string;
-  expires_in?: number;
-  refresh_token?: string;
-  scope?: string;
   saved?: boolean;
   message?: string;
-  user_info?: unknown;
-  domain?: string;
 }
 
 export interface DeleteCredentialResponse {

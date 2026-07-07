@@ -184,6 +184,7 @@ async def root():
             "chat": "/openai/v1/chat/completions",
             "auth_start": "/codebuddy/auth/start",
             "auth_poll": "/codebuddy/auth/poll",
+            "auth_cancel": "/codebuddy/auth/cancel",
             "auth_callback": "/codebuddy/auth/callback",
             "admin": "/api/admin"
         }

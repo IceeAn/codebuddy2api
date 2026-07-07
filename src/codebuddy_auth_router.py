@@ -44,7 +44,7 @@ async def start_device_auth(_user: AuthenticatedUser = Depends(require_session_u
                     "error": "duplicate_auth_state",
                     "message": "认证服务返回了重复的 auth_state，请稍后重试",
                 }
-            logger.info("真实CodeBuddy认证API启动成功!")
+            logger.info("CodeBuddy认证API启动成功!")
             return real_auth_result
 
         logger.warning(f"真实认证API失败: {real_auth_result}")
@@ -82,7 +82,7 @@ async def poll_for_token(
     if not validate_auth_state_owner(auth_state, _user):
         raise HTTPException(status_code=403, detail="Invalid or expired auth_state")
 
-    logger.info(f"轮询真实CodeBuddy认证状态: {auth_state}")
+    logger.info(f"轮询CodeBuddy认证状态: {auth_state}")
     poll_result = await poll_codebuddy_auth_status(auth_state)
 
     if poll_result.get("status") == "success":
@@ -93,18 +93,10 @@ async def poll_for_token(
                 if not consume_auth_state(auth_state, _user):
                     raise HTTPException(status_code=409, detail="Invalid or already consumed auth_state")
                 token_saved = await save_codebuddy_token(token_data, _user)
+                if not token_saved:
+                    raise HTTPException(status_code=500, detail="凭证保存失败，请重新认证")
                 return JSONResponse(
-                    content={
-                        "access_token": bearer_token,
-                        "token_type": token_data.get("token_type", "Bearer"),
-                        "expires_in": token_data.get("expires_in"),
-                        "refresh_token": token_data.get("refresh_token"),
-                        "scope": token_data.get("scope"),
-                        "saved": token_saved,
-                        "message": "认证成功！🎉",
-                        "user_info": token_data,
-                        "domain": token_data.get("domain"),
-                    },
+                    content={"saved": True, "message": "认证成功"},
                     status_code=200,
                 )
 
@@ -134,6 +126,19 @@ async def poll_for_token(
         },
         status_code=400,
     )
+
+
+@router.post("/auth/cancel", summary="Cancel CodeBuddy Authentication")
+async def cancel_auth(
+        auth_state: Optional[str] = Body(None, embed=True),
+        _user: AuthenticatedUser = Depends(require_session_user),
+):
+    """取消当前用户尚未完成的认证，并立即使 state 失效。"""
+    if not auth_state:
+        raise HTTPException(status_code=400, detail="Missing auth_state")
+    if not consume_auth_state(auth_state, _user):
+        raise HTTPException(status_code=403, detail="Invalid or expired auth_state")
+    return {"cancelled": True}
 
 
 @router.get(

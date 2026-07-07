@@ -92,6 +92,7 @@ class ModelsManagerTests(ConfigIsolationMixin, unittest.IsolatedAsyncioTestCase)
                     "bearer_token": "token-value",
                     "user_id": "user-id",
                     "domain": "copilot.tencent.com",
+                    "enterprise_id": "enterprise-1",
                 }),
         ):
             models = await manager.get_available_models(self._user())
@@ -102,6 +103,8 @@ class ModelsManagerTests(ConfigIsolationMixin, unittest.IsolatedAsyncioTestCase)
         self.assertEqual(request_headers["X-IDE-Name"], "CodeBuddyIDE")
         self.assertEqual(request_headers["Host"], "copilot.tencent.com")
         self.assertEqual(request_headers["X-Domain"], "copilot.tencent.com")
+        self.assertEqual(request_headers["X-Enterprise-Id"], "enterprise-1")
+        self.assertEqual(request_headers["X-Tenant-Id"], "enterprise-1")
 
     async def test_configured_models_are_user_scoped(self):
         config.update_settings({"CODEBUDDY_MODELS": "admin-model"}, username="admin")
@@ -110,7 +113,7 @@ class ModelsManagerTests(ConfigIsolationMixin, unittest.IsolatedAsyncioTestCase)
 
         with mock.patch(
                 "src.models_manager.get_token_manager_for_user",
-                return_value=FakeTokenManager({"bearer_token": "token-value"}),
+                return_value=FakeTokenManager({"bearer_token": "token-value", "user_id": "user-id"}),
         ):
             admin_models = await manager.get_available_models(self._user("admin"))
             alice_models = await manager.get_available_models(self._user("alice"))
@@ -133,7 +136,7 @@ class ModelsManagerTests(ConfigIsolationMixin, unittest.IsolatedAsyncioTestCase)
 
         with mock.patch(
                 "src.models_manager.get_token_manager_for_user",
-                return_value=FakeTokenManager({"bearer_token": "token-value"}),
+                return_value=FakeTokenManager({"bearer_token": "token-value", "user_id": "user-id"}),
         ):
             first = await manager.get_available_models(self._user())
             now += 599
@@ -156,8 +159,8 @@ class ModelsManagerTests(ConfigIsolationMixin, unittest.IsolatedAsyncioTestCase)
         manager._models_cache["admin:expired-credential"] = ["expired-model"]
         manager._models_cache_expires_at["admin:expired-credential"] = 1600.0
 
-        expired_credential = {"bearer_token": "expired-token"}
-        valid_credential = {"bearer_token": "valid-token"}
+        expired_credential = {"bearer_token": "expired-token", "user_id": "expired-user"}
+        valid_credential = {"bearer_token": "valid-token", "user_id": "valid-user"}
         token_manager = mock.Mock()
         token_manager.get_current_credential_info.side_effect = [
             {"credential_id": "expired-credential"},
@@ -193,7 +196,7 @@ class ModelsManagerTests(ConfigIsolationMixin, unittest.IsolatedAsyncioTestCase)
 
         with mock.patch(
                 "src.models_manager.get_token_manager_for_user",
-                return_value=FakeTokenManager({"bearer_token": "token-value"}),
+                return_value=FakeTokenManager({"bearer_token": "token-value", "user_id": "user-id"}),
         ):
             await manager.get_available_models(self._user())
             now += 600
@@ -268,7 +271,7 @@ class ModelsManagerTests(ConfigIsolationMixin, unittest.IsolatedAsyncioTestCase)
 
         with mock.patch(
                 "src.models_manager.get_token_manager_for_user",
-                return_value=FakeTokenManager({"bearer_token": "token-value"}),
+                return_value=FakeTokenManager({"bearer_token": "token-value", "user_id": "user-id"}),
         ):
             model = await manager.get_first_actual_model(self._user())
 
@@ -281,7 +284,7 @@ class ModelsManagerTests(ConfigIsolationMixin, unittest.IsolatedAsyncioTestCase)
 
         with mock.patch(
                 "src.models_manager.get_token_manager_for_user",
-                return_value=FakeTokenManager({"bearer_token": "token-value"}),
+                return_value=FakeTokenManager({"bearer_token": "token-value", "user_id": "user-id"}),
         ):
             models = await manager.get_available_models(self._user())
 
@@ -293,7 +296,7 @@ class ModelsManagerTests(ConfigIsolationMixin, unittest.IsolatedAsyncioTestCase)
 
         with mock.patch(
                 "src.models_manager.get_token_manager_for_user",
-                return_value=FakeTokenManager({"bearer_token": "token-value"}),
+                return_value=FakeTokenManager({"bearer_token": "token-value", "user_id": "user-id"}),
         ):
             models = await manager.get_available_models(self._user())
 
@@ -362,7 +365,10 @@ class ModelsManagerTests(ConfigIsolationMixin, unittest.IsolatedAsyncioTestCase)
             with self.subTest(expected=expected):
                 manager = self._make_manager(FakeConfigClient(response=response))
                 with self.assertRaisesRegex(RuntimeError, expected):
-                    await manager._fetch_models_from_codebuddy_credential({"bearer_token": "token"})
+                    await manager._fetch_models_from_codebuddy_credential({
+                        "bearer_token": "token",
+                        "user_id": "user-id",
+                    })
 
     def test_extract_model_ids_rejects_invalid_response_shapes(self):
         invalid_bodies = [

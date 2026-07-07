@@ -65,6 +65,7 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
             "bearer_token": "token",
             "user_id": "upstream-user",
             "domain": "codebuddy.example",
+            "enterprise_id": "enterprise-1",
         }
 
     async def test_get_available_models_delegates_with_user(self):
@@ -120,6 +121,7 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
             bearer_token="token",
             user_id="upstream-user",
             domain="codebuddy.example",
+            enterprise_id="enterprise-1",
             conversation_id="conversation",
             conversation_request_id="conversation-request",
             conversation_message_id="message",

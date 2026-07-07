@@ -45,8 +45,11 @@ const {
       starting: refValue(false),
       polling: refValue(false),
       elapsedSeconds: refValue(0),
+      manualOpenRequired: refValue(false),
       start: vi.fn<() => Promise<void>>(),
       stop: vi.fn<() => void>(),
+      cancel: vi.fn<() => Promise<void>>(),
+      openAuthUrl: vi.fn<() => void>(),
     },
     validateMock: vi.fn<() => Promise<void>>(),
     restoreValidationMock: vi.fn<() => void>(),
@@ -128,7 +131,7 @@ function mountView() {
         CForm: FormStub,
         CFormItem: {
           props: ['label', 'path', 'required'],
-          template: '<div class="c-form-item"><slot /></div>',
+          template: '<div class="c-form-item"><label v-if="label">{{ label }}</label><slot /></div>',
         },
         CTag: {
           props: ['type', 'dot'],
@@ -164,8 +167,11 @@ describe('CredentialsView', () => {
     oauth.starting.value = false;
     oauth.polling.value = false;
     oauth.elapsedSeconds.value = 0;
+    oauth.manualOpenRequired.value = false;
     oauth.start.mockReset();
     oauth.stop.mockReset();
+    oauth.cancel.mockReset();
+    oauth.openAuthUrl.mockReset();
     validateMock.mockReset();
     restoreValidationMock.mockReset();
     validateMock.mockResolvedValue(undefined);
@@ -187,7 +193,6 @@ describe('CredentialsView', () => {
 
     expect(state.rows.map((item: any) => item.credential_id)).toEqual(['valid', 'expired']);
     expect(state.currentId).toBe('valid');
-    expect(state.currentStatus).toBe('auto_rotation');
     expect(state.loadError).toEqual(new Error('load failed'));
     expect(state.errorMessage).toBe('load failed');
     expect(state.formatElapsed(65)).toBe('01:05');
@@ -279,7 +284,6 @@ describe('CredentialsView', () => {
 
     expect(state.rows).toEqual([]);
     expect(state.currentId).toBe('');
-    expect(state.currentStatus).toBe('no_credentials');
     expect(state.errorMessage).toBe('未知错误');
   });
 
@@ -324,6 +328,41 @@ describe('CredentialsView', () => {
     expect(fields.classes()).not.toContain('gap-4');
   });
 
+  it('认证卡片初始态仅显示说明与开始按钮，且手动添加不再要求用户 ID', () => {
+    credentialsQuery.data.value = {
+      credentials: [],
+      current: { status: 'auto_rotation', auto_rotation_enabled: true },
+    };
+    const wrapper = mountView();
+    const text = wrapper.text();
+
+    expect(text).toContain('CodeBuddy 登录认证');
+    expect(text).toContain('开始认证');
+    expect(wrapper.find('.credential-auth-card').exists()).toBe(true);
+    expect(wrapper.find('.credential-auth-card-content').classes()).toEqual(
+      expect.arrayContaining(['flex', 'flex-col', 'gap-3']),
+    );
+    expect(wrapper.find('.credential-auth-card-content').classes()).not.toContain('lg:flex-1');
+    expect(wrapper.find('.credential-auth-idle').classes()).toEqual(
+      expect.arrayContaining(['flex', 'flex-col', 'gap-3']),
+    );
+    expect(wrapper.find('.credential-auth-idle').classes()).not.toContain('lg:flex-1');
+    const startButton = wrapper
+      .findAll('button')
+      .find((node) => node.text().includes('开始认证'));
+    expect(startButton?.classes()).toContain('credential-auth-start-button');
+    expect(startButton?.classes()).not.toContain('mt-auto');
+    expect(startButton?.classes()).not.toContain('lg:mt-auto');
+    expect(startButton?.classes()).not.toContain('self-start');
+    expect(text).not.toContain('用户 ID（可选）');
+    expect(text).not.toContain('不填写时将从 Token 自动识别。');
+    expect(text).not.toContain('auto_rotation');
+    expect(text).not.toContain('等待授权');
+    expect(text).not.toContain('打开登录页');
+    expect(text).not.toContain('复制链接');
+    expect(text).not.toContain('取消认证');
+  });
+
   it('手动添加校验 token 并触发创建', async () => {
     const wrapper = mountView();
     const state = (wrapper.vm.$ as any).setupState;
@@ -340,27 +379,59 @@ describe('CredentialsView', () => {
     expect(mutationStates[0].mutate).toHaveBeenCalledOnce();
   });
 
-  it('重新打开授权链接只在链接存在时执行', () => {
+  it('认证卡片等待态不展示完整 URL，并提供打开、复制和取消操作', async () => {
+    oauth.polling.value = true;
+    oauth.elapsedSeconds.value = 65;
+    oauth.authUrl.value = 'https://auth.example/private-state';
     const wrapper = mountView();
-    const state = (wrapper.vm.$ as any).setupState;
+    const text = wrapper.text();
 
-    state.reopenAuthUrl();
-    expect(window.open).not.toHaveBeenCalled();
+    expect(text).toContain('等待登录认证');
+    expect(text).toContain('已等待 01:05');
+    expect(text).toContain('打开登录页');
+    expect(text).toContain('复制链接');
+    expect(text).toContain('取消认证');
+    expect(text).not.toContain('https://auth.example/private-state');
 
+    const buttons = wrapper.findAll('button');
+    await buttons.find((button) => button.text().includes('打开登录页'))?.trigger('click');
+    await buttons.find((button) => button.text().includes('复制链接'))?.trigger('click');
+    await buttons.find((button) => button.text().includes('取消认证'))?.trigger('click');
+
+    expect(oauth.openAuthUrl).toHaveBeenCalledOnce();
+    expect(copyMock).toHaveBeenCalledWith(
+      'https://auth.example/private-state',
+      '认证链接已复制',
+    );
+    expect(oauth.cancel).toHaveBeenCalledOnce();
+  });
+
+  it('弹窗被拦截时显示手动打开提示，取消后等待元素全部消失', async () => {
+    oauth.polling.value = true;
     oauth.authUrl.value = 'https://auth';
-    state.reopenAuthUrl();
-    expect(window.open).toHaveBeenCalledWith('https://auth', '_blank', 'noopener,noreferrer');
+    oauth.manualOpenRequired.value = true;
+    const wrapper = mountView();
+
+    expect(wrapper.text()).toContain('登录页未能自动打开');
+
+    wrapper.unmount();
+    oauth.polling.value = false;
+    oauth.authUrl.value = '';
+    oauth.manualOpenRequired.value = false;
+    const resetWrapper = mountView();
+    expect(resetWrapper.text()).not.toContain('等待登录认证');
+    expect(resetWrapper.text()).not.toContain('打开登录页');
+    expect(resetWrapper.text()).not.toContain('复制链接');
+    expect(resetWrapper.text()).not.toContain('取消认证');
   });
 
   it('各 mutation 成功路径更新状态并刷新查询', async () => {
     const wrapper = mountView();
     const state = (wrapper.vm.$ as any).setupState;
     state.credentialForm.bearerToken = 'token';
-    state.credentialForm.userId = 'user';
 
     await mutationOptions[0].onSuccess();
     expect(state.credentialForm.bearerToken).toBe('');
-    expect(state.credentialForm.userId).toBe('');
     expect(restoreValidationMock).toHaveBeenCalled();
     expect(toastMock.success).toHaveBeenCalledWith('凭证已添加');
 
@@ -409,12 +480,11 @@ describe('CredentialsView', () => {
     const wrapper = mountView();
     const state = (wrapper.vm.$ as any).setupState;
     state.credentialForm.bearerToken = 'token';
-    state.credentialForm.userId = 'user';
 
     await mutationOptions[0].mutationFn();
     await mutationOptions[3].mutationFn('cred');
     await mutationOptions[2].mutationFn('gone');
-    expect(createSpy).toHaveBeenCalledWith('token', 'user');
+    expect(createSpy).toHaveBeenCalledWith('token');
     expect(testSpy).toHaveBeenCalledWith('cred');
     expect(deleteSpy).toHaveBeenCalledWith('gone');
   });
@@ -497,31 +567,30 @@ describe('CredentialsView', () => {
     oauth.authUrl.value = 'https://auth';
     const wrapper = mountView();
 
-    expect(wrapper.text()).toContain('等待授权');
+    expect(wrapper.text()).toContain('等待登录认证');
     expect(wrapper.text()).toContain('00:05');
     expect(wrapper.text()).toContain('凭证加载失败');
 
     const state = (wrapper.vm.$ as any).setupState;
     state.start();
-    state.stop();
     const buttons = wrapper.findAll('button');
-    await buttons.find((button) => button.text().trim() === '复制')?.trigger('click');
-    await buttons.find((button) => button.text().includes('重新打开'))?.trigger('click');
+    await buttons.find((button) => button.text().includes('复制链接'))?.trigger('click');
+    await buttons.find((button) => button.text().includes('打开登录页'))?.trigger('click');
+    await buttons.find((button) => button.text().includes('取消认证'))?.trigger('click');
     await buttons.find((button) => button.text().includes('开启自动轮换'))?.trigger('click');
     await buttons.find((button) => button.text().includes('重试'))?.trigger('click');
     const inputs = wrapper.findAll('input');
-    await inputs[1].setValue('token');
-    await inputs[2].setValue('user');
+    await inputs[0].setValue('token');
     await buttons.find((button) => button.text().includes('添加'))?.trigger('click');
     // submitCredential 内部 await formRef.validate() 后才 mutate，需等待 microtask
     await vi.waitFor(() => expect(mutationStates[0].mutate).toHaveBeenCalled());
     await wrapper.vm.$nextTick();
 
     expect(oauth.start).toHaveBeenCalledOnce();
-    expect(oauth.stop).toHaveBeenCalledOnce();
+    expect(oauth.cancel).toHaveBeenCalledOnce();
     expect(copyMock).toHaveBeenCalledWith('https://auth', '认证链接已复制');
     expect(credentialsQuery.refetch).toHaveBeenCalledOnce();
-    expect(window.open).toHaveBeenCalled();
+    expect(oauth.openAuthUrl).toHaveBeenCalled();
     expect(mutationStates[0].mutate).toHaveBeenCalled();
     expect(mutationStates[4].mutate).toHaveBeenCalled();
   });

@@ -52,10 +52,10 @@ export const adminApi = {
       method: 'DELETE',
     }),
   credentials: () => apiRequest<CredentialsResponse>('/api/admin/credentials'),
-  createCredential: (bearerToken: string, userId?: string) =>
+  createCredential: (bearerToken: string) =>
     apiRequest<{ credential: CredentialRecord }>('/api/admin/credentials', {
       method: 'POST',
-      json: { bearer_token: bearerToken, user_id: userId || undefined },
+      json: { bearer_token: bearerToken },
     }),
   selectCredential: (credentialId: string) =>
     apiRequest<{
@@ -124,6 +124,20 @@ export const codebuddyOAuthApi = {
       options.signal = signal;
     }
     return apiRequest<CodeBuddyPollAuthResponse>('/codebuddy/auth/poll', options);
+  },
+  cancelAuth: (authState: string, signal?: AbortSignal) => {
+    const options: {
+      method: string;
+      json: { auth_state: string };
+      signal?: AbortSignal;
+    } = {
+      method: 'POST',
+      json: { auth_state: authState },
+    };
+    if (signal) {
+      options.signal = signal;
+    }
+    return apiRequest<{ cancelled: true }>('/codebuddy/auth/cancel', options);
   },
 };
 

@@ -1,3 +1,5 @@
+import base64
+import json
 import unittest
 from unittest import mock
 
@@ -34,6 +36,11 @@ from src.usage_stats_manager import usage_stats_manager
 from tests.helpers import TempConfigMixin, configure_users_file, make_request
 
 
+def jwt_with_payload(payload):
+    encoded_payload = base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii").rstrip("=")
+    return f"header.{encoded_payload}.signature"
+
+
 class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         super().setUp()
@@ -46,9 +53,14 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
     def _manager(self):
         return self.registry.for_user(self.user)
 
+    def _add_credential(self, manager, bearer_token, user_id, filename, **extra):
+        credential_data = {"bearer_token": bearer_token, "user_id": user_id}
+        credential_data.update(extra)
+        return manager.add_credential_with_data(credential_data, filename)
+
     async def test_admin_status_uses_real_usage_and_credential_state(self):
         manager = self._manager()
-        self.assertTrue(manager.add_credential("token-value", "upstream-user", "primary"))
+        self.assertTrue(self._add_credential(manager, "token-value", "upstream-user", "primary"))
 
         with (
             mock.patch("src.admin_router.get_token_manager_for_user", return_value=manager),
@@ -86,13 +98,14 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
 
     async def test_admin_credentials_use_stable_id_not_index(self):
         created = await create_admin_credential(
-            CredentialCreateRequest(bearer_token="token-value", user_id="upstream-user"),
+            CredentialCreateRequest(bearer_token=jwt_with_payload({"sub": "upstream-user"})),
             self.user,
         )
         credential_id = created["credential"]["credential_id"]
 
         listed = await list_admin_credentials(self.user)
         self.assertEqual(listed["credentials"][0]["credential_id"], credential_id)
+        self.assertEqual(listed["credentials"][0]["user_id"], "upstream-user")
         self.assertNotIn("bearer_token", listed["credentials"][0])
 
         selected = await select_admin_credential(credential_id, self.user)
@@ -124,7 +137,7 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaises(HTTPException) as context:
                 await create_admin_credential(
-                    CredentialCreateRequest(bearer_token="new-token", user_id="upstream-user"),
+                    CredentialCreateRequest(bearer_token=jwt_with_payload({"sub": "upstream-user"})),
                     self.user,
                 )
 
@@ -150,21 +163,27 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(ValidationError):
                     CredentialCreateRequest(bearer_token=bearer_token)
 
+    def test_credential_create_request_rejects_legacy_user_id_field(self):
+        with self.assertRaises(ValidationError):
+            CredentialCreateRequest(bearer_token="token", user_id="legacy-user")
+
     async def test_create_admin_credential_returns_new_row_when_numeric_filename_has_gap(self):
         manager = self._manager()
-        self.assertTrue(manager.add_credential("first-token", "first-user", "codebuddy_token_1.json"))
-        self.assertTrue(manager.add_credential("second-token", "second-user", "codebuddy_token_2.json"))
+        self.assertTrue(self._add_credential(manager, "first-token", "first-user", "codebuddy_token_1.json"))
+        self.assertTrue(self._add_credential(manager, "second-token", "second-user", "codebuddy_token_2.json"))
         self.assertTrue(manager.delete_credential_by_id(manager.get_credentials_info()[0]["credential_id"]))
 
+        bearer_token = jwt_with_payload({"sub": "third-user"})
         with mock.patch("src.admin_router.get_token_manager_for_user", return_value=manager):
             result = await create_admin_credential(
-                CredentialCreateRequest(bearer_token="third-token", user_id="third-user"),
+                CredentialCreateRequest(bearer_token=bearer_token),
                 self.user,
             )
             listed = await list_admin_credentials(self.user)
 
         self.assertEqual(result["credential"]["user_id"], "third-user")
         self.assertEqual(result["credential"]["filename"], "codebuddy_token_3.json")
+        self.assertNotIn("bearer_token", result["credential"])
         credentials = {item["filename"]: item for item in listed["credentials"]}
         self.assertIn("codebuddy_token_2.json", credentials)
         self.assertIn("codebuddy_token_3.json", credentials)
@@ -184,8 +203,14 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
 
     async def test_admin_credential_test_uses_selected_row_credential_and_models(self):
         manager = self._manager()
-        self.assertTrue(manager.add_credential("current-token", "current-user", "current"))
-        self.assertTrue(manager.add_credential("target-token", "target-user", "target"))
+        self.assertTrue(self._add_credential(manager, "current-token", "current-user", "current"))
+        self.assertTrue(self._add_credential(
+            manager,
+            "target-token",
+            "target-user",
+            "target",
+            enterprise_id="enterprise-1",
+        ))
         credential_id = manager.get_credentials_info()[1]["credential_id"]
         captured = {}
 
@@ -222,13 +247,15 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(called_credential["bearer_token"], "target-token")
         first_model.assert_not_awaited()
         self.assertEqual(captured["headers"]["Authorization"], "Bearer target-token")
+        self.assertEqual(captured["headers"]["X-Enterprise-Id"], "enterprise-1")
+        self.assertEqual(captured["headers"]["X-Tenant-Id"], "enterprise-1")
         self.assertEqual(captured["payload"]["model"], "target-real-model")
         self.assertIs(captured["payload"]["stream"], True)
         self.assertEqual(captured["response_model"], "target-real-model")
 
     async def test_admin_credential_test_returns_ok_false_when_model_lookup_fails(self):
         manager = self._manager()
-        self.assertTrue(manager.add_credential("target-token", "target-user", "target"))
+        self.assertTrue(self._add_credential(manager, "target-token", "target-user", "target"))
         credential_id = manager.get_credentials_info()[0]["credential_id"]
 
         class FakeService:
@@ -288,7 +315,7 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
 
     async def test_admin_credential_test_maps_http_and_unexpected_service_errors(self):
         manager = self._manager()
-        self.assertTrue(manager.add_credential("target-token", "target-user", "target"))
+        self.assertTrue(self._add_credential(manager, "target-token", "target-user", "target"))
         credential_id = manager.get_credentials_info()[0]["credential_id"]
 
         errors = [
@@ -400,12 +427,19 @@ class AdminHelperTests(unittest.TestCase):
         info = {"index": 0, "credential_id": "id", "time_remaining": 60}
 
         with_token = _safe_credential(info, {"bearer_token": "1234567890abcdef"})
+        exact_visible_length_token = _safe_credential(info, {"bearer_token": "1234567890abcd"})
+        short_token = _safe_credential(info, {"bearer_token": "short"})
         without_token = _safe_credential(info, None)
 
         self.assertNotIn("index", with_token)
-        self.assertEqual(with_token["token_preview"], "1234567890...cdef")
+        self.assertNotIn("token_preview", with_token)
+        self.assertEqual(with_token["token_display"], "123456...90abcdef")
         self.assertTrue(with_token["has_token"])
-        self.assertEqual(without_token["token_preview"], "")
+        self.assertEqual(exact_visible_length_token["token_display"], "********")
+        self.assertTrue(exact_visible_length_token["has_token"])
+        self.assertEqual(short_token["token_display"], "********")
+        self.assertTrue(short_token["has_token"])
+        self.assertEqual(without_token["token_display"], "")
         self.assertFalse(without_token["has_token"])
 
     def test_safe_credentials_handles_missing_and_out_of_range_indexes(self):

@@ -132,6 +132,7 @@ async def chat_completions(
             bearer_token=credential.get("bearer_token"),
             user_id=credential.get("user_id"),
             domain=credential.get("domain"),
+            enterprise_id=credential.get("enterprise_id"),
             conversation_id=x_conversation_id,
             conversation_request_id=x_conversation_request_id,
             conversation_message_id=x_conversation_message_id,
