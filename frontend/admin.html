@@ -545,19 +545,6 @@
             animation: spin 1s linear infinite;
         }
 
-        .loading-inline {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            font-size: 0.9rem;
-            color: var(--secondary-color);
-        }
-
-        .loading-inline i {
-            font-size: 1rem;
-            animation: spin 1s linear infinite;
-        }
-
         @keyframes spin {
             from { transform: rotate(0deg); }
             to { transform: rotate(360deg); }
@@ -596,49 +583,6 @@
         .stat-card,
         .card {
             transition: all 0.2s ease;
-        }
-
-        /* 成功状态动画 */
-        @keyframes successPulse {
-            0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
-            70% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
-        }
-
-        .success-animation {
-            animation: successPulse 0.6s;
-        }
-
-        /* 错误状态动画 */
-        @keyframes errorShake {
-            0%, 100% { transform: translateX(0); }
-            25% { transform: translateX(-5px); }
-            75% { transform: translateX(5px); }
-        }
-
-        .error-animation {
-            animation: errorShake 0.5s;
-        }
-
-        /* 进度条样式 */
-        .progress-bar {
-            width: 100%;
-            height: 4px;
-            background: var(--border-light);
-            border-radius: 2px;
-            overflow: hidden;
-            margin: 0.5rem 0;
-        }
-
-        body.dark .progress-bar {
-            background: var(--border-dark);
-        }
-
-        .progress-fill {
-            height: 100%;
-            background: linear-gradient(90deg, var(--primary-color), var(--primary-dark));
-            border-radius: 2px;
-            transition: width 0.3s ease;
         }
 
         /* 响应式设计 */
@@ -1137,11 +1081,6 @@
             background: #f59e0b;
         }
 
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-
         /* Usage Table Styles */
         .usage-table-container {
             width: 100%;
@@ -1630,7 +1569,7 @@
     <div id="notification" class="notification"></div>
 
     <script>
-        // 全局变量
+        // 全局状态
         let currentTheme = 'light';
         let serviceUsername = '';
         let currentAuthData = null;
@@ -1638,10 +1577,24 @@
         let authPollingAttempts = 0;
         let authFlowGeneration = 0;
         let isAuthenticated = false;
-        let credentialsCache = []; // 用于缓存凭证和其状态
+        let credentialsCache = [];
         let apiKeysCache = [];
         let pendingApiKeys = [];
         let apiModelsCache = [];
+        let lastCredentialStatus = null;
+
+        const TAB_IDS = ['dashboard', 'credentials', 'api-keys', 'api-test', 'settings'];
+        const TAB_LOADERS = {
+            dashboard: () => loadDashboard(),
+            credentials: () => loadCredentials(),
+            'api-keys': () => loadApiKeys(),
+            'api-test': () => loadModelOptions(),
+            settings: () => loadSettings()
+        };
+        const TAB_REFRESH_LOADERS = {
+            ...TAB_LOADERS,
+            'api-test': () => loadModelOptions(true)
+        };
         const fallbackApiModels = ['glm-5.2', 'deepseek-v4-pro'];
         const pendingApiKeysLeaveWarning = '仍有未保存的 API Key，离开后将无法再次查看。确定要离开吗？';
 
@@ -1666,11 +1619,30 @@
             
             // 定期刷新仪表盘数据
             setInterval(() => {
-                if (isAuthenticated && document.getElementById('dashboard').classList.contains('active')) {
+                if (isAuthenticated && elementById('dashboard').classList.contains('active')) {
                     loadDashboard();
                 }
             }, 30000); // 每30秒刷新一次
         });
+
+        function elementById(id) {
+            return document.getElementById(id);
+        }
+
+        function loadingMarkup(message = '加载中...') {
+            return `<div class="loading"><i class="fas fa-spinner fa-spin"></i><div>${escapeHtml(message)}</div></div>`;
+        }
+
+        function emptyStateMarkup(message) {
+            return `<div style="text-align: center; padding: 2rem; color: var(--secondary-color);">${escapeHtml(message)}</div>`;
+        }
+
+        function runTabLoader(tabId, loaders) {
+            const loader = loaders[tabId];
+            if (loader) {
+                loader();
+            }
+        }
 
         // 键盘快捷键处理
         function handleKeyboardShortcuts(e) {
@@ -1679,11 +1651,10 @@
             // Ctrl/Cmd + 数字键切换标签
             if ((e.ctrlKey || e.metaKey) && e.key >= '1' && e.key <= '4') {
                 e.preventDefault();
-                const tabs = ['dashboard', 'credentials', 'api-keys', 'api-test', 'settings'];
                 const index = parseInt(e.key) - 1;
-                if (tabs[index]) {
+                if (TAB_IDS[index]) {
                     // 模拟点击标签
-                    const tabElement = document.querySelector(`[onclick="showTab('${tabs[index]}')"]`);
+                    const tabElement = document.querySelector(`[onclick="showTab('${TAB_IDS[index]}')"]`);
                     if (tabElement) {
                         tabElement.click();
                     }
@@ -1701,38 +1672,13 @@
             const activeTab = document.querySelector('.tab-panel.active');
             if (!activeTab) return;
             
-            const tabId = activeTab.id;
-            switch(tabId) {
-                case 'dashboard':
-                    loadDashboard();
-                    break;
-                case 'credentials':
-                    loadCredentials();
-                    break;
-                case 'api-keys':
-                    loadApiKeys();
-                    break;
-                case 'api-test':
-                    loadModelOptions(true);
-                    break;
-                case 'settings':
-                    loadSettings();
-                    break;
-            }
+            runTabLoader(activeTab.id, TAB_REFRESH_LOADERS);
             showNotification('数据已刷新', 'success', 2000);
-        }
-
-        // 添加视觉反馈
-        function addVisualFeedback(element, type = 'success') {
-            element.classList.add(`${type}-animation`);
-            setTimeout(() => {
-                element.classList.remove(`${type}-animation`);
-            }, 600);
         }
 
         // 增强的通知系统
         function showNotificationWithAction(message, type = 'info', duration = 5000, action = null) {
-            const notification = document.getElementById('notification');
+            const notification = elementById('notification');
             notification.className = `notification ${type}`;
             
             let actionHTML = '';
@@ -1822,7 +1768,7 @@
             });
             
             // 显示目标面板
-            document.getElementById(tabId).classList.add('active');
+            elementById(tabId).classList.add('active');
             
             // 激活对应标签
             const tabButton = document.querySelector(`.nav-tab[onclick="showTab('${tabId}')"]`);
@@ -1834,23 +1780,12 @@
                 return;
             }
             
-            // 加载对应数据
-            if (tabId === 'dashboard') {
-                loadDashboard();
-            } else if (tabId === 'credentials') {
-                loadCredentials();
-            } else if (tabId === 'api-keys') {
-                loadApiKeys();
-            } else if (tabId === 'api-test') {
-                loadModelOptions();
-            } else if (tabId === 'settings') {
-                loadSettings();
-            }
+            runTabLoader(tabId, TAB_LOADERS);
         }
 
         // 通知系统
         function showNotification(message, type = 'info', duration = 5000) {
-            const notification = document.getElementById('notification');
+            const notification = elementById('notification');
             notification.className = `notification ${type}`;
             notification.innerHTML = `
                 <div style="display: flex; justify-content: space-between; align-items: flex-start;">
@@ -1869,7 +1804,7 @@
         }
 
         function hideNotification() {
-            const notification = document.getElementById('notification');
+            const notification = elementById('notification');
             notification.classList.remove('show');
         }
 
@@ -2036,8 +1971,8 @@
 
         // API Key 管理
         async function loadApiKeys() {
-            const apiKeysList = document.getElementById('apiKeysList');
-            apiKeysList.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i><div>加载中...</div></div>';
+            const apiKeysList = elementById('apiKeysList');
+            apiKeysList.innerHTML = loadingMarkup();
 
             try {
                 const response = await fetch('/api/admin/api-keys', {
@@ -2061,9 +1996,9 @@
         }
 
         function displayApiKeys() {
-            const apiKeysList = document.getElementById('apiKeysList');
+            const apiKeysList = elementById('apiKeysList');
             if (!apiKeysCache.length) {
-                apiKeysList.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--secondary-color);">暂无 API Key</div>';
+                apiKeysList.innerHTML = emptyStateMarkup('暂无 API Key');
                 return;
             }
 
@@ -2203,7 +2138,7 @@
             try {
                 const response = await fetch('/health');
                 if (response.ok) {
-                    const data = await response.json();
+                    await response.json();
                     updateServiceStatus('online', '运行正常');
                     updateServiceStatusCard('success');
                 } else {
@@ -2277,7 +2212,7 @@
         }
 
         function updateServiceStatusCard(status) {
-            const statusIcon = document.getElementById('serviceStatusIcon');
+            const statusIcon = elementById('serviceStatusIcon');
             statusIcon.className = 'stat-card-icon ' + status;
             
             // 更新运行时长（模拟）
@@ -2305,7 +2240,7 @@
         }
 
         function updateDashboardStats(statsData) {
-            const { model_usage, credential_usage } = statsData;
+            const { model_usage } = statsData;
             
             // 计算总API调用次数
             let totalCalls = 0;
@@ -2366,8 +2301,8 @@
 
         // 凭证管理功能
         async function loadCredentials() {
-            const credentialsList = document.getElementById('credentialsList');
-            credentialsList.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i><div>加载中...</div></div>';
+            const credentialsList = elementById('credentialsList');
+            credentialsList.innerHTML = loadingMarkup();
             
             try {
                 const response = await fetch('/api/admin/credentials', {
@@ -2397,7 +2332,7 @@
         }
 
         async function loadCurrentCredentialStatus() {
-            const statusDiv = document.getElementById('currentCredentialStatus');
+            const statusDiv = elementById('currentCredentialStatus');
             
             try {
                 const response = await fetch('/api/admin/credentials', {
@@ -2415,68 +2350,55 @@
             }
         }
 
-        function displayCurrentCredentialStatus(data) {
-            // 保存状态信息供其他函数使用
-            window.lastCredentialStatus = data;
-            
-            const statusDiv = document.getElementById('currentCredentialStatus');
-            let statusClass = '';
-            let statusIcon = '';
+        function renderCurrentCredentialStatus(data) {
             const safeFilename = escapeHtml(data.filename);
             const safeUserId = escapeHtml(data.user_id);
             const matchedIndex = credentialsCache.findIndex(cred => cred.credential_id && cred.credential_id === data.credential_id);
             const safeIndex = matchedIndex >= 0 ? matchedIndex + 1 : (Number.isInteger(data.index) ? data.index + 1 : '-');
             const safeRotationCount = escapeHtml(data.rotation_count);
             const safeUsageCount = escapeHtml(data.usage_count);
+            const userLine = data.user_id && data.user_id !== 'unknown' ? `<br>用户ID: ${safeUserId}` : '';
 
             switch(data.status) {
                 case 'auto_rotation_disabled':
-                    statusClass = 'status-warning';
-                    statusIcon = 'fas fa-pause';
-                    statusHtml = `
-                        <div class="status ${statusClass}">
-                            <i class="${statusIcon}"></i> 自动轮换已关闭
+                    return `
+                        <div class="status status-warning">
+                            <i class="fas fa-pause"></i> 自动轮换已关闭
                         </div>
                         <div style="margin-top: 0.5rem; font-size: 0.9rem;">
                             固定使用: <strong>${safeFilename}</strong> (凭证 #${safeIndex})
                             <br>轮换次数: ${safeRotationCount}
-                            ${data.user_id && data.user_id !== 'unknown' ? `<br>用户ID: ${safeUserId}` : ''}
+                            ${userLine}
                         </div>
                     `;
-                    break;
                 case 'auto_rotation':
-                    statusClass = 'status-success';
-                    statusIcon = 'fas fa-sync-alt';
-                    statusHtml = `
-                        <div class="status ${statusClass}">
-                            <i class="${statusIcon}"></i> 自动轮换模式
+                    return `
+                        <div class="status status-success">
+                            <i class="fas fa-sync-alt"></i> 自动轮换模式
                         </div>
                         <div style="margin-top: 0.5rem; font-size: 0.9rem;">
                             当前使用: <strong>${safeFilename}</strong> (凭证 #${safeIndex})
                             <br>使用次数: ${safeUsageCount}/${safeRotationCount}
-                            ${data.user_id && data.user_id !== 'unknown' ? `<br>用户ID: ${safeUserId}` : ''}
+                            ${userLine}
                         </div>
                     `;
-                    break;
                 case 'no_credentials':
-                    statusClass = 'status-error';
-                    statusIcon = 'fas fa-exclamation-triangle';
-                    statusHtml = `
-                        <div class="status ${statusClass}">
-                            <i class="${statusIcon}"></i> 无可用凭证
+                    return `
+                        <div class="status status-error">
+                            <i class="fas fa-exclamation-triangle"></i> 无可用凭证
                         </div>
                         <div style="margin-top: 0.5rem; font-size: 0.9rem;">
                             请添加至少一个有效的凭证
                         </div>
                     `;
-                    break;
                 default:
-                    statusHtml = '<div class="status status-error">未知状态</div>';
+                    return '<div class="status status-error">未知状态</div>';
             }
+        }
 
-            statusDiv.innerHTML = statusHtml;
-            
-            // 更新按钮状态
+        function displayCurrentCredentialStatus(data) {
+            lastCredentialStatus = data;
+            elementById('currentCredentialStatus').innerHTML = renderCurrentCredentialStatus(data);
             updateRotationToggleButton(data);
         }
 
@@ -2488,183 +2410,125 @@
             return credential;
         }
 
-        function displayCredentials() {
-            const credentialsList = document.getElementById('credentialsList');
-            // 分组渲染：按邮箱或用户ID分组，添加删除按钮
-            if (credentialsCache && Array.isArray(credentialsCache) && credentialsCache.length > 0) {
-                const groups = {};
-                credentialsCache.forEach((cred, index) => {
-                    const key = cred.email || cred.user_id || 'unknown';
-                    if (!groups[key]) groups[key] = [];
-                    groups[key].push({ cred, index });
-                });
-                
-                // 获取当前选中的凭证 ID - 修复刷新后丢失问题
-                let currentSelectedCredentialId = '';
-                try {
-                    const currentStatus = window.lastCredentialStatus || {};
-                    currentSelectedCredentialId = currentStatus.credential_id || '';
-                    
-                    // 如果没有缓存状态，重新获取
-                    if (!currentSelectedCredentialId && !window.lastCredentialStatus) {
-                        loadCurrentCredentialStatus().then(() => {
-                            // 状态加载完成后重新渲染
-                            displayCredentials();
-                        });
-                        return; // 等待状态加载完成
-                    }
-                } catch (e) {
-                    // 忽略错误，尝试重新获取状态
-                    loadCurrentCredentialStatus();
+        function groupCredentialsByOwner(credentials) {
+            return credentials.reduce((groups, cred, index) => {
+                const key = cred.email || cred.user_id || 'unknown';
+                if (!groups[key]) {
+                    groups[key] = [];
                 }
+                groups[key].push({ cred, index });
+                return groups;
+            }, {});
+        }
 
-                const groupKeys = Object.keys(groups).sort((a, b) => a.localeCompare(b));
-                let html = '';
-                    groupKeys.forEach(key => {
-                        const items = groups[key];
-                        const label = key === 'unknown' ? '未知用户' : (key.includes('@') ? key : `ID: ${key}`);
-                        const icon = key.includes('@') ? 'fas fa-envelope' : 'fas fa-user';
-                        const safeLabel = escapeHtml(label);
-
-                        html += `
-                            <div class="credential-group">
-                                <div class="credential-group-header">
-                                    <div class="credential-group-title">
-                                        <i class="${icon}"></i>
-                                        ${safeLabel}
-                                    </div>
-                                    <div class="credential-group-badge">${items.length} 个凭证</div>
-                                </div>
-                            <div class="credential-group-list">
-                    `;
-
-                    html += items.map(({ cred, index }) => {
-                        // 确定凭证状态和头像样式
-                        let avatarClass = 'unknown';
-                        let avatarText = '?';
-                        if (cred.is_expired) {
-                            avatarClass = 'expired';
-                            avatarText = '!';
-                        } else if (cred.status === 'valid') {
-                            avatarClass = 'valid';
-                            avatarText = '✓';
-                        }
-
-                        // 检查是否为当前选中的凭证
-                        const isSelected = Boolean(cred.credential_id && cred.credential_id === currentSelectedCredentialId);
-                        const autoRotationEnabled = window.lastCredentialStatus?.auto_rotation_enabled === true;
-                        const canSelectCredential = !isSelected || autoRotationEnabled;
-                        const selectCredentialTitle = isSelected ? '固定当前凭证' : '选择此凭证';
-                        const selectedClass = isSelected ? ' credential-item-selected' : '';
-                        const selectedBadge = isSelected ? '<span class="credential-selected-badge">当前使用</span>' : '';
-
-                        // 格式化时间信息
-                            const expiryInfo = cred.expires_at ? new Date(cred.expires_at * 1000).toLocaleDateString() : '永不过期';
-                            const remainingTime = cred.time_remaining_str || '未知';
-                            const safeUserId = escapeHtml(cred.user_id);
-                            const safeFilename = escapeHtml(cred.filename);
-                            const safeExpiryInfo = escapeHtml(expiryInfo);
-                            const safeRemainingTime = escapeHtml(remainingTime);
-
-                            return `
-                            <div class="credential-item${selectedClass}">
-                                <div class="credential-avatar ${avatarClass}">${avatarText}</div>
-                                <div class="credential-info">
-                                    <div class="credential-header">
-                                        <div class="credential-title">凭证 #${index + 1}</div>
-                                        ${selectedBadge}
-                                    </div>
-                                        <div class="credential-meta">
-                                            ${cred.user_id && cred.user_id !== 'unknown' ?
-                                                `<div class="credential-meta-item">
-                                                    <i class="fas fa-user"></i> ${safeUserId}
-                                                </div>` : ''
-                                            }
-                                            <div class="credential-meta-item">
-                                                <i class="fas fa-calendar"></i> 过期: ${safeExpiryInfo}
-                                            </div>
-                                            <div class="credential-meta-item">
-                                                <i class="fas fa-clock"></i> 剩余: ${safeRemainingTime}
-                                            </div>
-                                            ${cred.filename ?
-                                                `<div class="credential-meta-item">
-                                                    <i class="fas fa-file"></i> ${safeFilename}
-                                                </div>` : ''
-                                            }
-                                    </div>
-                                </div>
-                                <div class="credential-actions">
-                                    ${canSelectCredential ?
-                                        `<button class="btn btn-primary" onclick="selectCredential(${index})" title="${selectCredentialTitle}">
-                                            <i class="fas fa-hand-pointer"></i>
-                                        </button>` : ''
-                                    }
-                                    <button class="btn btn-success" onclick="testCredential(${index})" title="测试凭证">
-                                        <i class="fas fa-check"></i>
-                                    </button>
-                                    <button class="btn btn-danger" onclick="deleteCredential(${index})" title="删除凭证">
-                                        <i class="fas fa-trash"></i>
-                                    </button>
-                                </div>
-                            </div>
-                        `;
-                    }).join('');
-
-                    html += `
-                            </div>
-                        </div>
-                    `;
-                });
-
-                credentialsList.innerHTML = html;
-                return;
+        function getCredentialAvatar(cred) {
+            if (cred.is_expired) {
+                return { avatarClass: 'expired', avatarText: '!' };
             }
-            
-            if (credentialsCache.length === 0) {
-                credentialsList.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--secondary-color);">暂无凭证，请添加第一个凭证</div>';
-                return;
+            if (cred.status === 'valid') {
+                return { avatarClass: 'valid', avatarText: '✓' };
             }
+            return { avatarClass: 'unknown', avatarText: '?' };
+        }
 
-            credentialsList.innerHTML = '<div class="credential-list">' +
-                    credentialsCache.map((cred, index) => {
-                        const safeUserId = escapeHtml(cred.user_id);
-                        const safeTokenDisplay = escapeHtml(cred.token_display);
-                        const safeTimeRemaining = escapeHtml(cred.time_remaining_str || 'null');
-                    switch(cred.status) {
-                        case 'valid':
-                            statusIcon = `<i class="fas fa-check-circle" style="color: var(--success-color); font-size: 1.5rem;" title="有效"></i>`;
-                            break;
-                        case 'invalid':
-                            statusIcon = `<i class="fas fa-times-circle" style="color: var(--error-color); font-size: 1.5rem;" title="无效"></i>`;
-                            break;
-                        default:
-                            statusIcon = `<i class="fas fa-question-circle" style="color: var(--secondary-color); font-size: 1.5rem;" title="未验证"></i>`;
-                    }
+        function renderCredentialItem({ cred, index }, currentSelectedCredentialId) {
+            const { avatarClass, avatarText } = getCredentialAvatar(cred);
+            const isSelected = Boolean(cred.credential_id && cred.credential_id === currentSelectedCredentialId);
+            const autoRotationEnabled = lastCredentialStatus?.auto_rotation_enabled === true;
+            const canSelectCredential = !isSelected || autoRotationEnabled;
+            const selectCredentialTitle = isSelected ? '固定当前凭证' : '选择此凭证';
+            const selectedClass = isSelected ? ' credential-item-selected' : '';
+            const selectedBadge = isSelected ? '<span class="credential-selected-badge">当前使用</span>' : '';
+            const expiryInfo = cred.expires_at ? new Date(cred.expires_at * 1000).toLocaleDateString() : '永不过期';
+            const remainingTime = cred.time_remaining_str || '未知';
+            const safeUserId = escapeHtml(cred.user_id);
+            const safeFilename = escapeHtml(cred.filename);
+            const safeExpiryInfo = escapeHtml(expiryInfo);
+            const safeRemainingTime = escapeHtml(remainingTime);
 
-                    return `
-                    <div class="credential-item">
-                        <div class="credential-status-icon">${statusIcon}</div>
-                        <div class="credential-info">
-                                <div class="credential-id">凭证 #${index + 1}</div>
-                                <div class="credential-details">
-                                    ${cred.user_id ? `用户ID: ${safeUserId}<br>` : ''}
-                                    ${cred.token_display ? `Token: ${safeTokenDisplay}<br>` : ''}
-                                    ${cred.created_at ? `创建时间: ${new Date(cred.created_at * 1000).toLocaleString()}<br>` : ''}
-                                    过期时间: ${cred.expires_at != null ? new Date(cred.expires_at * 1000).toLocaleString() : 'null'}<br>
-                                    剩余: ${safeTimeRemaining}
-                                </div>
+            return `
+                <div class="credential-item${selectedClass}">
+                    <div class="credential-avatar ${avatarClass}">${avatarText}</div>
+                    <div class="credential-info">
+                        <div class="credential-header">
+                            <div class="credential-title">凭证 #${index + 1}</div>
+                            ${selectedBadge}
                         </div>
-                        <div class="credential-actions">
-                            <button class="btn btn-warning" onclick="selectCredential(${index})" title="设为当前凭证">
-                                <i class="fas fa-hand-pointer"></i> 选择
-                            </button>
-                            <button class="btn btn-success" onclick="testCredential(${index})">
-                                <i class="fas fa-check"></i> 测试
-                            </button>
+                        <div class="credential-meta">
+                            ${cred.user_id && cred.user_id !== 'unknown' ?
+                                `<div class="credential-meta-item">
+                                    <i class="fas fa-user"></i> ${safeUserId}
+                                </div>` : ''
+                            }
+                            <div class="credential-meta-item">
+                                <i class="fas fa-calendar"></i> 过期: ${safeExpiryInfo}
+                            </div>
+                            <div class="credential-meta-item">
+                                <i class="fas fa-clock"></i> 剩余: ${safeRemainingTime}
+                            </div>
+                            ${cred.filename ?
+                                `<div class="credential-meta-item">
+                                    <i class="fas fa-file"></i> ${safeFilename}
+                                </div>` : ''
+                            }
                         </div>
                     </div>
-                `}).join('') +
-            '</div>';
+                    <div class="credential-actions">
+                        ${canSelectCredential ?
+                            `<button class="btn btn-primary" onclick="selectCredential(${index})" title="${selectCredentialTitle}">
+                                <i class="fas fa-hand-pointer"></i>
+                            </button>` : ''
+                        }
+                        <button class="btn btn-success" onclick="testCredential(${index})" title="测试凭证">
+                            <i class="fas fa-check"></i>
+                        </button>
+                        <button class="btn btn-danger" onclick="deleteCredential(${index})" title="删除凭证">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderCredentialGroup(key, items, currentSelectedCredentialId) {
+            const label = key === 'unknown' ? '未知用户' : (key.includes('@') ? key : `ID: ${key}`);
+            const icon = key.includes('@') ? 'fas fa-envelope' : 'fas fa-user';
+
+            return `
+                <div class="credential-group">
+                    <div class="credential-group-header">
+                        <div class="credential-group-title">
+                            <i class="${icon}"></i>
+                            ${escapeHtml(label)}
+                        </div>
+                        <div class="credential-group-badge">${items.length} 个凭证</div>
+                    </div>
+                    <div class="credential-group-list">
+                        ${items.map(item => renderCredentialItem(item, currentSelectedCredentialId)).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        function displayCredentials() {
+            const credentialsList = elementById('credentialsList');
+
+            if (credentialsCache.length === 0) {
+                credentialsList.innerHTML = emptyStateMarkup('暂无凭证，请添加第一个凭证');
+                return;
+            }
+
+            if (!lastCredentialStatus) {
+                loadCurrentCredentialStatus().then(displayCredentials);
+                return;
+            }
+
+            const groups = groupCredentialsByOwner(credentialsCache);
+            const currentSelectedCredentialId = lastCredentialStatus.credential_id || '';
+            credentialsList.innerHTML = Object.keys(groups)
+                .sort((a, b) => a.localeCompare(b))
+                .map(key => renderCredentialGroup(key, groups[key], currentSelectedCredentialId))
+                .join('');
         }
 
         async function deleteCredential(index) {
@@ -3163,12 +3027,8 @@
                         // 清理认证数据
                         currentAuthData = null;
                         
-                    } else if (data.error === 'authorization_pending') {
-                        // 继续等待用户授权
-                        console.log('等待用户授权...');
-                    } else if (data.error === 'slow_down') {
-                        // 减慢轮询频率
-                        console.log('减慢轮询频率');
+                    } else if (data.error === 'authorization_pending' || data.error === 'slow_down') {
+                        // 继续等待下一次轮询。
                     } else if (data.error === 'expired_token') {
                         // Token过期，停止轮询
                         await cancelAuth(false);
@@ -3269,8 +3129,8 @@
         }
 
         async function loadSettings() {
-            const settingsForm = document.getElementById('settingsForm');
-            settingsForm.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i><div>加载配置中...</div></div>';
+            const settingsForm = elementById('settingsForm');
+            settingsForm.innerHTML = loadingMarkup('加载配置中...');
 
             try {
                 const response = await fetch('/api/admin/settings', { headers: getAuthHeaders() });
@@ -3351,38 +3211,30 @@
             }
         }
 
-       function updateUsageTables(stats) {
-           const { model_usage, credential_usage } = stats;
-           const modelTableBody = document.getElementById('modelUsageTableBody');
-           const credentialTableBody = document.getElementById('credentialUsageTableBody');
+        function renderUsageRows(entries, emptyText, labelFormatter = value => value) {
+            if (!entries || Object.keys(entries).length === 0) {
+                return `<tr><td colspan="2" style="text-align: center;">${escapeHtml(emptyText)}</td></tr>`;
+            }
 
-           // Clear previous data
-           modelTableBody.innerHTML = '';
-           credentialTableBody.innerHTML = '';
+            return Object.entries(entries)
+                .sort((a, b) => b[1] - a[1])
+                .map(([label, count]) => `<tr><td>${escapeHtml(labelFormatter(label))}</td><td>${escapeHtml(count)}</td></tr>`)
+                .join('');
+        }
 
-           // Populate Model Usage Table
-           if (model_usage && Object.keys(model_usage).length > 0) {
-                   const sortedModels = Object.entries(model_usage).sort((a, b) => b[1] - a[1]);
-                   sortedModels.forEach(([model, count]) => {
-                       const row = `<tr><td>${escapeHtml(model)}</td><td>${escapeHtml(count)}</td></tr>`;
-                       modelTableBody.innerHTML += row;
-                   });
-           } else {
-               modelTableBody.innerHTML = '<tr><td colspan="2" style="text-align: center;">暂无模型使用数据</td></tr>';
-           }
+        function basename(path) {
+            return path.split('/').pop().split('\\').pop();
+        }
 
-           // Populate Credential Usage Table
-           if (credential_usage && Object.keys(credential_usage).length > 0) {
-               const sortedCredentials = Object.entries(credential_usage).sort((a, b) => b[1] - a[1]);
-                   sortedCredentials.forEach(([path, count]) => {
-                       const filename = path.split('/').pop().split('\\').pop();
-                       const row = `<tr><td>${escapeHtml(filename)}</td><td>${escapeHtml(count)}</td></tr>`;
-                       credentialTableBody.innerHTML += row;
-                   });
-           } else {
-               credentialTableBody.innerHTML = '<tr><td colspan="2" style="text-align: center;">暂无凭证使用数据</td></tr>';
-           }
-       }
+        function updateUsageTables(stats) {
+            const { model_usage, credential_usage } = stats;
+            elementById('modelUsageTableBody').innerHTML = renderUsageRows(model_usage, '暂无模型使用数据');
+            elementById('credentialUsageTableBody').innerHTML = renderUsageRows(
+                credential_usage,
+                '暂无凭证使用数据',
+                basename
+            );
+        }
     </script>
 </body>
 </html>
