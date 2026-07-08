@@ -28,12 +28,20 @@ SETTING_FIELDS: List[Dict[str, Any]] = [
         "label": "附加模型列表",
         "type": "tags",
         "separator": ",",
+        "description": (
+            "手动补充可用模型 ID，与 CodeBuddy 配置接口返回的真实模型合并作为模型列表；"
+            "配置项优先展示，并作为客户端省略 model 时的默认候选。"
+        ),
     },
     {
         "key": "CODEBUDDY_FORCED_REASONING_MODELS",
         "label": "强制推理模型列表",
         "type": "tags",
         "separator": ",",
+        "description": (
+            "命中的模型在转发上游前会强制 reasoning_effort=max 并启用 thinking.type=enabled；"
+            "匹配时忽略 provider/ 前缀和大小写。"
+        ),
     },
     {
         "key": "CODEBUDDY_FORCED_TEMPERATURE",
@@ -43,16 +51,19 @@ SETTING_FIELDS: List[Dict[str, Any]] = [
         "min": 0,
         "max": 2,
         "step": 0.1,
+        "description": "非空时覆盖客户端传入的 temperature；留空则不覆盖客户端行为。",
     },
     {
         "key": "CODEBUDDY_STRIP_MODEL_NAMESPACE",
         "label": "去除模型名前缀",
         "type": "boolean",
+        "description": "开启后将 provider/model 形式的模型名转发为 model，用于兼容上游模型 ID。",
     },
     {
         "key": "CODEBUDDY_AUTO_ROTATION_ENABLED",
         "label": "凭证轮换",
         "type": "boolean",
+        "description": "开启后在有效凭证之间按轮换频率自动切换；关闭后固定当前凭证，手动选择凭证也会关闭自动轮换。",
     },
     {
         "key": "CODEBUDDY_ROTATION_COUNT",
@@ -60,6 +71,7 @@ SETTING_FIELDS: List[Dict[str, Any]] = [
         "type": "number",
         "min": 1,
         "step": 1,
+        "description": "自动轮换开启时，每张凭证最多连续使用的请求次数；达到次数后切换到下一张未过期凭证，必须为正整数。",
     },
 ]
 

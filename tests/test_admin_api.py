@@ -351,9 +351,15 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("CODEBUDDY_LOG_LEVEL", field_by_key)
         self.assertEqual(field_by_key["CODEBUDDY_AUTO_ROTATION_ENABLED"]["type"], "boolean")
         self.assertEqual(field_by_key["CODEBUDDY_AUTO_ROTATION_ENABLED"]["label"], "凭证轮换")
+        self.assertIn("有效凭证", field_by_key["CODEBUDDY_AUTO_ROTATION_ENABLED"]["description"])
         self.assertEqual(field_by_key["CODEBUDDY_STRIP_MODEL_NAMESPACE"]["type"], "boolean")
+        self.assertIn("provider/model", field_by_key["CODEBUDDY_STRIP_MODEL_NAMESPACE"]["description"])
+        self.assertIn("reasoning_effort=max", field_by_key["CODEBUDDY_FORCED_REASONING_MODELS"]["description"])
+        self.assertIn("temperature", field_by_key["CODEBUDDY_FORCED_TEMPERATURE"]["description"])
+        self.assertIn("CodeBuddy 配置接口", field_by_key["CODEBUDDY_MODELS"]["description"])
         self.assertEqual(field_by_key["CODEBUDDY_ROTATION_COUNT"]["type"], "number")
         self.assertEqual(field_by_key["CODEBUDDY_ROTATION_COUNT"]["min"], 1)
+        self.assertIn("正整数", field_by_key["CODEBUDDY_ROTATION_COUNT"]["description"])
 
         result = await save_admin_settings(
             AdminSettingsUpdate(settings={
@@ -367,6 +373,11 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["settings"]["CODEBUDDY_MODELS"], "admin-only")
         self.assertIs(result["settings"]["CODEBUDDY_AUTO_ROTATION_ENABLED"], False)
         self.assertEqual(result["settings"]["CODEBUDDY_ROTATION_COUNT"], 3)
+        result_field_by_key = {field["key"]: field for field in result["fields"]}
+        self.assertEqual(
+            result_field_by_key["CODEBUDDY_MODELS"]["description"],
+            field_by_key["CODEBUDDY_MODELS"]["description"],
+        )
         self.assertNotIn("CODEBUDDY_LOG_LEVEL", result["settings"])
         self.assertNotIn("CODEBUDDY_ALLOWED_HOSTS", result["settings"])
 

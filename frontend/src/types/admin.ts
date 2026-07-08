@@ -76,6 +76,7 @@ export interface SettingField {
   key: string;
   label: string;
   type: 'select' | 'tags' | 'number' | 'boolean' | 'text';
+  description?: string;
   options?: string[];
   separator?: string;
   nullable?: boolean;

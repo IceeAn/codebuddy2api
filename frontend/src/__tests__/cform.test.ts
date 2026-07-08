@@ -343,6 +343,32 @@ describe('CFormItem', () => {
     expect(wrapper.find('.c-form-item-required').exists()).toBe(false);
   });
 
+  it('支持自定义 label 插槽并保留必填标记', () => {
+    const wrapper = mount(
+      {
+        components: { CForm, CFormItem, CInput },
+        data() {
+          return { model: { name: '' }, rules: { name: { required: true, message: '必填' } } };
+        },
+        template: `
+          <CForm :model="model" :rules="rules" label-placement="left">
+            <CFormItem path="name">
+              <template #label>
+                <span class="custom-label">自定义名称</span>
+              </template>
+              <CInput />
+            </CFormItem>
+          </CForm>
+        `,
+      },
+      { attachTo: document.body },
+    );
+
+    const label = wrapper.find('.c-form-item-label');
+    expect(label.find('.custom-label').text()).toBe('自定义名称');
+    expect(label.find('.c-form-item-required').text()).toBe('*');
+  });
+
   it('labelPlacement=left 时 label 桌面端右对齐', () => {
     const wrapper = mount(
       {
@@ -384,6 +410,34 @@ describe('CFormItem', () => {
     expect(labelClasses).toContain('md:items-center');
     expect(labelClasses).toContain('md:justify-end');
     expect(labelClasses).not.toContain('pt-[0.375rem]');
+  });
+
+  it('labelPlacement=left 时 label 可收缩换行，避免长文本撑开表单列', () => {
+    const wrapper = mount(
+      {
+        components: { CForm, CFormItem, CInput },
+        data() {
+          return { model: { name: '' }, rules: {} };
+        },
+        template: `
+          <CForm :model="model" :rules="rules" label-placement="left" label-width="fit-content(16rem)">
+            <CFormItem label="超长连续字段名称超长连续字段名称超长连续字段名称" path="name">
+              <CInput />
+            </CFormItem>
+          </CForm>
+        `,
+      },
+      { attachTo: document.body },
+    );
+
+    const label = wrapper.find('.c-form-item-label');
+    expect(label.classes()).toContain('min-w-0');
+    expect(label.classes()).toContain('max-w-full');
+    const labelText = label.find('span.break-words');
+    expect(labelText.exists()).toBe(true);
+    expect(labelText.classes()).toContain('min-w-0');
+    expect(labelText.classes()).toContain('whitespace-normal');
+    expect(labelText.classes()).not.toContain('truncate');
   });
 
   it('表单项控制区使用固定控件行高承载插槽内容', () => {

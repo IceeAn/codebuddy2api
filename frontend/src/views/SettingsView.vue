@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
-import { Save } from '@lucide/vue';
+import { CircleHelp, Save } from '@lucide/vue';
 import { adminApi } from '../api/admin';
 import type { SettingField, SettingsResponse } from '../types';
 import { createSettingsFormController } from '../utils/settingsForm';
@@ -17,6 +17,7 @@ import CInputNumber from '../components/ui/CInputNumber.vue';
 import CDynamicTags from '../components/ui/CDynamicTags.vue';
 import CInput from '../components/ui/CInput.vue';
 import CButton from '../components/ui/CButton.vue';
+import CTooltip from '../components/ui/CTooltip.vue';
 import RefreshButton from '../components/RefreshButton.vue';
 
 const queryClient = useQueryClient();
@@ -217,13 +218,27 @@ function updateTags(field: SettingField, value: string[]) {
     </div>
 
     <div v-else>
-      <CForm :model="form" label-placement="left" label-width="190px">
+      <CForm :model="form" label-placement="left" label-width="fit-content(14rem)">
         <CFormItem
           v-for="field in visibleFields"
           :key="field.key"
           :label="field.label"
           :path="field.key"
         >
+          <template v-if="field.description" #label>
+            <span class="inline-flex w-full min-w-0 max-w-full items-start justify-start gap-1.5 md:justify-end">
+              <span class="min-w-0 max-w-full whitespace-normal break-words">{{ field.label }}</span>
+              <CTooltip :content="field.description" placement="top">
+                <span
+                  class="setting-help-trigger inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted transition-colors duration-(--duration-fast) hover:text-text"
+                  :aria-label="`${field.label}说明`"
+                  role="img"
+                >
+                  <CircleHelp :size="15" />
+                </span>
+              </CTooltip>
+            </span>
+          </template>
           <CSelect
             v-if="field.type === 'select'"
             :model-value="form[field.key] as string | number"
@@ -237,6 +252,7 @@ function updateTags(field: SettingField, value: string[]) {
           />
           <CInputNumber
             v-else-if="field.type === 'number'"
+            class="settings-number-input md:max-w-64"
             :model-value="form[field.key] as number | null"
             :min="field.min"
             :max="field.max"

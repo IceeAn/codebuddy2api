@@ -91,15 +91,27 @@ const SpinStub = defineComponent({
 const FormStub = defineComponent({
   name: 'CForm',
   props: { labelPlacement: String, labelWidth: String },
-  setup(_, { slots }) {
-    return () => h('form', null, slots.default?.());
+  setup(props, { slots }) {
+    return () =>
+      h(
+        'form',
+        {
+          'data-label-placement': props.labelPlacement ?? '',
+          'data-label-width': props.labelWidth ?? '',
+        },
+        slots.default?.(),
+      );
   },
 });
 const FormItemStub = defineComponent({
   name: 'CFormItem',
   props: { label: String, path: String },
   setup(props, { slots }) {
-    return () => h('div', { 'data-label': props.label ?? '' }, slots.default?.());
+    return () =>
+      h('div', { 'data-label': props.label ?? '' }, [
+        h('span', { class: 'form-item-label' }, slots.label?.() ?? props.label ?? ''),
+        slots.default?.(),
+      ]);
   },
 });
 const SelectStub = defineComponent({
@@ -223,6 +235,22 @@ const ButtonStub = defineComponent({
       );
   },
 });
+const TooltipStub = defineComponent({
+  name: 'CTooltip',
+  props: { content: String, placement: String, delay: Number },
+  setup(props, { slots }) {
+    return () =>
+      h(
+        'span',
+        {
+          class: 'tooltip-stub',
+          'data-content': props.content ?? '',
+          'data-placement': props.placement ?? '',
+        },
+        [slots.default?.()],
+      );
+  },
+});
 
 function mountView() {
   mutationOptions.length = 0;
@@ -241,8 +269,10 @@ function mountView() {
         CDynamicTags: DynamicTagsStub,
         CInput: InputStub,
         CButton: ButtonStub,
+        CTooltip: TooltipStub,
         RefreshButton: RefreshButtonStub,
         Save: true,
+        CircleHelp: true,
       },
     },
   });
@@ -317,6 +347,36 @@ describe('SettingsView', () => {
     delete state.tagValues.tags;
     state.fields[3].separator = undefined;
     expect(state.buildPayload()).toMatchObject({ tags: '' });
+  });
+
+  it('字段含 description 时在标签旁显示问号悬浮提示', async () => {
+    query.data.value = {
+      settings: { described: 'value', plain: 'value' },
+      fields: [
+        { key: 'described', label: '有说明', type: 'text', description: '这里是详细说明' },
+        { key: 'plain', label: '无说明', type: 'text' },
+      ],
+    };
+
+    const wrapper = mountView();
+    await wrapper.vm.$nextTick();
+
+    const tooltips = wrapper.findAll('.tooltip-stub');
+    expect(tooltips).toHaveLength(1);
+    expect(tooltips[0].attributes('data-content')).toBe('这里是详细说明');
+    expect(tooltips[0].attributes('data-placement')).toBe('top');
+    const trigger = wrapper.find('.setting-help-trigger');
+    expect(wrapper.findAll('.setting-help-trigger')).toHaveLength(1);
+    expect(trigger.attributes('aria-label')).toBe('有说明说明');
+    expect(trigger.classes()).not.toContain('mt-0.5');
+    const labelContent = wrapper.find('.form-item-label > span');
+    expect(labelContent.classes()).toContain('justify-start');
+    expect(labelContent.classes()).toContain('md:justify-end');
+    expect(labelContent.classes()).not.toContain('justify-end');
+    const labelText = wrapper.find('.form-item-label span.break-words');
+    expect(labelText.classes()).toContain('min-w-0');
+    expect(labelText.classes()).toContain('whitespace-normal');
+    expect(labelText.classes()).not.toContain('truncate');
   });
 
   it('保存成功后提示并刷新设置与状态', async () => {
@@ -555,7 +615,11 @@ describe('SettingsView', () => {
     const wrapper = mountView();
     await wrapper.findComponent(SelectStub).vm.$emit('update:modelValue', 'b');
     await wrapper.findComponent(SwitchStub).vm.$emit('update:modelValue', true);
-    await wrapper.findComponent(InputNumberStub).vm.$emit('update:modelValue', 2);
+    const numberInput = wrapper.findComponent(InputNumberStub);
+    expect(numberInput.attributes('class')).toContain('settings-number-input');
+    expect(numberInput.attributes('class')).toContain('md:max-w-64');
+    expect(numberInput.attributes('class')).not.toContain('max-w-40');
+    await numberInput.vm.$emit('update:modelValue', 2);
     await wrapper.findComponent(DynamicTagsStub).vm.$emit('update:modelValue', ['y']);
     const inputs = wrapper.findAllComponents(InputStub);
     await inputs[inputs.length - 1].vm.$emit('update:modelValue', 'new');
@@ -644,7 +708,9 @@ describe('SettingsView', () => {
     const wrapper = mountView();
     await wrapper.vm.$nextTick();
     expect(wrapper.findComponent(CardStub).exists()).toBe(true);
-    expect(wrapper.findComponent(FormStub).exists()).toBe(true);
+    const form = wrapper.findComponent(FormStub);
+    expect(form.exists()).toBe(true);
+    expect(form.attributes('data-label-width')).toBe('fit-content(14rem)');
   });
 
   it('loading 状态下在独立的最小高度容器中居中显示 CSpin', async () => {

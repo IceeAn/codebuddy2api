@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, onMounted, ref, type ComputedRef } from 'vue';
+import { computed, inject, onBeforeUnmount, onMounted, ref, useSlots, type ComputedRef } from 'vue';
 import type { FormRule, FormRules } from './CForm.vue';
 
 interface FormContext {
@@ -26,6 +26,7 @@ const props = withDefaults(defineProps<Props>(), {
   label: undefined,
   required: false,
 });
+const slots = useSlots();
 
 const ctx = inject<FormContext>('c-form-context');
 
@@ -44,6 +45,7 @@ const rules = computed<FormRule[]>(() => {
 });
 
 const isRequired = computed(() => props.required || rules.value.some((r) => r.required));
+const hasLabel = computed(() => Boolean(props.label || slots.label));
 
 const labelPlacement = computed<'left' | 'top'>(() => formCtx.labelPlacement.value);
 
@@ -101,17 +103,24 @@ onBeforeUnmount(() => {
   <div :class="['c-form-item min-w-0', labelPlacement === 'left' ? 'contents' : '']">
     <template v-if="labelPlacement === 'left'">
       <label
-        v-if="label"
-        class="c-form-item-label text-left text-[13px] font-medium text-text md:flex md:min-h-[38px] md:items-center md:justify-end md:text-right"
+        v-if="hasLabel"
+        class="c-form-item-label min-w-0 max-w-full text-left text-[13px] font-medium text-text md:flex md:min-h-[38px] md:items-center md:justify-end md:text-right"
       >
-        {{ label }}
+        <slot name="label">
+          <span class="min-w-0 max-w-full whitespace-normal break-words">{{ label }}</span>
+        </slot>
         <span v-if="isRequired" class="c-form-item-required ml-0.5 text-error-500">*</span>
       </label>
       <span v-else class="hidden md:block"></span>
     </template>
     <template v-else>
-      <label v-if="label" class="c-form-item-label mb-1.5 block text-[13px] font-medium text-text">
-        {{ label }}
+      <label
+        v-if="hasLabel"
+        class="c-form-item-label mb-1.5 block min-w-0 max-w-full text-[13px] font-medium text-text"
+      >
+        <slot name="label">
+          <span class="block min-w-0 max-w-full whitespace-normal break-words">{{ label }}</span>
+        </slot>
         <span v-if="isRequired" class="c-form-item-required ml-0.5 text-error-500">*</span>
       </label>
     </template>
