@@ -372,3 +372,9 @@ pnpm run build
 ### 查看详细日志
 
 在 `.env` 中设置 `CODEBUDDY_LOG_LEVEL=DEBUG`，然后重启服务。日志可能包含请求元数据，不要在公开场合直接粘贴完整日志。
+
+## 授权协议
+
+本仓库当前的源代码基于 MIT 许可证授权。
+
+本仓库是无任何开源协议授权的上游项目 [xueyue33/codebuddy2api](https://github.com/xueyue33/codebuddy2api) 的一个 fork，并保留了原始 Git 提交历史，以用于署名和透明性说明。MIT 许可证仅适用于该 fork 维护者在当前工作区中独立重写的代码。该许可证不适用于历史提交、原上游项目代码，或任何可能出现在 Git 历史中的第三方材料。具体信息可参考 [LICENSING.md](LICENSING.md)。
