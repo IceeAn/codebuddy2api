@@ -1,7 +1,6 @@
 services:
   codebuddy2api:
-    build: .
-    image: iceean/codebuddy2api:latest
+    image: ghcr.io/iceean/codebuddy2api:latest
     restart: unless-stopped
     ports:
       - "8001:8001"
@@ -13,7 +12,8 @@ services:
       - ./data:/app/data
       # CodeBuddy 凭证持久化
       - ./.codebuddy_creds:/app/.codebuddy_creds
-      # 多用户认证文件
-      - ./secrets/users.txt:/app/secrets/users.txt:ro
+      # 多用户认证目录；服务只读，add-user 命令使用单独的可写挂载。
+      - ./secrets:/app/secrets:ro
     env_file:
-      - .env
+      - path: .env
+        required: false

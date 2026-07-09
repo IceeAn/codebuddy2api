@@ -13,7 +13,10 @@ cd frontend && pnpm run dev
 cd frontend && pnpm run build
 
 # Docker 部署
-docker compose up -d --build
+docker compose up -d
+
+# 本地构建 Docker 镜像
+docker build -t codebuddy2api:local .
 
 # 安装开发依赖
 venv/bin/python3 -m pip install -r requirements-dev.txt
@@ -25,8 +28,11 @@ venv/bin/python3 -m coverage report
 # 前端修改后验证
 cd frontend && pnpm run format:check && pnpm run lint && pnpm run build && pnpm run test:coverage
 
-# 为 secrets/users.txt 生成密码哈希
-venv/bin/python3 scripts/hash_password.py <用户名>
+# 原子新增系统用户或更新已有用户密码
+venv/bin/python3 scripts/hash_password.py <用户名> --output secrets/users.txt
+
+# 使用发布镜像新增系统用户或更新已有用户密码
+docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:latest add-user <用户名>
 ```
 
 ## 架构
@@ -77,9 +83,10 @@ venv/bin/python3 scripts/hash_password.py <用户名>
 
 ## Docker
 
-- 容器以非 root 用户 `appuser`（UID 1001）运行。`entrypoint.sh` 使用 `gosu` 切换用户。
-- 挂载卷：`./data`、`./.codebuddy_creds`、`./secrets/users.txt:ro`；Compose 和 `entrypoint.sh` 强制 `CODEBUDDY_DATA_DIR=/app/data`，避免环境变量将数据库移出持久化挂载。
-- Dockerfile 固定使用 Node 24.11.1 构建前端，再复制 `frontend/dist/` 到 Python 运行时镜像。
+- 容器入口以 root 完成挂载目录准备，将宿主 `users.txt` 复制为 `/run/codebuddy2api/users.txt` 的 `appuser` 私有只读副本，再使用 `gosu` 以非 root 用户 `appuser`（UID 1001）运行服务；不要通过 Compose `user` 或 `docker run --user` 跳过启动准备。
+- 挂载卷：`./data`、`./.codebuddy_creds`、`./secrets:ro`；Compose 默认使用 `ghcr.io/iceean/codebuddy2api:latest` 发布镜像，`.env` 为可选覆盖文件。Compose 和 `entrypoint.sh` 强制 `CODEBUDDY_DATA_DIR=/app/data`，入口脚本同时强制 `CODEBUDDY_USERS_FILE=/run/codebuddy2api/users.txt`。
+- 用户文件通过同目录临时文件原子替换，自动补齐缺失的末尾换行并保留或收紧 UID/GID 与 POSIX 权限；不支持符号链接、非普通文件和多硬链接，不保证保留 ACL、扩展属性或自定义安全标签。重复用户名会删除全部旧记录后写入新密码；并发写入不提供锁。服务运行后修改用户文件需执行 `docker compose restart codebuddy2api` 刷新运行时副本。
+- Dockerfile 固定使用 Node 24.11.1 构建前端，再将 `frontend/dist/` 与明确列出的后端运行文件复制到 Python 3.12 运行时镜像；镜像内提供 `hash-password` 和 `add-user` 辅助命令。
 - 容器 CMD 为 `uvicorn web:app --host 0.0.0.0 --port 8001 --no-access-log`。
 - Release workflow 只发布 `v数字.数字.数字` 稳定 tag。发布标签必须等于 `v{web.py 的 APP_VERSION}`，且 `frontend/package.json` 版本必须与 `APP_VERSION` 相同；三方不一致时在构建前快速失败。发布前必须在 `CHANGELOG.md` 添加对应版本二级标题及非空说明；workflow 会先跑后端和前端验证，再按 digest 推送一次镜像并对同一 digest 执行 Trivy 漏洞扫描，`CRITICAL` 漏洞阻断发布。Trivy 默认忽略尚无修复版本的漏洞，手动发布可通过 `ignore_unfixed=false` 将其纳入扫描。扫描通过后才为该 digest 添加版本 tag；仅最高稳定版本更新容器和 GitHub Release 的 `latest`。镜像构建时生成 SBOM/provenance，并使用 Cosign keyless signing 对镜像 digest 签名，最后创建或更新 GitHub Release。个人 GHCR 包首次推送后默认为 private，需在包出现后手动改为 Public；当前工作流全程使用认证访问，因此无需仅为可见性重跑。自动发布说明通过 `.github/release.yml` 将 PR 分为新功能、Bug 修复和其他变更；workflow 同时通过 GitHub API 排除有关联 PR 的 commit，再按 `feat`、`fix` 和其他 Conventional Commit 前缀追加分类后的直接提交。无关联 PR 且使用 `chore(release):` 或 `chore(release)!:` 前缀的直接发布提交不会进入变更记录；PR 发布不应用此过滤规则。
 

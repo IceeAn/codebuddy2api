@@ -25,15 +25,31 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("data/", entries)
 
     def test_compose_forces_database_into_persistent_mount(self):
+        compose_text = (self.repository_root / "docker-compose.yml").read_text(
+            encoding="utf-8"
+        )
         compose_lines = {
             line.strip()
-            for line in (self.repository_root / "docker-compose.yml").read_text(
-                encoding="utf-8"
-            ).splitlines()
+            for line in compose_text.splitlines()
             if line.strip() and not line.lstrip().startswith("#")
         }
 
         self.assertIn("CODEBUDDY_DATA_DIR: /app/data", compose_lines)
+        self.assertIn("image: ghcr.io/iceean/codebuddy2api:latest", compose_lines)
+        self.assertIn("- ./secrets:/app/secrets:ro", compose_lines)
+        self.assertNotIn(
+            "- ./secrets/users.txt:/app/secrets/users.txt:ro", compose_lines
+        )
+        self.assertNotIn("build:", compose_text)
+
+    def test_compose_env_file_is_optional(self):
+        compose_text = (self.repository_root / "docker-compose.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("env_file:", compose_text)
+        self.assertIn("path: .env", compose_text)
+        self.assertIn("required: false", compose_text)
 
     def test_release_workflow_uploads_local_runtime_packages(self):
         workflow = (
@@ -51,6 +67,47 @@ class RepositoryConfigurationTests(unittest.TestCase):
 
         self.assertIn('CODEBUDDY_DATA_DIR="/app/data"', entrypoint)
         self.assertIn("export CODEBUDDY_DATA_DIR", entrypoint)
+
+    def test_container_entrypoint_supports_user_setup_commands(self):
+        entrypoint = (self.repository_root / "entrypoint.sh").read_text(encoding="utf-8")
+
+        self.assertIn("hash-password)", entrypoint)
+        self.assertIn("add-user)", entrypoint)
+        self.assertIn('users_file="/app/secrets/users.txt"', entrypoint)
+        self.assertIn('mkdir -p "${users_dir}"', entrypoint)
+        self.assertIn('exec codebuddy2api-hash-password "$@"', entrypoint)
+        self.assertIn(
+            'codebuddy2api-hash-password "$@" --output "${users_file}"', entrypoint
+        )
+        self.assertNotIn("chmod 644", entrypoint)
+
+    def test_container_entrypoint_uses_private_runtime_users_copy(self):
+        entrypoint = (self.repository_root / "entrypoint.sh").read_text(encoding="utf-8")
+
+        self.assertIn('runtime_users_file="/run/codebuddy2api/users.txt"', entrypoint)
+        self.assertIn('CODEBUDDY_USERS_FILE="${runtime_users_file}"', entrypoint)
+        self.assertIn("export CODEBUDDY_USERS_FILE", entrypoint)
+        self.assertIn('-m 400 -o "${APP_USER}" -g "${APP_USER}"', entrypoint)
+
+    def test_dockerfile_uses_recommended_runtime_and_hash_command(self):
+        dockerfile = (self.repository_root / "Dockerfile").read_text(encoding="utf-8")
+
+        self.assertIn("ARG PYTHON_VERSION=3.12", dockerfile)
+        self.assertIn("FROM python:${PYTHON_VERSION}-slim AS runtime", dockerfile)
+        self.assertNotIn("COPY . .", dockerfile)
+        for runtime_copy in (
+            "COPY config.py web.py ./",
+            "COPY src ./src",
+            "COPY scripts/hash_password.py ./scripts/hash_password.py",
+            "COPY frontend/admin.html ./frontend/admin.html",
+            "COPY frontend/public ./frontend/public",
+        ):
+            with self.subTest(runtime_copy=runtime_copy):
+                self.assertIn(runtime_copy, dockerfile)
+        self.assertIn(
+            "ln -s /app/scripts/hash_password.py /usr/local/bin/codebuddy2api-hash-password",
+            dockerfile,
+        )
 
     def test_coverage_configuration_measures_all_production_modules(self):
         coverage_config = configparser.ConfigParser()
