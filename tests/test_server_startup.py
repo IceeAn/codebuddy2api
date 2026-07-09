@@ -105,15 +105,37 @@ class ServerStartupTests(unittest.TestCase):
 class ServerLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_lifespan_starts_and_stops_resources(self):
         with (
+            mock.patch.object(web, "validate_configured_users_file") as validate_users,
             mock.patch.object(web, "initialize_database") as initialize_database,
             mock.patch.object(web.lifecycle_manager, "startup", new=mock.AsyncMock()) as startup,
             mock.patch.object(web.lifecycle_manager, "shutdown", new=mock.AsyncMock()) as shutdown,
         ):
             async with web.lifespan(web.app):
+                validate_users.assert_called_once_with()
                 initialize_database.assert_called_once_with()
                 startup.assert_awaited_once_with()
                 shutdown.assert_not_awaited()
 
+        shutdown.assert_awaited_once_with()
+
+    async def test_lifespan_stops_before_resource_startup_when_users_file_is_invalid(self):
+        with (
+            mock.patch.object(
+                web,
+                "validate_configured_users_file",
+                side_effect=RuntimeError("missing users"),
+            ) as validate_users,
+            mock.patch.object(web, "initialize_database") as initialize_database,
+            mock.patch.object(web.lifecycle_manager, "startup", new=mock.AsyncMock()) as startup,
+            mock.patch.object(web.lifecycle_manager, "shutdown", new=mock.AsyncMock()) as shutdown,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "missing users"):
+                async with web.lifespan(web.app):
+                    pass
+
+        validate_users.assert_called_once_with()
+        initialize_database.assert_not_called()
+        startup.assert_not_awaited()
         shutdown.assert_awaited_once_with()
 
     async def test_health_and_root_endpoints_return_metadata(self):

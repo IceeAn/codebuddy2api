@@ -40,22 +40,7 @@ def create_password_hash(password: str, iterations: int = PBKDF2_ITERATIONS) -> 
 def verify_password(password: str, password_hash: str) -> bool:
     """校验 PBKDF2-SHA256 密码哈希。"""
     try:
-        algorithm, iterations_raw, salt_b64, digest_b64 = password_hash.split("$")
-        if algorithm != PBKDF2_ALGORITHM:
-            return False
-
-        if not iterations_raw.isascii() or not iterations_raw.isdigit():
-            return False
-        iterations = int(iterations_raw)
-        if str(iterations) != iterations_raw:
-            return False
-        if not PBKDF2_MIN_ITERATIONS <= iterations <= PBKDF2_MAX_ITERATIONS:
-            return False
-
-        salt = _decode_unpadded_base64(salt_b64)
-        expected_digest = _decode_unpadded_base64(digest_b64)
-        if len(salt) != PBKDF2_SALT_BYTES or len(expected_digest) != PBKDF2_DIGEST_BYTES:
-            return False
+        iterations, salt, expected_digest = _parse_password_hash(password_hash)
         actual_digest = hashlib.pbkdf2_hmac(
             "sha256",
             password.encode("utf-8"),
@@ -66,6 +51,35 @@ def verify_password(password: str, password_hash: str) -> bool:
         return hmac.compare_digest(actual_digest, expected_digest)
     except (AttributeError, TypeError, UnicodeError, ValueError, binascii.Error):
         return False
+
+
+def is_supported_password_hash(password_hash: str) -> bool:
+    """检查密码哈希是否为受支持的规范 PBKDF2-SHA256 格式。"""
+    try:
+        _parse_password_hash(password_hash)
+    except (AttributeError, TypeError, UnicodeError, ValueError, binascii.Error):
+        return False
+    return True
+
+
+def _parse_password_hash(password_hash: str) -> tuple[int, bytes, bytes]:
+    algorithm, iterations_raw, salt_b64, digest_b64 = password_hash.split("$")
+    if algorithm != PBKDF2_ALGORITHM:
+        raise ValueError("Unsupported password hash algorithm")
+
+    if not iterations_raw.isascii() or not iterations_raw.isdigit():
+        raise ValueError("Invalid PBKDF2 iteration count")
+    iterations = int(iterations_raw)
+    if str(iterations) != iterations_raw:
+        raise ValueError("Non-canonical PBKDF2 iteration count")
+    if not PBKDF2_MIN_ITERATIONS <= iterations <= PBKDF2_MAX_ITERATIONS:
+        raise ValueError("PBKDF2 iterations are outside the supported range")
+
+    salt = _decode_unpadded_base64(salt_b64)
+    expected_digest = _decode_unpadded_base64(digest_b64)
+    if len(salt) != PBKDF2_SALT_BYTES or len(expected_digest) != PBKDF2_DIGEST_BYTES:
+        raise ValueError("Invalid PBKDF2 salt or digest length")
+    return iterations, salt, expected_digest
 
 
 def _decode_unpadded_base64(value: str) -> bytes:

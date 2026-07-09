@@ -5,9 +5,13 @@ from typing import Dict, Optional
 
 from config import get_users_file_path
 from .auth_types import DUMMY_PASSWORD_HASH
-from .password_hashing import verify_password
+from .password_hashing import is_supported_password_hash, verify_password
 
 logger = logging.getLogger(__name__)
+
+
+class UsersFileConfigurationError(RuntimeError):
+    """系统用户文件配置无效，服务启动必须失败。"""
 
 
 class UsersFileStore:
@@ -56,6 +60,9 @@ class UsersFileStore:
                 if not separator or not username.strip() or not password_hash.strip():
                     logger.warning("Ignoring invalid users file line %s in %s", line_number, users_file)
                     continue
+                if not is_supported_password_hash(password_hash.strip()):
+                    logger.warning("Ignoring invalid password hash on line %s in %s", line_number, users_file)
+                    continue
 
                 users[username.strip()] = password_hash.strip()
 
@@ -80,5 +87,27 @@ class UsersFileStore:
         self._load_if_needed()
         return username in self._users
 
+    def validate_configured_users_file(self) -> None:
+        """启动期校验系统用户文件，避免服务以不可登录状态运行。"""
+        users_file = self._resolve_users_file()
+        if not users_file.exists():
+            raise UsersFileConfigurationError(
+                f"Authentication users file not found: {users_file}"
+            )
+        if not users_file.is_file():
+            raise UsersFileConfigurationError(
+                f"Authentication users file is not a regular file: {users_file}"
+            )
+
+        self._load_if_needed()
+        if not self._users:
+            raise UsersFileConfigurationError(
+                f"Authentication users file has no valid users: {users_file}"
+            )
+
 
 users_store = UsersFileStore()
+
+
+def validate_configured_users_file() -> None:
+    users_store.validate_configured_users_file()

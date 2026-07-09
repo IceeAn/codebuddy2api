@@ -19,6 +19,7 @@ from src.frontend_router import router as frontend_router
 from src.openai_router import external_openai_router, playground_openai_router
 from src.private_response import PrivateNoStoreFastAPI, PrivateNoStoreRoute
 from src.stream_service import UpstreamAPIError, lifecycle_manager
+from src.users_store import validate_configured_users_file
 
 from config import (
     get_allowed_hosts,
@@ -44,6 +45,7 @@ async def lifespan(app: FastAPI):
     logger.info("Starting CodeBuddy2API Service")
     try:
         # 启动时初始化资源
+        validate_configured_users_file()
         initialize_database()
         await lifecycle_manager.startup()
         yield

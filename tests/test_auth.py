@@ -24,9 +24,14 @@ from src.password_hashing import (
     PBKDF2_MIN_ITERATIONS,
     _decode_unpadded_base64,
     create_password_hash,
+    is_supported_password_hash,
     verify_password,
 )
-from src.users_store import UsersFileStore
+from src.users_store import (
+    UsersFileConfigurationError,
+    UsersFileStore,
+    validate_configured_users_file,
+)
 
 from tests.helpers import TempConfigMixin, configure_users_file, make_request
 
@@ -107,6 +112,13 @@ class PasswordHashingTests(unittest.TestCase):
     def test_verify_password_rejects_non_string_hash(self):
         self.assertFalse(verify_password("secret", None))
 
+    def test_supported_password_hash_format_requires_canonical_pbkdf2(self):
+        self.assertTrue(is_supported_password_hash(create_password_hash("secret")))
+
+        for value in (None, "", "plaintext", "bcrypt$bad", DUMMY_PASSWORD_HASH + "="):
+            with self.subTest(value=value):
+                self.assertFalse(is_supported_password_hash(value))
+
 
 class UsersFileStoreTests(TempConfigMixin, unittest.TestCase):
     def test_users_file_store_verifies_pbkdf2_hashes(self):
@@ -153,6 +165,18 @@ class UsersFileStoreTests(TempConfigMixin, unittest.TestCase):
         self.assertFalse(store.has_users_file())
         self.assertFalse(store.verify("admin", "secret-password"))
 
+    def test_startup_validation_fails_when_users_file_is_missing(self):
+        users_file = self.temp_path / "missing.txt"
+        config._config_cache["CODEBUDDY_USERS_FILE"] = str(users_file)
+
+        store = UsersFileStore()
+
+        with self.assertRaisesRegex(
+            UsersFileConfigurationError,
+            f"Authentication users file not found: {users_file}",
+        ):
+            store.validate_configured_users_file()
+
     def test_relative_users_file_path_is_resolved_from_working_directory(self):
         store = UsersFileStore()
         with (
@@ -163,6 +187,21 @@ class UsersFileStoreTests(TempConfigMixin, unittest.TestCase):
 
         self.assertEqual(path, self.temp_path / "secrets" / "users.txt")
 
+    def test_users_file_store_ignores_invalid_password_hashes(self):
+        users_file = self.temp_path / "users.txt"
+        users_file.write_text("admin:not-a-pbkdf2-hash\n", encoding="utf-8")
+        config._config_cache["CODEBUDDY_USERS_FILE"] = str(users_file)
+
+        store = UsersFileStore()
+
+        self.assertFalse(store.has_users_file())
+        self.assertFalse(store.has_username("admin"))
+        with self.assertRaisesRegex(
+            UsersFileConfigurationError,
+            f"Authentication users file has no valid users: {users_file}",
+        ):
+            store.validate_configured_users_file()
+
     def test_users_file_store_rejects_non_regular_path(self):
         users_dir = self.temp_path / "users"
         users_dir.mkdir()
@@ -171,6 +210,33 @@ class UsersFileStoreTests(TempConfigMixin, unittest.TestCase):
         store = UsersFileStore()
 
         self.assertFalse(store.has_users_file())
+
+        with self.assertRaisesRegex(
+            UsersFileConfigurationError,
+            f"Authentication users file is not a regular file: {users_dir}",
+        ):
+            store.validate_configured_users_file()
+
+    def test_startup_validation_fails_when_users_file_has_no_valid_users(self):
+        users_file = self.temp_path / "users.txt"
+        users_file.write_text("# comment\nmissing-separator\n", encoding="utf-8")
+        config._config_cache["CODEBUDDY_USERS_FILE"] = str(users_file)
+
+        store = UsersFileStore()
+
+        with self.assertRaisesRegex(
+            UsersFileConfigurationError,
+            f"Authentication users file has no valid users: {users_file}",
+        ):
+            store.validate_configured_users_file()
+
+    def test_startup_validation_accepts_valid_users_file(self):
+        configure_users_file(self.temp_path)
+
+        store = UsersFileStore()
+
+        store.validate_configured_users_file()
+        validate_configured_users_file()
 
 
 class AuthDependencyTests(TempConfigMixin, unittest.TestCase):
