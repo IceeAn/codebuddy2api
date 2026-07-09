@@ -226,8 +226,12 @@ function updateTags(field: SettingField, value: string[]) {
           :path="field.key"
         >
           <template v-if="field.description" #label>
-            <span class="inline-flex w-full min-w-0 max-w-full items-start justify-start gap-1.5 md:justify-end">
-              <span class="min-w-0 max-w-full whitespace-normal break-words">{{ field.label }}</span>
+            <span
+              class="inline-flex w-full max-w-full min-w-0 items-start justify-start gap-1.5 md:justify-end"
+            >
+              <span class="max-w-full min-w-0 break-words whitespace-normal">{{
+                field.label
+              }}</span>
               <CTooltip :content="field.description" placement="top">
                 <span
                   class="setting-help-trigger inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted transition-colors duration-(--duration-fast) hover:text-text"

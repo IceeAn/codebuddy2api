@@ -61,12 +61,9 @@ export const adminApi = {
     apiRequest<{
       auto_rotation_disabled_by_select: boolean;
       current: CurrentCredential;
-    }>(
-      `/api/admin/credentials/${encodeURIComponent(credentialId)}/select`,
-      {
-        method: 'POST',
-      },
-    ),
+    }>(`/api/admin/credentials/${encodeURIComponent(credentialId)}/select`, {
+      method: 'POST',
+    }),
   deleteCredential: (credentialId: string) =>
     apiRequest<DeleteCredentialResponse>(
       `/api/admin/credentials/${encodeURIComponent(credentialId)}`,

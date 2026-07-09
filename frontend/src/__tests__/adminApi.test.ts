@@ -59,10 +59,7 @@ describe('管理 API 封装', () => {
       ['/api/admin/api-keys', { method: 'POST', json: { name: 'robot' } }],
       ['/api/admin/api-keys/key%2Fid', { method: 'DELETE' }],
       ['/api/admin/credentials'],
-      [
-        '/api/admin/credentials',
-        { method: 'POST', json: { bearer_token: 'token' } },
-      ],
+      ['/api/admin/credentials', { method: 'POST', json: { bearer_token: 'token' } }],
       ['/api/admin/credentials/cred%2Fid/select', { method: 'POST' }],
       ['/api/admin/credentials/cred%2Fid', { method: 'DELETE' }],
       ['/api/admin/credentials/cred%2Fid/test', { method: 'POST', json: {}, timeoutMs: 335000 }],

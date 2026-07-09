@@ -58,10 +58,7 @@ function deleteCredential(): void {
         variant="secondary"
         shape="circle"
         :disabled="selectDisabled"
-        :class="[
-          'table-action-button',
-          { 'current-credential-action-button': selectDisabled },
-        ]"
+        :class="['table-action-button', { 'current-credential-action-button': selectDisabled }]"
         :aria-label="selectAriaLabel"
         @click="selectCredential"
       >

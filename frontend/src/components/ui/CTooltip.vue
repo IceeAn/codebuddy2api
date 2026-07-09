@@ -119,7 +119,7 @@ onBeforeUnmount(() => {
           ref="popoverRef"
           :style="positionStyle"
           :class="[
-            'c-tooltip-popover fixed z-50 w-max max-w-[20rem] whitespace-normal break-words rounded-md bg-slate-950 px-2.5 py-1.5 text-xs text-slate-50 shadow-(--shadow-popover) dark:bg-slate-700 dark:text-slate-100',
+            'c-tooltip-popover fixed z-50 w-max max-w-[20rem] rounded-md bg-slate-950 px-2.5 py-1.5 text-xs break-words whitespace-normal text-slate-50 shadow-(--shadow-popover) dark:bg-slate-700 dark:text-slate-100',
             positioned ? '' : 'pointer-events-none opacity-0',
             placementClass,
           ]"

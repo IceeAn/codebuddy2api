@@ -449,9 +449,9 @@ describe('useOAuthPolling', () => {
       verification_uri_complete: 'https://cb/auth',
       auth_state: 'state-stopped',
     });
-    const pollAuth = vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockRejectedValue(
-      new ApiError(400, 'pending', { error: 'authorization_pending' }),
-    );
+    const pollAuth = vi
+      .spyOn(codebuddyOAuthApi, 'pollAuth')
+      .mockRejectedValue(new ApiError(400, 'pending', { error: 'authorization_pending' }));
 
     const oauth = useOAuthPolling({ pollIntervalMs: 5000 });
     await oauth.start();

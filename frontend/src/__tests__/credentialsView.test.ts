@@ -131,7 +131,8 @@ function mountView() {
         CForm: FormStub,
         CFormItem: {
           props: ['label', 'path', 'required'],
-          template: '<div class="c-form-item"><label v-if="label">{{ label }}</label><slot /></div>',
+          template:
+            '<div class="c-form-item"><label v-if="label">{{ label }}</label><slot /></div>',
         },
         CTag: {
           props: ['type', 'dot'],
@@ -347,9 +348,7 @@ describe('CredentialsView', () => {
       expect.arrayContaining(['flex', 'flex-col', 'gap-3']),
     );
     expect(wrapper.find('.credential-auth-idle').classes()).not.toContain('lg:flex-1');
-    const startButton = wrapper
-      .findAll('button')
-      .find((node) => node.text().includes('开始认证'));
+    const startButton = wrapper.findAll('button').find((node) => node.text().includes('开始认证'));
     expect(startButton?.classes()).toContain('credential-auth-start-button');
     expect(startButton?.classes()).not.toContain('mt-auto');
     expect(startButton?.classes()).not.toContain('lg:mt-auto');
@@ -399,10 +398,7 @@ describe('CredentialsView', () => {
     await buttons.find((button) => button.text().includes('取消认证'))?.trigger('click');
 
     expect(oauth.openAuthUrl).toHaveBeenCalledOnce();
-    expect(copyMock).toHaveBeenCalledWith(
-      'https://auth.example/private-state',
-      '认证链接已复制',
-    );
+    expect(copyMock).toHaveBeenCalledWith('https://auth.example/private-state', '认证链接已复制');
     expect(oauth.cancel).toHaveBeenCalledOnce();
   });
 

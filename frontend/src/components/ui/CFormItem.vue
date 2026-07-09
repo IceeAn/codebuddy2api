@@ -104,10 +104,10 @@ onBeforeUnmount(() => {
     <template v-if="labelPlacement === 'left'">
       <label
         v-if="hasLabel"
-        class="c-form-item-label min-w-0 max-w-full text-left text-[13px] font-medium text-text md:flex md:min-h-[38px] md:items-center md:justify-end md:text-right"
+        class="c-form-item-label max-w-full min-w-0 text-left text-[13px] font-medium text-text md:flex md:min-h-[38px] md:items-center md:justify-end md:text-right"
       >
         <slot name="label">
-          <span class="min-w-0 max-w-full whitespace-normal break-words">{{ label }}</span>
+          <span class="max-w-full min-w-0 break-words whitespace-normal">{{ label }}</span>
         </slot>
         <span v-if="isRequired" class="c-form-item-required ml-0.5 text-error-500">*</span>
       </label>
@@ -116,10 +116,10 @@ onBeforeUnmount(() => {
     <template v-else>
       <label
         v-if="hasLabel"
-        class="c-form-item-label mb-1.5 block min-w-0 max-w-full text-[13px] font-medium text-text"
+        class="c-form-item-label mb-1.5 block max-w-full min-w-0 text-[13px] font-medium text-text"
       >
         <slot name="label">
-          <span class="block min-w-0 max-w-full whitespace-normal break-words">{{ label }}</span>
+          <span class="block max-w-full min-w-0 break-words whitespace-normal">{{ label }}</span>
         </slot>
         <span v-if="isRequired" class="c-form-item-required ml-0.5 text-error-500">*</span>
       </label>
