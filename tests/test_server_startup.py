@@ -35,6 +35,17 @@ class RepositoryConfigurationTests(unittest.TestCase):
 
         self.assertIn("CODEBUDDY_DATA_DIR: /app/data", compose_lines)
 
+    def test_release_workflow_uploads_local_runtime_packages(self):
+        workflow = (
+            self.repository_root / ".github" / "workflows" / "release.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("pnpm run build:bundle", workflow)
+        self.assertIn('python3 scripts/build_release_package.py "${TAG}"', workflow)
+        self.assertIn("dist/release/codebuddy2api.tar.gz", workflow)
+        self.assertIn("dist/release/codebuddy2api.zip", workflow)
+        self.assertIn("dist/release/SHA256SUMS.txt", workflow)
+
     def test_container_entrypoint_forces_database_into_persistent_mount(self):
         entrypoint = (self.repository_root / "entrypoint.sh").read_text(encoding="utf-8")
 

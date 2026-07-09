@@ -1,0 +1,611 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing stable tag to publish, for example v1.2.3"
+        required: true
+        type: string
+      previous_tag:
+        description: "Optional previous tag for generated release notes, for example v0.0.1"
+        required: false
+        type: string
+      ignore_unfixed:
+        description: "Trivy 扫描时忽略尚无修复版本的漏洞"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  resolve:
+    name: Resolve release target
+    runs-on: ubuntu-latest
+
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      image: ${{ steps.release.outputs.image }}
+      ignore_unfixed: ${{ steps.release.outputs.ignore_unfixed }}
+      latest: ${{ steps.latest.outputs.latest }}
+      previous_tag: ${{ steps.comparison.outputs.previous_tag }}
+
+    steps:
+      - name: Resolve release target
+        id: release
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_IGNORE_UNFIXED: ${{ inputs.ignore_unfixed }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            release_tag="${INPUT_TAG}"
+            ignore_unfixed="${INPUT_IGNORE_UNFIXED}"
+          else
+            release_tag="${GITHUB_REF_NAME}"
+            ignore_unfixed="true"
+          fi
+
+          if [[ ! "${release_tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Only stable tags like v1.2.3 are supported."
+            exit 1
+          fi
+
+          image_name="$(printf '%s' "${IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')"
+
+          echo "tag=${release_tag}" >> "${GITHUB_OUTPUT}"
+          echo "image=${REGISTRY}/${image_name}" >> "${GITHUB_OUTPUT}"
+          echo "ignore_unfixed=${ignore_unfixed}" >> "${GITHUB_OUTPUT}"
+
+      - name: Checkout release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Validate release versions
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: python3 scripts/build_release_package.py "${TAG}" --validate-only
+
+      - name: Determine whether this is the highest stable tag
+        id: latest
+        shell: bash
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          highest_stable_tag="$({
+            git tag --list | awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/ { print }'
+          } | LC_ALL=C sort -V | tail -n 1)"
+
+          if [[ -z "${highest_stable_tag}" ]]; then
+            echo "::error::No stable tags were found."
+            exit 1
+          fi
+
+          if [[ "${TAG}" == "${highest_stable_tag}" ]]; then
+            echo "latest=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "latest=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Resolve previous stable tag
+        id: comparison
+        shell: bash
+        env:
+          INPUT_PREVIOUS_TAG: ${{ inputs.previous_tag }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          previous_tag="${INPUT_PREVIOUS_TAG}"
+          if [[ -n "${previous_tag}" ]]; then
+            if [[ ! "${previous_tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::Previous tag must look like v1.2.3."
+              exit 1
+            fi
+            if ! git show-ref --verify --quiet "refs/tags/${previous_tag}"; then
+              echo "::error::Previous tag ${previous_tag} does not exist."
+              exit 1
+            fi
+            if [[ "${previous_tag}" == "${TAG}" ]]; then
+              echo "::error::Previous tag must differ from ${TAG}."
+              exit 1
+            fi
+            if ! git merge-base --is-ancestor "${previous_tag}" "${TAG}"; then
+              echo "::error::Previous tag ${previous_tag} is not an ancestor of ${TAG}."
+              exit 1
+            fi
+            first_tag="$(printf '%s\n%s\n' "${previous_tag}" "${TAG}" | LC_ALL=C sort -V | head -n 1)"
+            if [[ "${first_tag}" != "${previous_tag}" ]]; then
+              echo "::error::Previous tag ${previous_tag} is newer than ${TAG}."
+              exit 1
+            fi
+          else
+            previous_tag="$({
+              git tag --list --merged "${TAG}" |
+                awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/ { print }'
+            } | LC_ALL=C sort -V | awk -v tag="${TAG}" '
+              $0 == tag { print previous; exit }
+              { previous = $0 }
+            ')"
+          fi
+
+          echo "previous_tag=${previous_tag}" >> "${GITHUB_OUTPUT}"
+
+  backend:
+    name: Backend validation
+    runs-on: ubuntu-latest
+    needs: resolve
+
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Create virtual environment
+        run: python3 -m venv venv
+
+      - name: Install dependencies
+        run: venv/bin/python3 -m pip install -r requirements-dev.txt
+
+      - name: Run backend tests
+        run: venv/bin/python3 -m coverage run -m unittest discover -s tests
+
+      - name: Check backend coverage
+        run: venv/bin/python3 -m coverage report
+
+  frontend:
+    name: Frontend validation
+    runs-on: ubuntu-latest
+    needs: resolve
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.29.2
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24.11.1"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check formatting
+        run: pnpm run format:check
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Build frontend
+        run: pnpm run build:bundle
+
+      - name: Run frontend tests
+        run: pnpm run test:coverage
+
+  release_notes:
+    name: Release notes validation
+    runs-on: ubuntu-latest
+    needs: resolve
+
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+
+      - name: Validate changelog section
+        shell: bash
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          changelog_path="CHANGELOG.md"
+          manual_notes="$(mktemp)"
+
+          if [[ ! -f "${changelog_path}" ]]; then
+            echo "::error::Missing ${changelog_path}. Add a section for ${TAG} before publishing."
+            exit 1
+          fi
+
+          awk -v tag="${TAG}" '
+            function starts_with_header(line, prefix) {
+              if (substr(line, 1, length(prefix)) != prefix) {
+                return 0
+              }
+              next_char = substr(line, length(prefix) + 1, 1)
+              return next_char == "" || next_char == " " || next_char == "\t"
+            }
+            BEGIN {
+              plain_header = "## " tag
+              bracket_header = "## [" tag "]"
+            }
+            starts_with_header($0, plain_header) || starts_with_header($0, bracket_header) {
+              found = 1
+              next
+            }
+            found && /^##[[:space:]]+/ {
+              exit
+            }
+            found {
+              print
+            }
+            END {
+              if (!found) {
+                exit 1
+              }
+            }
+          ' "${changelog_path}" > "${manual_notes}" || {
+            echo "::error::Missing ${TAG} section in ${changelog_path}."
+            exit 1
+          }
+
+          if ! grep -q '[^[:space:]]' "${manual_notes}"; then
+            echo "::error::The ${TAG} section in ${changelog_path} is empty."
+            exit 1
+          fi
+
+  scan:
+    name: Vulnerability scan
+    runs-on: ubuntu-latest
+    needs:
+      - resolve
+      - backend
+      - frontend
+      - release_notes
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ needs.resolve.outputs.image }}
+          tags: type=raw,value=${{ needs.resolve.outputs.tag }}
+          flavor: latest=false
+
+      - name: Build and push Docker image by digest
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          sbom: true
+          provenance: mode=max
+
+      - name: Report HIGH and CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          image-ref: ${{ needs.resolve.outputs.image }}@${{ steps.build.outputs.digest }}
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: ${{ needs.resolve.outputs.ignore_unfixed }}
+          format: table
+          exit-code: "0"
+
+      - name: Fail on CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          image-ref: ${{ needs.resolve.outputs.image }}@${{ steps.build.outputs.digest }}
+          vuln-type: os,library
+          severity: CRITICAL
+          ignore-unfixed: ${{ needs.resolve.outputs.ignore_unfixed }}
+          format: table
+          exit-code: "1"
+
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+
+  publish:
+    name: Publish image and release
+    runs-on: ubuntu-latest
+    needs:
+      - resolve
+      - scan
+      - release_notes
+    permissions:
+      contents: write
+      pull-requests: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.29.2
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24.11.1"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend for release package
+        working-directory: frontend
+        run: pnpm run build:bundle
+
+      - name: Build release package
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: python3 scripts/build_release_package.py "${TAG}"
+
+      - name: Generate release package attestations
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            dist/release/codebuddy2api.tar.gz
+            dist/release/codebuddy2api.zip
+            dist/release/SHA256SUMS.txt
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish Docker image tags
+        shell: bash
+        env:
+          IMAGE: ${{ needs.resolve.outputs.image }}
+          DIGEST: ${{ needs.scan.outputs.digest }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          UPDATE_LATEST: ${{ needs.resolve.outputs.latest }}
+        run: |
+          set -euo pipefail
+
+          tag_args=(--tag "${IMAGE}:${TAG}")
+          if [[ "${UPDATE_LATEST}" == "true" ]]; then
+            tag_args+=(--tag "${IMAGE}:latest")
+          fi
+
+          docker buildx imagetools create --prefer-index=false \
+            "${tag_args[@]}" "${IMAGE}@${DIGEST}"
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v4.0.0
+
+      - name: Sign Docker image
+        shell: bash
+        env:
+          IMAGE: ${{ needs.resolve.outputs.image }}
+          DIGEST: ${{ needs.scan.outputs.digest }}
+          COSIGN_YES: "true"
+        run: |
+          set -euo pipefail
+
+          cosign sign "${IMAGE}@${DIGEST}"
+
+      - name: Build release notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          IMAGE: ${{ needs.resolve.outputs.image }}
+          DIGEST: ${{ needs.scan.outputs.digest }}
+          PREVIOUS_TAG: ${{ needs.resolve.outputs.previous_tag }}
+          UPDATE_LATEST: ${{ needs.resolve.outputs.latest }}
+        run: |
+          set -euo pipefail
+
+          changelog_path="CHANGELOG.md"
+          manual_notes="$(mktemp)"
+          generated_notes="$(mktemp)"
+          direct_commit_notes="$(mktemp)"
+
+          if [[ ! -f "${changelog_path}" ]]; then
+            echo "::error::Missing ${changelog_path}. Add a section for ${TAG} before publishing."
+            exit 1
+          fi
+
+          awk -v tag="${TAG}" '
+            function starts_with_header(line, prefix) {
+              if (substr(line, 1, length(prefix)) != prefix) {
+                return 0
+              }
+              next_char = substr(line, length(prefix) + 1, 1)
+              return next_char == "" || next_char == " " || next_char == "\t"
+            }
+            BEGIN {
+              plain_header = "## " tag
+              bracket_header = "## [" tag "]"
+            }
+            starts_with_header($0, plain_header) || starts_with_header($0, bracket_header) {
+              found = 1
+              next
+            }
+            found && /^##[[:space:]]+/ {
+              exit
+            }
+            found {
+              print
+            }
+            END {
+              if (!found) {
+                exit 1
+              }
+            }
+          ' "${changelog_path}" > "${manual_notes}" || {
+            echo "::error::Missing ${TAG} section in ${changelog_path}."
+            exit 1
+          }
+
+          if ! grep -q '[^[:space:]]' "${manual_notes}"; then
+            echo "::error::The ${TAG} section in ${changelog_path} is empty."
+            exit 1
+          fi
+
+          release_notes_args=(
+            "repos/${GITHUB_REPOSITORY}/releases/generate-notes"
+            -f "tag_name=${TAG}"
+            -f "target_commitish=${TAG}"
+          )
+
+          if [[ -n "${PREVIOUS_TAG}" ]]; then
+            release_notes_args+=(-f "previous_tag_name=${PREVIOUS_TAG}")
+          fi
+
+          gh api "${release_notes_args[@]}" --jq .body > "${generated_notes}"
+
+          direct_notes_args=(
+            --repository "${GITHUB_REPOSITORY}"
+            --repository-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+            --tag "${TAG}"
+            --output "${direct_commit_notes}"
+          )
+          if [[ -n "${PREVIOUS_TAG}" ]]; then
+            direct_notes_args+=(--previous-tag "${PREVIOUS_TAG}")
+          fi
+          python3 scripts/build_direct_commit_notes.py "${direct_notes_args[@]}"
+
+          {
+            echo "## 版本说明"
+            cat "${manual_notes}"
+            echo
+            echo "## 容器镜像"
+            echo "- \`${IMAGE}:${TAG}\`"
+            if [[ "${UPDATE_LATEST}" == "true" ]]; then
+              echo "- \`${IMAGE}:latest\`"
+            fi
+            echo "- \`${IMAGE}@${DIGEST}\`"
+            echo
+            echo "## 变更记录"
+            cat "${generated_notes}"
+            if [[ -s "${direct_commit_notes}" ]]; then
+              echo
+              cat "${direct_commit_notes}"
+            fi
+          } > release-notes.md
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          UPDATE_LATEST: ${{ needs.resolve.outputs.latest }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            edit_args=(
+              --title "${TAG}"
+              --notes-file release-notes.md
+            )
+            if [[ "${UPDATE_LATEST}" == "true" ]]; then
+              edit_args+=(--latest)
+            fi
+            gh release edit "${TAG}" "${edit_args[@]}"
+          else
+            create_args=(
+              --title "${TAG}"
+              --notes-file release-notes.md
+              --verify-tag
+            )
+            if [[ "${UPDATE_LATEST}" == "true" ]]; then
+              create_args+=(--latest)
+            else
+              create_args+=(--latest=false)
+            fi
+            gh release create "${TAG}" "${create_args[@]}"
+          fi
+
+          gh release upload "${TAG}" \
+            dist/release/codebuddy2api.tar.gz \
+            dist/release/codebuddy2api.zip \
+            dist/release/SHA256SUMS.txt \
+            --clobber

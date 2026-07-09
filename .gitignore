@@ -17,6 +17,7 @@ htmlcov/
 *.log
 
 # 前端依赖、构建与测试产物
+/dist/
 /frontend/node_modules/
 /frontend/dist/
 /frontend/coverage/

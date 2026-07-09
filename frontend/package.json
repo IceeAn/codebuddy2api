@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5173",
     "build": "vue-tsc --noEmit && vite build",
+    "build:bundle": "vite build",
     "typecheck": "vue-tsc --noEmit",
     "lint": "oxlint .",
     "lint:fix": "oxlint . --fix",

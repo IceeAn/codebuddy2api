@@ -22,8 +22,8 @@ venv/bin/python3 -m pip install -r requirements-dev.txt
 venv/bin/python3 -m coverage run -m unittest discover -s tests
 venv/bin/python3 -m coverage report
 
-# 前端验证
-cd frontend && pnpm run test:coverage && pnpm run typecheck && pnpm run build
+# 前端修改后验证
+cd frontend && pnpm run format:check && pnpm run lint && pnpm run build && pnpm run test:coverage
 
 # 为 secrets/users.txt 生成密码哈希
 venv/bin/python3 scripts/hash_password.py <用户名>
@@ -67,6 +67,7 @@ venv/bin/python3 scripts/hash_password.py <用户名>
 - **测试驱动开发**：开发流程须完全遵循 TDD，保证单元测试100%覆盖、且尽可能覆盖真实用例。
 - **后端测试**：使用标准库 `unittest` 与 `coverage.py`；`venv/bin/python3 -m coverage report` 对 `config.py`、`web.py` 和 `src/` 生产代码强制执行行/分支综合 100% 覆盖率门槛。
 - **前端测试**：Vitest 使用 jsdom 与 Vue Test Utils；`pnpm run test:coverage` 对 `src/` 生产代码强制执行 statements、branches、functions、lines 四项 100% 覆盖率门槛。
+- **前端修改后流程**：前端文件修改后先运行 Prettier 检查，失败时执行 `pnpm run format` 并重新检查；随后依次运行 `pnpm run lint`、`pnpm run build`、`pnpm run test:coverage`。`pnpm run build` 包含类型检查和生产构建；CI 单独运行 `pnpm run typecheck` 与 `pnpm run build:bundle`。
 - **保证需求的正确性**：若我需要你实现的需求存在不明确的部分，请直接提问；若工作过程中出现重要的选择，停下来说明并等待回复。尽可能地不要自行推测意图和需求。
 - **快速失败而不是兜底**：非常重要！目前项目仍在开发中。为保证质量、尽早发现错误，各种非预期的错误应该快速失败，少对错误数据进行防御性的兜底。
 - **干净的修改与重构**：进行 breaking change 后，无需对修改前的旧表、旧字段、旧接口等进行兼容。可以认为它们在前、后端均不再使用。
@@ -80,6 +81,7 @@ venv/bin/python3 scripts/hash_password.py <用户名>
 - 挂载卷：`./data`、`./.codebuddy_creds`、`./secrets/users.txt:ro`；Compose 和 `entrypoint.sh` 强制 `CODEBUDDY_DATA_DIR=/app/data`，避免环境变量将数据库移出持久化挂载。
 - Dockerfile 固定使用 Node 24.11.1 构建前端，再复制 `frontend/dist/` 到 Python 运行时镜像。
 - 容器 CMD 为 `uvicorn web:app --host 0.0.0.0 --port 8001 --no-access-log`。
+- Release workflow 只发布 `v数字.数字.数字` 稳定 tag。发布标签必须等于 `v{web.py 的 APP_VERSION}`，且 `frontend/package.json` 版本必须与 `APP_VERSION` 相同；三方不一致时在构建前快速失败。发布前必须在 `CHANGELOG.md` 添加对应版本二级标题及非空说明；workflow 会先跑后端和前端验证，再按 digest 推送一次镜像并对同一 digest 执行 Trivy 漏洞扫描，`CRITICAL` 漏洞阻断发布。Trivy 默认忽略尚无修复版本的漏洞，手动发布可通过 `ignore_unfixed=false` 将其纳入扫描。扫描通过后才为该 digest 添加版本 tag；仅最高稳定版本更新容器和 GitHub Release 的 `latest`。镜像构建时生成 SBOM/provenance，并使用 Cosign keyless signing 对镜像 digest 签名，最后创建或更新 GitHub Release。个人 GHCR 包首次推送后默认为 private，需在包出现后手动改为 Public；当前工作流全程使用认证访问，因此无需仅为可见性重跑。自动发布说明通过 `.github/release.yml` 将 PR 分为新功能、Bug 修复和其他变更；workflow 同时通过 GitHub API 排除有关联 PR 的 commit，再按 `feat`、`fix` 和其他 Conventional Commit 前缀追加分类后的直接提交。无关联 PR 且使用 `chore(release):` 或 `chore(release)!:` 前缀的直接发布提交不会进入变更记录；PR 发布不应用此过滤规则。
 
 ## 安全边界
 
