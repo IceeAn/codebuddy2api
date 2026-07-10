@@ -12,7 +12,16 @@ import type {
   ModelListResponse,
   SessionInfo,
   SettingsResponse,
+  StatsOverviewQuery,
+  StatsOverviewResponse,
+  StatsDimension,
+  StatsDimensionQuery,
+  StatsDimensionResponse,
+  StatsRequestRecord,
+  StatsRequestsQuery,
+  StatsRequestsResponse,
 } from '../types';
+import { buildStatsSearchParams } from '../utils/stats';
 
 // 覆盖后端串行执行的 30 秒模型查询与 300 秒聊天请求，并预留响应处理时间。
 const CREDENTIAL_TEST_TIMEOUT_MS = 335_000;
@@ -86,6 +95,18 @@ export const adminApi = {
       auto_rotation_enabled: boolean;
       current: CredentialsResponse['current'];
     }>('/api/admin/credentials/rotation/toggle', { method: 'POST' }),
+  statsOverview: (query: StatsOverviewQuery) =>
+    apiRequest<StatsOverviewResponse>(`/api/admin/stats/overview?${buildStatsSearchParams(query)}`),
+  statsRequests: (query: StatsRequestsQuery) =>
+    apiRequest<StatsRequestsResponse>(`/api/admin/stats/requests?${buildStatsSearchParams(query)}`),
+  statsDimensions: (dimension: StatsDimension, query: StatsDimensionQuery) =>
+    apiRequest<StatsDimensionResponse>(
+      `/api/admin/stats/dimensions/${encodeURIComponent(dimension)}?${buildStatsSearchParams(query)}`,
+    ),
+  statsRequestDetail: (requestId: number) =>
+    apiRequest<StatsRequestRecord>(
+      `/api/admin/stats/requests/${encodeURIComponent(String(requestId))}`,
+    ),
 };
 
 export const codebuddyOAuthApi = {

@@ -1,11 +1,14 @@
-import { describe, expect, it, afterEach } from 'vitest';
+import { describe, expect, it, afterEach, vi } from 'vitest';
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils';
+import { ListFilter } from '@lucide/vue';
 import CSelect from '../components/ui/CSelect.vue';
 
 enableAutoUnmount(afterEach);
 
 describe('CSelect', () => {
   afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     document.body.innerHTML = '';
   });
 
@@ -26,6 +29,15 @@ describe('CSelect', () => {
     expect(trigger.classes()).toContain('text-sm');
     expect(trigger.classes()).toContain('rounded-md');
     expect(trigger.classes()).toContain('border');
+  });
+
+  it('sm 尺寸使用 32px 高度和紧凑间距', () => {
+    const wrapper = mount(CSelect, { props: { options: [], size: 'sm' } });
+    const trigger = wrapper.find('.c-select-trigger');
+    expect(trigger.classes()).toContain('h-8');
+    expect(trigger.classes()).toContain('px-2.5');
+    expect(trigger.classes()).toContain('text-[13px]');
+    expect(trigger.classes()).not.toContain('h-[38px]');
   });
 
   it('trigger 使用单层焦点样式', () => {
@@ -81,6 +93,29 @@ describe('CSelect', () => {
     expect(wrapper.find('.c-select-panel').exists()).toBe(false);
   });
 
+  it('打开另一个 Select 时关闭当前 Select', async () => {
+    const wrapper = mount(
+      {
+        components: { CSelect },
+        template: `
+          <div>
+            <CSelect :options="[{ label: 'A', value: 'a' }]" />
+            <CSelect :options="[{ label: 'B', value: 'b' }]" />
+          </div>
+        `,
+      },
+      { attachTo: document.body },
+    );
+    const selects = wrapper.findAllComponents(CSelect);
+
+    await selects[0]!.find('.c-select-trigger').trigger('click');
+    expect(selects[0]!.find('.c-select-panel').exists()).toBe(true);
+
+    await selects[1]!.find('.c-select-trigger').trigger('click');
+    expect(selects[0]!.find('.c-select-panel').exists()).toBe(false);
+    expect(selects[1]!.find('.c-select-panel').exists()).toBe(true);
+  });
+
   it('打开时 ChevronDown rotate-180', async () => {
     const wrapper = mount(CSelect, {
       props: { options: [{ label: 'A', value: 'a' }] },
@@ -104,6 +139,75 @@ describe('CSelect', () => {
     expect(panel.classes()).toContain('flex');
     expect(panel.classes()).toContain('flex-col');
     expect(panel.classes()).not.toContain('overflow-y-auto');
+  });
+
+  it('下拉动画使用淡入位移且关闭采用 ease-in，不缩放内容', () => {
+    const wrapper = mount(CSelect, {
+      props: { options: [{ label: 'A', value: 'a' }] },
+    });
+    const transition = wrapper.findComponent({ name: 'Transition' });
+    expect(transition.props('enterActiveClass')).toContain('duration-[var(--duration-base)]');
+    expect(transition.props('enterActiveClass')).toContain('ease-[var(--ease-out-quad)]');
+    expect(transition.props('leaveActiveClass')).toContain('duration-[var(--duration-base)]');
+    expect(transition.props('leaveActiveClass')).toContain('ease-[var(--ease-in-quad)]');
+    expect(transition.props('enterFromClass')).toBe('opacity-0 -translate-y-2');
+    expect(transition.props('leaveToClass')).toBe('opacity-0 -translate-y-2');
+    expect(transition.html()).not.toContain('scale-95');
+  });
+
+  it('下方放不下且上方空间更大时面板自动向上展开', async () => {
+    const wrapper = mount(CSelect, {
+      props: { options: [{ label: 'A', value: 'a' }] },
+    });
+    vi.spyOn(wrapper.find('.c-select-trigger').element, 'getBoundingClientRect').mockReturnValue({
+      top: 700,
+      bottom: 732,
+      height: 32,
+      left: 0,
+      right: 100,
+      width: 100,
+      x: 0,
+      y: 700,
+      toJSON: () => ({}),
+    });
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(144);
+    vi.stubGlobal('innerHeight', 800);
+
+    await wrapper.find('.c-select-trigger').trigger('click');
+    await flushPromises();
+
+    const panel = wrapper.find('.c-select-panel');
+    expect(panel.classes()).toContain('bottom-full');
+    expect(panel.classes()).toContain('mb-1');
+    expect(panel.classes()).not.toContain('top-full');
+    expect(panel.classes()).not.toContain('mt-1');
+  });
+
+  it('下方能放下时面板保持向下展开', async () => {
+    const wrapper = mount(CSelect, {
+      props: { options: [{ label: 'A', value: 'a' }] },
+    });
+    vi.spyOn(wrapper.find('.c-select-trigger').element, 'getBoundingClientRect').mockReturnValue({
+      top: 100,
+      bottom: 132,
+      height: 32,
+      left: 0,
+      right: 100,
+      width: 100,
+      x: 0,
+      y: 100,
+      toJSON: () => ({}),
+    });
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(144);
+    vi.stubGlobal('innerHeight', 800);
+
+    await wrapper.find('.c-select-trigger').trigger('click');
+    await flushPromises();
+
+    const panel = wrapper.find('.c-select-panel');
+    expect(panel.classes()).toContain('top-full');
+    expect(panel.classes()).toContain('mt-1');
+    expect(panel.classes()).not.toContain('bottom-full');
   });
 
   it('选项渲染', async () => {
@@ -135,6 +239,22 @@ describe('CSelect', () => {
     await wrapper.findAll('.c-select-option')[1].trigger('click');
     expect(wrapper.emitted('update:modelValue')).toBeTruthy();
     expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual(['b']);
+    expect(wrapper.find('.c-select-panel').exists()).toBe(false);
+  });
+
+  it('底部操作显示在选项下方，点击后关闭下拉并发出事件', async () => {
+    const wrapper = mount(CSelect, {
+      props: {
+        options: [{ label: 'A', value: 'a' }],
+        footerActionLabel: '查看统计详情',
+      },
+    });
+    await wrapper.find('.c-select-trigger').trigger('click');
+    const action = wrapper.find('.c-select-footer-action');
+    expect(action.text()).toContain('查看统计详情');
+    expect(action.findComponent(ListFilter).exists()).toBe(true);
+    await action.trigger('click');
+    expect(wrapper.emitted('footer-action')).toEqual([[]]);
     expect(wrapper.find('.c-select-panel').exists()).toBe(false);
   });
 
@@ -284,12 +404,13 @@ describe('CSelect', () => {
     expect(trigger.classes()).not.toContain('disabled:cursor-not-allowed');
   });
 
-  it('filterable 输入点击不冒泡到 trigger（不关闭）', async () => {
+  it('点击自身内部的过滤输入框时保持展开', async () => {
     const wrapper = mount(CSelect, {
       props: {
         filterable: true,
         options: [{ label: 'A', value: 'a' }],
       },
+      attachTo: document.body,
     });
     await wrapper.find('.c-select-trigger').trigger('click');
     const filterInput = wrapper.find('.c-select-filter');

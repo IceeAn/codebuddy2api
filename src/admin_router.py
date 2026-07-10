@@ -16,7 +16,7 @@ from .models_manager import models_manager
 from .private_response import PrivateNoStoreRoute
 from .request_processor import RequestProcessor
 from .stream_service import CodeBuddyStreamService
-from .usage_stats_manager import usage_stats_manager
+from .usage_stats_context import UsageStatsContext, create_usage_stats_context
 
 logger = logging.getLogger(__name__)
 router = APIRouter(route_class=PrivateNoStoreRoute)
@@ -183,7 +183,6 @@ async def get_admin_status(
             "valid": valid_count,
             "current": token_manager.get_current_credential_info(),
         },
-        "usage": usage_stats_manager.get_stats(_user.username),
     }
 
 
@@ -284,38 +283,65 @@ async def toggle_admin_auto_rotation(_user: AuthenticatedUser = Depends(require_
     }
 
 
-@router.post("/credentials/{credential_id}/test")
 async def test_admin_credential(
         credential_id: str,
         request_body: CredentialTestRequest,
         _user: AuthenticatedUser = Depends(require_session_user),
         stream_service_factory: Callable[[], CodeBuddyStreamService] = Depends(get_stream_service_factory),
+        stats_context: Optional[UsageStatsContext] = None,
+        request_bytes: int = 0,
 ):
     """使用指定凭证发起最小请求，验证该凭证是否可用。"""
     token_manager = get_token_manager_for_user(_user)
+    if stats_context is not None:
+        stats_context.capture_request_bytes(request_bytes)
+        stats_context.capture_credential(credential_id, credential_id)
     credential = token_manager.get_credential_by_id(credential_id)
     if not credential:
+        if stats_context is not None:
+            stats_context.mark_failure("credential_not_found", 404)
         raise _credential_not_found()
+
+    if stats_context is not None:
+        credential_info = next(
+            (
+                item for item in token_manager.get_credentials_info()
+                if item.get("credential_id") == credential_id
+            ),
+            {},
+        )
+        label = (
+            credential_info.get("filename")
+            or credential_info.get("user_id")
+            or credential_id
+        )
+        stats_context.capture_credential(credential_id, label)
 
     try:
         model = await models_manager.get_first_actual_model_for_credential(_user, credential_id, credential)
+        if stats_context is not None:
+            stats_context.capture_confirmed_model(model)
     except Exception:
         logger.exception("Credential model lookup failed")
+        if stats_context is not None:
+            stats_context.mark_failure("model_lookup", 502)
         return {
             "ok": False,
             "status_code": 502,
             "detail": "无法获取凭证模型",
         }
 
-    prepared_request = RequestProcessor.prepare_request(
-        {
-            "model": model,
-            "messages": [{"role": "user", "content": request_body.message or "test"}],
-            "max_tokens": 1,
-        },
-        _user,
-    )
+    test_request = {
+        "model": model,
+        "messages": [{"role": "user", "content": request_body.message or "test"}],
+        "max_tokens": 1,
+    }
+    if stats_context is not None:
+        stats_context.capture_request_shape(test_request)
+    prepared_request = RequestProcessor.prepare_request(test_request, _user)
     payload = prepared_request.payload
+    if stats_context is not None:
+        stats_context.capture_prepared_request(payload)
     headers = codebuddy_api_client.generate_codebuddy_headers(
         bearer_token=credential.get("bearer_token"),
         user_id=credential.get("user_id"),
@@ -324,13 +350,24 @@ async def test_admin_credential(
     )
 
     try:
-        await stream_service_factory().handle_non_stream_response(
+        service = (
+            stream_service_factory(observer=stats_context)
+            if stats_context is not None
+            else stream_service_factory()
+        )
+        await service.handle_non_stream_response(
             payload,
             headers,
             response_model=prepared_request.response_model,
         )
+        if stats_context is not None:
+            stats_context.mark_success()
         return {"ok": True, "status_code": 200}
     except HTTPException as e:
+        if stats_context is not None:
+            error = getattr(e, "error", None)
+            error_type = error.get("type") if isinstance(error, dict) else "upstream_error"
+            stats_context.mark_failure(error_type, e.status_code)
         return {
             "ok": False,
             "status_code": e.status_code,
@@ -338,11 +375,46 @@ async def test_admin_credential(
         }
     except Exception:
         logger.exception("Credential test failed")
+        if stats_context is not None:
+            stats_context.mark_failure("internal_error", 500)
         return {
             "ok": False,
             "status_code": 500,
             "detail": "凭证测试失败",
         }
+
+
+async def get_credential_test_stats_context(
+        credential_id: str,
+        request: Request,
+        _user: AuthenticatedUser = Depends(require_session_user),
+) -> UsageStatsContext:
+    """认证通过后立即创建凭证测试统计上下文。"""
+    context = create_usage_stats_context(request, _user, "credential_test")
+    context.capture_request_bytes(len(await request.body()))
+    context.capture_credential(credential_id, credential_id)
+    return context
+
+
+@router.post("/credentials/{credential_id}/test")
+async def test_admin_credential_route(
+        credential_id: str,
+        request_body: CredentialTestRequest,
+        request: Request,
+        _user: AuthenticatedUser = Depends(require_session_user),
+        stream_service_factory: Callable[[], CodeBuddyStreamService] = Depends(get_stream_service_factory),
+        stats_context: UsageStatsContext = Depends(get_credential_test_stats_context),
+):
+    """创建统计上下文后执行一次管理台凭证测试。"""
+    request_bytes = len(await request.body())
+    return await test_admin_credential(
+        credential_id,
+        request_body,
+        _user,
+        stream_service_factory,
+        stats_context,
+        request_bytes,
+    )
 
 
 @router.get("/settings")

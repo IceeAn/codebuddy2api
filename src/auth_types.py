@@ -1,5 +1,6 @@
 """认证相关类型和常量。"""
 from dataclasses import dataclass
+from typing import Optional
 
 from pydantic import BaseModel
 
@@ -15,6 +16,8 @@ class AuthenticatedUser:
 
     username: str
     source: str
+    api_key_id: Optional[str] = None
+    api_key_name: Optional[str] = None
 
 
 class LoginRequest(BaseModel):

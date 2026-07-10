@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/vue-query';
 import {
   Activity,
   BookOpen,
+  ChartNoAxesCombined,
   KeyRound,
   LogOut,
   Menu as MenuIcon,
@@ -32,6 +33,7 @@ const PROJECT_ICON_URL = '/assets/codebuddy2api.svg';
 
 const navItems = [
   { routeName: 'dashboard', label: '总览', icon: Activity },
+  { routeName: 'stats', label: '统计', icon: ChartNoAxesCombined },
   { routeName: 'credentials', label: '凭证', icon: KeyRound },
   { routeName: 'api-keys', label: 'API Key', icon: ShieldCheck },
   { routeName: 'console', label: 'API 测试', icon: TerminalSquare },

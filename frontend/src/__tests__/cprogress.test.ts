@@ -92,6 +92,31 @@ describe('CProgress', () => {
     expect(progressCircle.attributes('stroke')).toBe('var(--color-error-500)');
   });
 
+  it.each([
+    [80, 'var(--color-success-500)'],
+    [79, 'var(--color-warning-500)'],
+    [20, 'var(--color-warning-500)'],
+    [19, 'var(--color-error-500)'],
+  ])('成功率模式在 %s%% 使用对应语义色', (percentage, expectedStroke) => {
+    const wrapper = mount(CProgress, {
+      props: { percentage, variant: 'success-rate' },
+    });
+
+    expect(wrapper.findAll('circle')[1]!.attributes('stroke')).toBe(expectedStroke);
+  });
+
+  it('缓存模式使用凭证环主题色和浅色主题轨道', () => {
+    const wrapper = mount(CProgress, {
+      props: { percentage: 60, variant: 'cache-hit' },
+    });
+    const circles = wrapper.findAll('circle');
+
+    expect(circles[0]!.attributes('stroke')).toBe(
+      'color-mix(in oklch, var(--color-brand-500) 20%, var(--surface))',
+    );
+    expect(circles[1]!.attributes('stroke')).toBe('var(--color-brand-500)');
+  });
+
   it('thresholdColors=false 用渐变 url', () => {
     const wrapper = mount(CProgress, {
       props: { percentage: 60, thresholdColors: false },
@@ -135,6 +160,12 @@ describe('CProgress', () => {
     const text = wrapper.find('text');
     expect(text.exists()).toBe(true);
     expect(text.text()).toBe('42%');
+  });
+
+  it('支持用自定义中心文字表示暂无数据', () => {
+    const wrapper = mount(CProgress, { props: { percentage: 0, label: '-' } });
+
+    expect(wrapper.find('text').text()).toBe('-');
   });
 
   it('中心文字含正确 class', () => {

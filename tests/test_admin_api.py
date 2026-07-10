@@ -21,17 +21,18 @@ from src.admin_router import (
     delete_admin_credential,
     get_admin_settings,
     get_admin_status,
+    get_credential_test_stats_context,
     get_stream_service_factory,
     list_admin_api_keys,
     list_admin_credentials,
     save_admin_settings,
     select_admin_credential,
     test_admin_credential,
+    test_admin_credential_route,
     toggle_admin_auto_rotation,
 )
 from src.auth_types import AuthenticatedUser
 from src.codebuddy_token_manager import CodeBuddyTokenManagerRegistry
-from src.usage_stats_manager import usage_stats_manager
 
 from tests.helpers import TempConfigMixin, configure_users_file, make_request
 
@@ -47,7 +48,6 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         configure_users_file(self.temp_path)
         self.user = AuthenticatedUser(username="admin", source="session_cookie")
         self.registry = CodeBuddyTokenManagerRegistry()
-        usage_stats_manager._reset_for_tests()
 
     def _manager(self):
         return self.registry.for_user(self.user)
@@ -187,18 +187,10 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.assertIn("codebuddy_token_2.json", credentials)
         self.assertIn("codebuddy_token_3.json", credentials)
 
-    async def test_admin_status_only_returns_current_user_usage_stats(self):
-        usage_stats_manager.record_model_usage("alice", "alice-model")
-        usage_stats_manager.record_credential_usage("alice", "alice-credential.json")
-        usage_stats_manager.record_model_usage("admin", "admin-model")
-        usage_stats_manager.record_credential_usage("admin", "admin-credential.json")
-
+    async def test_admin_status_leaves_usage_analytics_to_stats_api(self):
         result = await get_admin_status(make_request(path="/api/admin/status"), self.user)
 
-        self.assertEqual(result["usage"], {
-            "model_usage": {"admin-model": 1},
-            "credential_usage": {"admin-credential.json": 1},
-        })
+        self.assertNotIn("usage", result)
 
     async def test_admin_credential_test_uses_selected_row_credential_and_models(self):
         manager = self._manager()
@@ -212,8 +204,12 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         ))
         credential_id = manager.get_credentials_info()[1]["credential_id"]
         captured = {}
+        stats_context = mock.Mock()
 
         class FakeService:
+            def __init__(self, observer=None):
+                captured["observer"] = observer
+
             async def handle_non_stream_response(self, payload, headers, *, response_model):
                 captured["payload"] = payload
                 captured["headers"] = headers
@@ -236,6 +232,8 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
                 CredentialTestRequest(**{"model": "client-model"}),
                 self.user,
                 stream_service_factory=FakeService,
+                stats_context=stats_context,
+                request_bytes=42,
             )
 
         self.assertTrue(result["ok"])
@@ -251,11 +249,25 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured["payload"]["model"], "target-real-model")
         self.assertIs(captured["payload"]["stream"], True)
         self.assertEqual(captured["response_model"], "target-real-model")
+        self.assertIs(captured["observer"], stats_context)
+        self.assertEqual(stats_context.capture_credential.call_args_list, [
+            mock.call(credential_id, credential_id),
+            mock.call(credential_id, "target.json"),
+        ])
+        stats_context.capture_request_bytes.assert_called_once_with(42)
+        stats_context.capture_request_shape.assert_called_once()
+        self.assertEqual(
+            stats_context.capture_request_shape.call_args.args[0]["model"],
+            "target-real-model",
+        )
+        stats_context.capture_prepared_request.assert_called_once_with(captured["payload"])
+        stats_context.mark_success.assert_called_once_with()
 
     async def test_admin_credential_test_returns_ok_false_when_model_lookup_fails(self):
         manager = self._manager()
         self.assertTrue(self._add_credential(manager, "target-token", "target-user", "target"))
         credential_id = manager.get_credentials_info()[0]["credential_id"]
+        stats_context = mock.Mock()
 
         class FakeService:
             async def handle_non_stream_response(self, _payload, _headers, *, response_model):
@@ -273,12 +285,18 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
                 CredentialTestRequest(message="hello"),
                 self.user,
                 stream_service_factory=FakeService,
+                stats_context=stats_context,
             )
 
         self.assertIs(result["ok"], False)
         self.assertEqual(result["status_code"], 502)
         self.assertEqual(result["detail"], "无法获取凭证模型")
         self.assertNotIn("敏感的模型查询异常详情", result["detail"])
+        self.assertEqual(stats_context.capture_credential.call_args_list, [
+            mock.call(credential_id, credential_id),
+            mock.call(credential_id, "target.json"),
+        ])
+        stats_context.mark_failure.assert_called_once_with("model_lookup", 502)
 
     async def test_missing_admin_credential_returns_404(self):
         with self.assertRaises(HTTPException) as context:
@@ -298,6 +316,20 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
                 stream_service_factory=mock.Mock,
             )
         self.assertEqual(test_context.exception.status_code, 404)
+
+        stats_context = mock.Mock()
+        with self.assertRaises(HTTPException) as stats_test_context:
+            await test_admin_credential(
+                "missing",
+                CredentialTestRequest(),
+                self.user,
+                stream_service_factory=mock.Mock,
+                stats_context=stats_context,
+            )
+        self.assertEqual(stats_test_context.exception.status_code, 404)
+        stats_context.capture_request_bytes.assert_called_once_with(0)
+        stats_context.capture_credential.assert_called_once_with("missing", "missing")
+        stats_context.mark_failure.assert_called_once_with("credential_not_found", 404)
 
     async def test_toggle_admin_auto_rotation_returns_new_state(self):
         first = await toggle_admin_auto_rotation(self.user)
@@ -350,6 +382,135 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result["detail"], expected_detail)
                 if sensitive_detail:
                     self.assertNotIn(sensitive_detail, result["detail"])
+
+    async def test_admin_credential_test_optional_stats_branches(self):
+        manager = self._manager()
+        self.assertTrue(self._add_credential(manager, "target-token", "target-user", "target"))
+        credential_id = manager.get_credentials_info()[0]["credential_id"]
+
+        class SuccessfulService:
+            async def handle_non_stream_response(self, _payload, _headers, *, response_model):
+                return {"model": response_model}
+
+        with (
+            mock.patch("src.admin_router.get_token_manager_for_user", return_value=manager),
+            mock.patch(
+                "src.admin_router.models_manager.get_first_actual_model_for_credential",
+                new=mock.AsyncMock(return_value="model"),
+            ),
+        ):
+            result = await test_admin_credential(
+                credential_id,
+                CredentialTestRequest(),
+                self.user,
+                stream_service_factory=SuccessfulService,
+            )
+
+        self.assertEqual(result, {"ok": True, "status_code": 200})
+
+        with (
+            mock.patch("src.admin_router.get_token_manager_for_user", return_value=manager),
+            mock.patch(
+                "src.admin_router.models_manager.get_first_actual_model_for_credential",
+                new=mock.AsyncMock(side_effect=RuntimeError("models unavailable")),
+            ),
+        ):
+            result = await test_admin_credential(
+                credential_id,
+                CredentialTestRequest(),
+                self.user,
+                stream_service_factory=mock.Mock,
+            )
+
+        self.assertEqual(result["status_code"], 502)
+
+    async def test_admin_credential_test_records_controlled_error_inputs_for_context(self):
+        manager = self._manager()
+        self.assertTrue(self._add_credential(manager, "target-token", "target-user", "target"))
+        credential_id = manager.get_credentials_info()[0]["credential_id"]
+        typed_error = HTTPException(status_code=429, detail="limited")
+        typed_error.error = {"type": "quota_error"}
+        cases = [
+            (typed_error, "quota_error", 429),
+            (HTTPException(status_code=401, detail="unauthorized"), "upstream_error", 401),
+            (RuntimeError("broken service"), "internal_error", 500),
+        ]
+
+        for error, expected_type, expected_status in cases:
+            with self.subTest(error=error):
+                service = mock.Mock()
+                service.handle_non_stream_response = mock.AsyncMock(side_effect=error)
+                stats_context = mock.Mock()
+                with (
+                    mock.patch("src.admin_router.get_token_manager_for_user", return_value=manager),
+                    mock.patch(
+                        "src.admin_router.models_manager.get_first_actual_model_for_credential",
+                        new=mock.AsyncMock(return_value="model"),
+                    ),
+                ):
+                    result = await test_admin_credential(
+                        credential_id,
+                        CredentialTestRequest(),
+                        self.user,
+                        stream_service_factory=lambda **_kwargs: service,
+                        stats_context=stats_context,
+                    )
+
+                self.assertEqual(result["status_code"], expected_status)
+                stats_context.mark_failure.assert_called_once_with(expected_type, expected_status)
+
+    async def test_admin_credential_test_route_creates_management_stats_context(self):
+        request = mock.Mock()
+        request.body = mock.AsyncMock(return_value=b'{"message":"test"}')
+        stats_context = mock.Mock()
+        factory = mock.Mock()
+        request_body = CredentialTestRequest()
+        with mock.patch(
+                "src.admin_router.test_admin_credential",
+                new=mock.AsyncMock(return_value={"ok": True}),
+            ) as run_test:
+            result = await test_admin_credential_route(
+                "credential-1",
+                request_body,
+                request,
+                self.user,
+                factory,
+                stats_context,
+            )
+
+        self.assertEqual(result, {"ok": True})
+        run_test.assert_awaited_once_with(
+            "credential-1",
+            request_body,
+            self.user,
+            factory,
+            stats_context,
+            len(b'{"message":"test"}'),
+        )
+
+    async def test_credential_test_stats_dependency_attaches_after_authentication(self):
+        request = mock.Mock()
+        request.body = mock.AsyncMock(return_value=b'{"message":"test"}')
+        stats_context = mock.Mock()
+        with mock.patch(
+            "src.admin_router.create_usage_stats_context",
+            return_value=stats_context,
+        ) as create_context:
+            result = await get_credential_test_stats_context(
+                "credential-1",
+                request,
+                self.user,
+            )
+
+        self.assertIs(result, stats_context)
+        create_context.assert_called_once_with(request, self.user, "credential_test")
+        stats_context.capture_request_bytes.assert_called_once_with(
+            len(b'{"message":"test"}')
+        )
+        stats_context.capture_credential.assert_called_once_with(
+            "credential-1",
+            "credential-1",
+        )
 
     async def test_settings_contract_returns_typed_fields_and_saves_hot_reloadable_values(self):
         settings = await get_admin_settings(self.user)

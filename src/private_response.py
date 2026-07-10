@@ -6,6 +6,8 @@ from starlette.datastructures import MutableHeaders
 from starlette.routing import Match
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from .usage_stats_middleware import UsageStatsMiddleware
+
 PRIVATE_NO_STORE_VALUE = "private, no-store"
 _PRIVATE_NO_STORE_STATE_KEY = "private_no_store"
 
@@ -50,4 +52,4 @@ class PrivateNoStoreFastAPI(FastAPI):
     """确保私有缓存策略包裹 FastAPI 的完整错误处理中间件栈。"""
 
     def build_middleware_stack(self) -> ASGIApp:
-        return PrivateNoStoreMiddleware(super().build_middleware_stack())
+        return PrivateNoStoreMiddleware(UsageStatsMiddleware(super().build_middleware_stack()))

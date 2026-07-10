@@ -99,7 +99,7 @@ class ApiKeyStore:
             key_digest = self._digest_api_key(api_key)
             cursor = connection.execute(
                 """
-                SELECT id, username, last_used_at
+                SELECT id, username, name, last_used_at
                 FROM api_keys
                 WHERE key_digest = ?
                 """,
@@ -128,7 +128,12 @@ class ApiKeyStore:
                     (current_minute, key_record["id"], key_digest, current_minute),
                 )
                 if cursor.rowcount > 0:
-                    return AuthenticatedUser(username=username, source="api_key")
+                    return AuthenticatedUser(
+                        username=username,
+                        source="api_key",
+                        api_key_id=key_record["id"],
+                        api_key_name=key_record["name"],
+                    )
 
             still_exists = connection.execute(
                 "SELECT 1 FROM api_keys WHERE id = ? AND key_digest = ?",
@@ -136,7 +141,12 @@ class ApiKeyStore:
             ).fetchone()
             if still_exists is None:
                 return None
-            return AuthenticatedUser(username=username, source="api_key")
+            return AuthenticatedUser(
+                username=username,
+                source="api_key",
+                api_key_id=key_record["id"],
+                api_key_name=key_record["name"],
+            )
 
     def list_keys(self, username: str) -> List[Dict[str, Any]]:
         database = self._database()

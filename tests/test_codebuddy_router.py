@@ -86,9 +86,14 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
         }
         token_manager = mock.Mock()
         token_manager.get_next_credential.return_value = self.credential
+        token_manager.get_current_credential_info.return_value = {
+            "credential_id": "credential-1",
+            "filename": "credential.json",
+        }
         service = mock.Mock()
         service.handle_stream_response = mock.AsyncMock(return_value="stream-response")
         service.handle_non_stream_response = mock.AsyncMock()
+        stats_context = mock.Mock()
 
         with (
             mock.patch("src.openai_router.get_token_manager_for_user", return_value=token_manager),
@@ -104,8 +109,7 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
                     response_model="glm-5.2",
                 ),
             ) as prepare_request,
-            mock.patch("src.openai_router.CodeBuddyStreamService", return_value=service),
-            mock.patch("src.openai_router.usage_stats_manager.record_model_usage") as record_usage,
+            mock.patch("src.openai_router.CodeBuddyStreamService", return_value=service) as service_class,
         ):
             result = await chat_completions(
                 FakeChatRequest(request_body),
@@ -114,6 +118,8 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
                 x_conversation_message_id="message",
                 x_request_id="request",
                 _user=self.user,
+                stats_context=stats_context,
+                request_bytes=123,
             )
 
         self.assertEqual(result, "stream-response")
@@ -128,7 +134,15 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
             request_id="request",
         )
         prepare_request.assert_called_once_with(request_body, self.user)
-        record_usage.assert_called_once_with("alice", "glm-5.2")
+        stats_context.capture_credential.assert_called_once_with(
+            "credential-1", "credential.json"
+        )
+        stats_context.capture_request_bytes.assert_called_once_with(123)
+        stats_context.capture_request_shape.assert_called_once_with(request_body)
+        stats_context.capture_prepared_request.assert_called_once_with(
+            {"model": "glm-5.2", "stream": True}
+        )
+        service_class.assert_called_once_with(observer=stats_context)
         service.handle_stream_response.assert_awaited_once_with(
             {"model": "glm-5.2", "stream": True},
             {"Authorization": "Bearer token"},
@@ -143,9 +157,14 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
         }
         token_manager = mock.Mock()
         token_manager.get_next_credential.return_value = self.credential
+        token_manager.get_current_credential_info.return_value = {
+            "credential_id": "credential-2",
+            "user_id": "fallback-label",
+        }
         service = mock.Mock()
         service.handle_stream_response = mock.AsyncMock()
         service.handle_non_stream_response = mock.AsyncMock(return_value={"ok": True})
+        stats_context = mock.Mock()
 
         with (
             mock.patch("src.openai_router.get_token_manager_for_user", return_value=token_manager),
@@ -161,13 +180,25 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
                     response_model="codebuddy/resolved-model",
                 ),
             ),
-            mock.patch("src.openai_router.CodeBuddyStreamService", return_value=service),
-            mock.patch("src.openai_router.usage_stats_manager.record_model_usage") as record_usage,
+            mock.patch("src.openai_router.CodeBuddyStreamService", return_value=service) as service_class,
         ):
-            result = await chat_completions(FakeChatRequest(request_body), _user=self.user)
+            result = await chat_completions(
+                FakeChatRequest(request_body),
+                _user=self.user,
+                stats_context=stats_context,
+                request_bytes=88,
+            )
 
         self.assertEqual(result, {"ok": True})
-        record_usage.assert_called_once_with("alice", "resolved-model")
+        stats_context.capture_credential.assert_called_once_with(
+            "credential-2", "fallback-label"
+        )
+        stats_context.capture_request_bytes.assert_called_once_with(88)
+        stats_context.capture_request_shape.assert_called_once_with(request_body)
+        stats_context.capture_prepared_request.assert_called_once_with(
+            {"model": "resolved-model", "stream": True}
+        )
+        service_class.assert_called_once_with(observer=stats_context)
         service.handle_non_stream_response.assert_awaited_once_with(
             {"model": "resolved-model", "stream": True},
             {"Authorization": "Bearer token"},
@@ -176,35 +207,201 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
         service.handle_stream_response.assert_not_awaited()
 
     async def test_chat_completion_rejects_invalid_json(self):
+        stats_context = mock.Mock()
         with self.assertRaises(HTTPException) as raised:
             await chat_completions(
                 FakeChatRequest(error=ValueError("bad json")),
                 _user=self.user,
+                stats_context=stats_context,
+                request_bytes=13,
             )
 
         self.assertEqual(raised.exception.status_code, 400)
         self.assertIn("bad json", raised.exception.detail)
+        stats_context.capture_request_bytes.assert_called_once_with(13)
+        stats_context.capture_request_shape.assert_not_called()
+        stats_context.mark_failure.assert_called_once_with("validation_error", 400)
+
+        with self.assertRaises(HTTPException) as without_stats:
+            await chat_completions(
+                FakeChatRequest(error=ValueError("still bad")),
+                _user=self.user,
+            )
+        self.assertEqual(without_stats.exception.status_code, 400)
 
     async def test_chat_completion_preserves_http_exception(self):
+        stats_context = mock.Mock()
         with mock.patch(
             "src.openai_router.RequestProcessor.validate_request",
             side_effect=HTTPException(status_code=422, detail="invalid request"),
         ):
             with self.assertRaises(HTTPException) as raised:
-                await chat_completions(FakeChatRequest({}), _user=self.user)
+                await chat_completions(
+                    FakeChatRequest({}),
+                    _user=self.user,
+                    stats_context=stats_context,
+                )
 
         self.assertEqual(raised.exception.status_code, 422)
+        stats_context.capture_request_bytes.assert_called_once_with(0)
+        stats_context.capture_request_shape.assert_called_once_with({})
+        stats_context.capture_prepared_request.assert_not_called()
+        stats_context.mark_failure.assert_called_once_with("validation_error", 422)
+
+        with mock.patch(
+            "src.openai_router.RequestProcessor.validate_request",
+            side_effect=HTTPException(status_code=422, detail="invalid request"),
+        ):
+            with self.assertRaises(HTTPException) as without_stats:
+                await chat_completions(FakeChatRequest({}), _user=self.user)
+        self.assertEqual(without_stats.exception.status_code, 422)
+
+    async def test_chat_completion_records_missing_credential(self):
+        token_manager = mock.Mock()
+        token_manager.get_next_credential.return_value = None
+        stats_context = mock.Mock()
+
+        with mock.patch(
+            "src.openai_router.get_token_manager_for_user",
+            return_value=token_manager,
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                await chat_completions(
+                    FakeChatRequest({
+                        "model": "model",
+                        "messages": [{"role": "user", "content": "hello"}],
+                    }),
+                    _user=self.user,
+                    stats_context=stats_context,
+                )
+
+        self.assertEqual(raised.exception.status_code, 401)
+        stats_context.capture_request_bytes.assert_called_once_with(0)
+        stats_context.capture_request_shape.assert_called_once_with({
+            "model": "model",
+            "messages": [{"role": "user", "content": "hello"}],
+        })
+        stats_context.capture_prepared_request.assert_not_called()
+        stats_context.mark_failure.assert_called_once_with("no_credential", 401)
+
+        with mock.patch(
+            "src.openai_router.get_token_manager_for_user",
+            return_value=token_manager,
+        ):
+            with self.assertRaises(HTTPException) as without_stats:
+                await chat_completions(
+                    FakeChatRequest({
+                        "model": "model",
+                        "messages": [{"role": "user", "content": "hello"}],
+                    }),
+                    _user=self.user,
+                )
+        self.assertEqual(without_stats.exception.status_code, 401)
+
+    async def test_chat_completion_succeeds_without_optional_stats_context(self):
+        request_body = {
+            "model": "model",
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+        token_manager = mock.Mock()
+        token_manager.get_next_credential.return_value = self.credential
+        service = mock.Mock()
+        service.handle_non_stream_response = mock.AsyncMock(return_value={"ok": True})
+
+        with (
+            mock.patch("src.openai_router.get_token_manager_for_user", return_value=token_manager),
+            mock.patch(
+                "src.openai_router.codebuddy_api_client.generate_codebuddy_headers",
+                return_value={"Authorization": "Bearer token"},
+            ),
+            mock.patch(
+                "src.openai_router.RequestProcessor.prepare_request",
+                return_value=PreparedCodeBuddyRequest(
+                    payload={"model": "model", "stream": True},
+                    client_wants_stream=False,
+                    response_model="model",
+                ),
+            ),
+            mock.patch("src.openai_router.CodeBuddyStreamService", return_value=service) as service_class,
+        ):
+            result = await chat_completions(FakeChatRequest(request_body), _user=self.user)
+
+        self.assertEqual(result, {"ok": True})
+        token_manager.get_current_credential_info.assert_not_called()
+        service_class.assert_called_once_with(observer=None)
 
     async def test_chat_completion_maps_unexpected_error(self):
+        stats_context = mock.Mock()
         with mock.patch(
             "src.openai_router.RequestProcessor.validate_request",
             side_effect=RuntimeError("unexpected"),
         ):
             with self.assertRaises(HTTPException) as raised:
-                await chat_completions(FakeChatRequest({}), _user=self.user)
+                await chat_completions(
+                    FakeChatRequest({}),
+                    _user=self.user,
+                    stats_context=stats_context,
+                )
 
         self.assertEqual(raised.exception.status_code, 500)
         self.assertIn("unexpected", raised.exception.detail)
+        stats_context.capture_request_bytes.assert_called_once_with(0)
+        stats_context.capture_request_shape.assert_called_once_with({})
+        stats_context.mark_failure.assert_called_once_with("internal_error", 500)
+
+        with mock.patch(
+            "src.openai_router.RequestProcessor.validate_request",
+            side_effect=RuntimeError("unexpected without stats"),
+        ):
+            with self.assertRaises(HTTPException) as without_stats:
+                await chat_completions(FakeChatRequest({}), _user=self.user)
+        self.assertEqual(without_stats.exception.status_code, 500)
+
+    async def test_chat_completion_uses_credential_id_label_and_zero_request_bytes(self):
+        request_body = {
+            "model": "model",
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+        token_manager = mock.Mock()
+        token_manager.get_next_credential.return_value = self.credential
+        token_manager.get_current_credential_info.return_value = {
+            "credential_id": "credential-only-label",
+        }
+        service = mock.Mock()
+        service.handle_non_stream_response = mock.AsyncMock(return_value={"ok": True})
+        stats_context = mock.Mock()
+
+        with (
+            mock.patch("src.openai_router.get_token_manager_for_user", return_value=token_manager),
+            mock.patch(
+                "src.openai_router.codebuddy_api_client.generate_codebuddy_headers",
+                return_value={},
+            ),
+            mock.patch(
+                "src.openai_router.RequestProcessor.prepare_request",
+                return_value=PreparedCodeBuddyRequest(
+                    payload={"model": "model", "stream": True},
+                    client_wants_stream=False,
+                    response_model="model",
+                ),
+            ),
+            mock.patch("src.openai_router.CodeBuddyStreamService", return_value=service),
+        ):
+            await chat_completions(
+                FakeChatRequest(request_body),
+                _user=self.user,
+                stats_context=stats_context,
+            )
+
+        stats_context.capture_credential.assert_called_once_with(
+            "credential-only-label",
+            "credential-only-label",
+        )
+        stats_context.capture_request_bytes.assert_called_once_with(0)
+        stats_context.capture_request_shape.assert_called_once_with(request_body)
+        stats_context.capture_prepared_request.assert_called_once_with(
+            {"model": "model", "stream": True}
+        )
 
     async def test_model_list_maps_manager_error(self):
         with mock.patch(

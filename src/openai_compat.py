@@ -66,7 +66,12 @@ class CodeBuddyResponseEvent:
         )
         raw_delta = choice.get("delta") if choice is not None else None
         delta = raw_delta if isinstance(raw_delta, dict) else {}
-        finish_reason = choice.get("finish_reason") if choice is not None else None
+        raw_finish_reason = choice.get("finish_reason") if choice is not None else None
+        finish_reason = (
+            raw_finish_reason.strip()
+            if isinstance(raw_finish_reason, str) and raw_finish_reason.strip()
+            else None
+        )
         return cls(chunk_data=chunk_data, choice=choice, delta=delta, finish_reason=finish_reason)
 
     @property

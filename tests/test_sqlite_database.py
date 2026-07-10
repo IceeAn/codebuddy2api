@@ -45,8 +45,15 @@ class SQLiteDatabaseTests(unittest.TestCase):
                 if path.name != DATABASE_FILENAME
             }
 
-        self.assertEqual(version, 1)
-        self.assertTrue({"api_keys", "user_settings"}.issubset(tables))
+        self.assertEqual(version, 2)
+        self.assertTrue({
+            "api_keys",
+            "user_settings",
+            "usage_events",
+            "usage_hourly",
+            "usage_latency_histogram",
+            "usage_retention_state",
+        }.issubset(tables))
         with sqlite3.connect(database_path) as connection:
             api_key_columns = {
                 row[1]: row[2]
@@ -78,6 +85,30 @@ class SQLiteDatabaseTests(unittest.TestCase):
         self.assertTrue(sidecar_modes)
         self.assertEqual(set(sidecar_modes.values()), {"0o600"})
 
+        with sqlite3.connect(database_path) as connection:
+            usage_indexes = {
+                row[1] for row in connection.execute("PRAGMA index_list(usage_events)")
+            }
+            cleanup_plan = " ".join(
+                row[3]
+                for row in connection.execute(
+                    "EXPLAIN QUERY PLAN SELECT id FROM usage_events "
+                    "WHERE occurred_at < ? ORDER BY occurred_at, id LIMIT ?",
+                    (0, 1000),
+                )
+            )
+        self.assertIn("idx_usage_events_occurred_at_id", usage_indexes)
+        self.assertIn("idx_usage_events_occurred_at_id", cleanup_plan)
+
+    def test_existing_only_connection_never_creates_a_missing_database(self):
+        database = SQLiteDatabase(self.database_path)
+
+        with self.assertRaises(FileNotFoundError):
+            with database.connect(create=False):
+                pass
+
+        self.assertFalse(self.database_path.exists())
+
     def test_connection_restores_wal_for_current_schema(self):
         database = SQLiteDatabase(self.database_path)
         with database.connect():
@@ -91,6 +122,91 @@ class SQLiteDatabaseTests(unittest.TestCase):
             restored_mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
 
         self.assertEqual(restored_mode.lower(), "wal")
+
+    def test_connection_atomically_migrates_v1_and_preserves_existing_rows(self):
+        with sqlite3.connect(self.database_path) as connection:
+            connection.execute(
+                """
+                CREATE TABLE api_keys (
+                    id TEXT PRIMARY KEY,
+                    username TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    key_digest BLOB NOT NULL,
+                    preview TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    last_used_at INTEGER
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE user_settings (
+                    username TEXT NOT NULL,
+                    setting_key TEXT NOT NULL,
+                    value_json TEXT NOT NULL,
+                    PRIMARY KEY (username, setting_key)
+                )
+                """
+            )
+            connection.execute(
+                "INSERT INTO user_settings VALUES (?, ?, ?)",
+                ("alice", "enabled", "true"),
+            )
+            connection.execute("PRAGMA user_version = 1")
+
+        with SQLiteDatabase(self.database_path).connect() as connection:
+            version = connection.execute("PRAGMA user_version").fetchone()[0]
+            value = connection.execute(
+                "SELECT value_json FROM user_settings WHERE username = 'alice'"
+            ).fetchone()[0]
+            tables = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+
+        self.assertEqual(version, 2)
+        self.assertEqual(value, "true")
+        self.assertTrue({
+            "usage_events",
+            "usage_hourly",
+            "usage_latency_histogram",
+            "usage_retention_state",
+        }.issubset(tables))
+
+    def test_v1_migration_rolls_back_all_new_objects_when_ddl_fails(self):
+        with sqlite3.connect(self.database_path) as connection:
+            connection.execute(
+                "CREATE TABLE user_settings (username TEXT, setting_key TEXT, value_json TEXT)"
+            )
+            connection.execute(
+                "INSERT INTO user_settings VALUES ('alice', 'key', 'value')"
+            )
+            connection.execute("PRAGMA user_version = 1")
+
+        with sqlite3.connect(self.database_path) as connection:
+            def deny_hourly_table(action, argument, *_args):
+                if action == sqlite3.SQLITE_CREATE_TABLE and argument == "usage_hourly":
+                    return sqlite3.SQLITE_DENY
+                return sqlite3.SQLITE_OK
+
+            connection.set_authorizer(deny_hourly_table)
+            with self.assertRaises(sqlite3.DatabaseError):
+                SQLiteDatabase(self.database_path)._initialize_schema(connection)
+            connection.set_authorizer(None)
+
+            version = connection.execute("PRAGMA user_version").fetchone()[0]
+            value = connection.execute(
+                "SELECT value_json FROM user_settings WHERE username = 'alice'"
+            ).fetchone()[0]
+            stats_objects = connection.execute(
+                "SELECT name FROM sqlite_master WHERE name LIKE 'usage_%'"
+            ).fetchall()
+
+        self.assertEqual(version, 1)
+        self.assertEqual(value, "value")
+        self.assertEqual(stats_objects, [])
 
     def test_connection_fails_when_wal_cannot_be_enabled(self):
         connection = mock.Mock()

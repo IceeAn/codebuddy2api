@@ -285,6 +285,11 @@ class CredentialRotationPolicyTests(unittest.TestCase):
 
         self.assertIsNone(selection.filename)
 
+    def test_selection_filename_uses_record_basename(self):
+        selection = CredentialSelection(credential_record("selected"), 0, 0)
+
+        self.assertEqual(selection.filename, "selected.json")
+
 
 class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
     def test_default_credentials_directory_comes_from_config(self):

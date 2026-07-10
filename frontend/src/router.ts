@@ -1,5 +1,6 @@
 import { createRouter, createWebHashHistory } from 'vue-router';
 import DashboardView from './views/DashboardView.vue';
+import StatsView from './views/StatsView.vue';
 import CredentialsView from './views/CredentialsView.vue';
 import ApiKeysView from './views/ApiKeysView.vue';
 import ApiConsoleView from './views/ApiConsoleView.vue';
@@ -11,6 +12,7 @@ const router = createRouter({
   routes: [
     { path: '/', redirect: '/dashboard' },
     { path: '/dashboard', name: 'dashboard', component: DashboardView },
+    { path: '/stats', name: 'stats', component: StatsView },
     { path: '/credentials', name: 'credentials', component: CredentialsView },
     { path: '/api-keys', name: 'api-keys', component: ApiKeysView },
     { path: '/console', name: 'console', component: ApiConsoleView },

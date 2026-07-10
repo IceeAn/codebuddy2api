@@ -4,6 +4,7 @@ import { ChevronDown, ChevronUp, X } from '@lucide/vue';
 
 interface Props {
   modelValue?: number | null;
+  size?: 'sm' | 'md';
   min?: number;
   max?: number;
   step?: number;
@@ -14,6 +15,7 @@ interface Props {
 
 const props = withDefaults(defineProps<Props>(), {
   modelValue: null,
+  size: 'md',
   min: undefined,
   max: undefined,
   step: 1,
@@ -52,6 +54,10 @@ const displayValue = computed(() => {
   return String(props.modelValue);
 });
 
+const inputSizeClass = computed(() =>
+  props.size === 'sm' ? 'h-8 px-2.5 text-[13px]' : 'h-[38px] px-3 text-sm',
+);
+
 function onInput(event: Event): void {
   const target = event.target as HTMLInputElement;
   const raw = target.value;
@@ -83,7 +89,8 @@ const inputPaddingRight = computed(() => (props.clearable ? 'pr-16' : 'pr-9'));
       :max="max"
       :step="step"
       :class="[
-        'c-input-number-input c-control-focus h-[38px] w-full rounded-md border border-border bg-surface px-3 text-sm text-text placeholder:text-muted/60 hover:border-border-strong disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-muted/60',
+        'c-input-number-input c-control-focus w-full rounded-md border border-border bg-surface text-text placeholder:text-muted/60 hover:border-border-strong disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-muted/60',
+        inputSizeClass,
         inputPaddingRight,
       ]"
       @input="onInput"

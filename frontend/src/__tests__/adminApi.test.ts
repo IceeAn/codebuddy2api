@@ -50,6 +50,28 @@ describe('管理 API 封装', () => {
     await adminApi.deleteCredential('cred/id');
     await adminApi.testCredential('cred/id');
     await adminApi.toggleRotation();
+    const statsQuery = {
+      start_at: 10,
+      end_at: 20,
+      timezone: 'Asia/Taipei',
+      traffic: 'external' as const,
+      model: 'glm/5',
+    };
+    await adminApi.statsOverview(statsQuery);
+    await adminApi.statsRequests({
+      ...statsQuery,
+      page: 3,
+      page_size: 50,
+      snapshot_id: 123,
+      snapshot_time: 15,
+    });
+    await adminApi.statsDimensions('api_keys', {
+      ...statsQuery,
+      search: 'robot key',
+      cursor: 'next/cursor',
+      limit: 25,
+    });
+    await adminApi.statsRequestDetail(123);
 
     expect(apiRequestMock.mock.calls).toEqual([
       ['/api/admin/status'],
@@ -64,6 +86,16 @@ describe('管理 API 封装', () => {
       ['/api/admin/credentials/cred%2Fid', { method: 'DELETE' }],
       ['/api/admin/credentials/cred%2Fid/test', { method: 'POST', json: {}, timeoutMs: 335000 }],
       ['/api/admin/credentials/rotation/toggle', { method: 'POST' }],
+      [
+        '/api/admin/stats/overview?start_at=10&end_at=20&timezone=Asia%2FTaipei&traffic=external&model=glm%2F5',
+      ],
+      [
+        '/api/admin/stats/requests?start_at=10&end_at=20&timezone=Asia%2FTaipei&traffic=external&model=glm%2F5&page=3&page_size=50&snapshot_id=123&snapshot_time=15',
+      ],
+      [
+        '/api/admin/stats/dimensions/api_keys?start_at=10&end_at=20&timezone=Asia%2FTaipei&traffic=external&model=glm%2F5&search=robot+key&cursor=next%2Fcursor&limit=25',
+      ],
+      ['/api/admin/stats/requests/123'],
     ]);
   });
 

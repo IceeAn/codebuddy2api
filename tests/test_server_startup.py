@@ -172,15 +172,28 @@ class ServerLifecycleTests(unittest.IsolatedAsyncioTestCase):
         with (
             mock.patch.object(web, "validate_configured_users_file") as validate_users,
             mock.patch.object(web, "initialize_database") as initialize_database,
+            mock.patch.object(
+                web.usage_stats_retention_manager,
+                "startup",
+                new=mock.AsyncMock(),
+            ) as retention_startup,
+            mock.patch.object(
+                web.usage_stats_retention_manager,
+                "shutdown",
+                new=mock.AsyncMock(),
+            ) as retention_shutdown,
             mock.patch.object(web.lifecycle_manager, "startup", new=mock.AsyncMock()) as startup,
             mock.patch.object(web.lifecycle_manager, "shutdown", new=mock.AsyncMock()) as shutdown,
         ):
             async with web.lifespan(web.app):
                 validate_users.assert_called_once_with()
                 initialize_database.assert_called_once_with()
+                retention_startup.assert_awaited_once_with()
                 startup.assert_awaited_once_with()
+                retention_shutdown.assert_not_awaited()
                 shutdown.assert_not_awaited()
 
+        retention_shutdown.assert_awaited_once_with()
         shutdown.assert_awaited_once_with()
 
     async def test_lifespan_stops_before_resource_startup_when_users_file_is_invalid(self):
@@ -191,6 +204,16 @@ class ServerLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 side_effect=RuntimeError("missing users"),
             ) as validate_users,
             mock.patch.object(web, "initialize_database") as initialize_database,
+            mock.patch.object(
+                web.usage_stats_retention_manager,
+                "startup",
+                new=mock.AsyncMock(),
+            ) as retention_startup,
+            mock.patch.object(
+                web.usage_stats_retention_manager,
+                "shutdown",
+                new=mock.AsyncMock(),
+            ) as retention_shutdown,
             mock.patch.object(web.lifecycle_manager, "startup", new=mock.AsyncMock()) as startup,
             mock.patch.object(web.lifecycle_manager, "shutdown", new=mock.AsyncMock()) as shutdown,
         ):
@@ -200,7 +223,9 @@ class ServerLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         validate_users.assert_called_once_with()
         initialize_database.assert_not_called()
+        retention_startup.assert_not_awaited()
         startup.assert_not_awaited()
+        retention_shutdown.assert_awaited_once_with()
         shutdown.assert_awaited_once_with()
 
     async def test_health_and_root_endpoints_return_metadata(self):

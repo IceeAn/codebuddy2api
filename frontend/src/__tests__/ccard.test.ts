@@ -78,6 +78,23 @@ describe('CCard', () => {
     expect(extra.find('button.extra').exists()).toBe(true);
   });
 
+  it('header 在空间不足时换行并允许长标题收缩且不溢出操作区', () => {
+    const wrapper = mount(CCard, {
+      props: { title: '这是一个需要在窄屏中正常换行的较长卡片标题' },
+      slots: { 'header-extra': '<div class="wide-extra">多个操作</div>' },
+    });
+    const header = wrapper.get('.c-card-header');
+    const main = wrapper.get('.c-card-header-main');
+    const title = wrapper.get('.c-card-title');
+    const extra = wrapper.get('.c-card-header-extra');
+
+    expect(header.classes()).toContain('flex-wrap');
+    expect(main.classes()).toEqual(expect.arrayContaining(['min-w-0', 'max-w-full']));
+    expect(main.classes()).not.toContain('min-w-fit');
+    expect(title.classes()).not.toContain('whitespace-nowrap');
+    expect(extra.classes()).toEqual(expect.arrayContaining(['min-w-0', 'max-w-full']));
+  });
+
   it('header-extra 单独存在时也渲染 header', () => {
     const wrapper = mount(CCard, {
       slots: { 'header-extra': '<span>extra</span>' },

@@ -66,29 +66,48 @@ class ProtocolRouteAuthenticationTests(TempConfigMixin, unittest.IsolatedAsyncio
         return_value={"shared": True},
     )
     async def test_both_chat_routes_use_the_same_protocol_handler(self, chat_completions):
-        external = await self._request(
-            "POST",
-            "/openai/v1/chat/completions",
-            api_key=True,
-            json={"model": "model-a", "messages": []},
-        )
-        playground = await self._request(
-            "POST",
-            "/api/admin/playground/openai/v1/chat/completions",
-            session=True,
-            json={"model": "model-a", "messages": []},
-        )
-        obsolete = await self._request(
-            "POST",
-            "/codebuddy/v1/chat/completions",
-            session=True,
-            json={"model": "model-a", "messages": []},
-        )
+        external_context = mock.Mock()
+        admin_context = mock.Mock()
+        with mock.patch(
+            "src.openai_router.create_usage_stats_context",
+            side_effect=[external_context, admin_context],
+        ) as create_context:
+            external = await self._request(
+                "POST",
+                "/openai/v1/chat/completions",
+                api_key=True,
+                json={"model": "model-a", "messages": []},
+            )
+            playground = await self._request(
+                "POST",
+                "/api/admin/playground/openai/v1/chat/completions",
+                session=True,
+                json={"model": "model-a", "messages": []},
+            )
+            obsolete = await self._request(
+                "POST",
+                "/codebuddy/v1/chat/completions",
+                session=True,
+                json={"model": "model-a", "messages": []},
+            )
 
         self.assertEqual(external.json(), {"shared": True})
         self.assertEqual(playground.json(), {"shared": True})
         self.assertEqual(obsolete.status_code, 404)
         self.assertEqual(chat_completions.await_count, 2)
+        self.assertEqual(create_context.call_args_list[0].args[2], "external_api")
+        self.assertEqual(create_context.call_args_list[1].args[2], "admin_playground")
+        self.assertIsNotNone(create_context.call_args_list[0].args[1].api_key_id)
+        self.assertIsNone(create_context.call_args_list[1].args[1].api_key_id)
+        self.assertIs(
+            chat_completions.await_args_list[0].kwargs["stats_context"],
+            external_context,
+        )
+        self.assertIs(
+            chat_completions.await_args_list[1].kwargs["stats_context"],
+            admin_context,
+        )
+        self.assertGreater(chat_completions.await_args_list[0].kwargs["request_bytes"], 0)
 
     @mock.patch(
         "src.openai_router.chat_completions",

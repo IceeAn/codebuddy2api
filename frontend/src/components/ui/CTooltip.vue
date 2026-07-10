@@ -5,6 +5,7 @@ interface Props {
   content?: string;
   placement?: 'top' | 'bottom';
   delay?: number;
+  clickable?: boolean;
 }
 
 type Placement = NonNullable<Props['placement']>;
@@ -13,12 +14,14 @@ const props = withDefaults(defineProps<Props>(), {
   content: undefined,
   placement: 'top',
   delay: 300,
+  clickable: false,
 });
 
 const currentPlacement = computed<Placement>(() => props.placement);
 
 const visible = ref(false);
 const positioned = ref(false);
+const pinned = ref(false);
 const triggerRef = ref<HTMLElement | null>(null);
 const popoverRef = ref<HTMLElement | null>(null);
 const positionStyle = ref<Record<string, string>>({
@@ -41,6 +44,38 @@ function handleLeave(): void {
     clearTimeout(showTimer);
     showTimer = null;
   }
+  if (!pinned.value) hide();
+}
+
+function handleClick(): void {
+  if (!props.clickable) return;
+  if (showTimer !== null) {
+    clearTimeout(showTimer);
+    showTimer = null;
+  }
+  if (visible.value && pinned.value) {
+    hide();
+    return;
+  }
+  pinned.value = true;
+  if (!visible.value) void show();
+}
+
+function handleKeydown(event: KeyboardEvent): void {
+  if (!props.clickable) return;
+  if (event.key === 'Escape') {
+    hide();
+    return;
+  }
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  event.preventDefault();
+  handleClick();
+}
+
+function handleOutsidePointer(event: PointerEvent): void {
+  const target = event.target;
+  if (!(target instanceof Node)) return;
+  if (triggerRef.value?.contains(target) || popoverRef.value?.contains(target)) return;
   hide();
 }
 
@@ -51,17 +86,24 @@ async function show(): Promise<void> {
   updatePosition();
   window.addEventListener('scroll', updatePosition, true);
   window.addEventListener('resize', updatePosition);
+  if (props.clickable) window.addEventListener('pointerdown', handleOutsidePointer);
 }
 
 function hide(): void {
   visible.value = false;
   positioned.value = false;
+  pinned.value = false;
+  const activeElement = document.activeElement;
+  if (activeElement instanceof HTMLElement && triggerRef.value?.contains(activeElement)) {
+    activeElement.blur();
+  }
   removeListeners();
 }
 
 function removeListeners(): void {
   window.removeEventListener('scroll', updatePosition, true);
   window.removeEventListener('resize', updatePosition);
+  window.removeEventListener('pointerdown', handleOutsidePointer);
 }
 
 /** 根据触发元素和浮层尺寸计算坐标，并限制在视口内。 */
@@ -108,8 +150,11 @@ onBeforeUnmount(() => {
   <span
     ref="triggerRef"
     class="relative inline-flex"
+    :aria-expanded="clickable ? visible : undefined"
     @mouseenter="handleEnter"
     @mouseleave="handleLeave"
+    @click="handleClick"
+    @keydown="handleKeydown"
   >
     <slot />
     <Teleport to="body">

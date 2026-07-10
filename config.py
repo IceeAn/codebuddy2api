@@ -239,7 +239,7 @@ def get_data_dir() -> str:
 
 
 def get_database_path() -> Path:
-    """返回 API Key 与用户设置共用的 SQLite 数据库路径。"""
+    """返回 API Key、用户设置与持久化统计共用的 SQLite 数据库路径。"""
     return resolve_database_path(get_data_dir())
 
 

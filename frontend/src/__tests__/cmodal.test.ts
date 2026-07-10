@@ -139,6 +139,23 @@ describe('CModal', () => {
     expect((wrapper.vm as any).open).toBe(false);
   });
 
+  it('点击面板不会触发遮罩关闭', async () => {
+    const wrapper = mount(
+      {
+        components: { CModal },
+        data() {
+          return { open: true };
+        },
+        template: '<CModal v-model:open="open" />',
+      },
+      { attachTo: attach() },
+    );
+    const panel = document.body.querySelector('.c-modal-panel') as HTMLElement;
+    panel.click();
+    await flushPromises();
+    expect((wrapper.vm as any).open).toBe(true);
+  });
+
   it('ESC 键关闭', async () => {
     const wrapper = mount(
       {

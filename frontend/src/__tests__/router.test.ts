@@ -20,6 +20,7 @@ describe('router', () => {
     ).toEqual(
       expect.arrayContaining([
         'dashboard',
+        'stats',
         'credentials',
         'api-keys',
         'console',

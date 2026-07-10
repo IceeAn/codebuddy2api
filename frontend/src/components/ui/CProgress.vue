@@ -6,6 +6,8 @@ interface Props {
   strokeWidth?: number;
   size?: number;
   thresholdColors?: boolean;
+  variant?: 'credential' | 'success-rate' | 'cache-hit';
+  label?: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -13,6 +15,8 @@ const props = withDefaults(defineProps<Props>(), {
   strokeWidth: 8,
   size: 80,
   thresholdColors: true,
+  variant: 'credential',
+  label: undefined,
 });
 
 const clampedPercentage = computed(() => {
@@ -26,6 +30,12 @@ const dashoffset = computed(() => circumference.value * (1 - clampedPercentage.v
 
 const thresholdStroke = computed(() => {
   const p = clampedPercentage.value;
+  if (props.variant === 'cache-hit') return 'var(--color-brand-500)';
+  if (props.variant === 'success-rate') {
+    if (p >= 80) return 'var(--color-success-500)';
+    if (p >= 20) return 'var(--color-warning-500)';
+    return 'var(--color-error-500)';
+  }
   if (p >= 80) return 'var(--color-brand-500)';
   if (p >= 50) return 'var(--color-warning-500)';
   return 'var(--color-error-500)';
@@ -34,6 +44,11 @@ const thresholdStroke = computed(() => {
 const progressStroke = computed(() => {
   return props.thresholdColors ? thresholdStroke.value : 'url(#c-progress-gradient)';
 });
+const trackStroke = computed(() =>
+  props.variant === 'cache-hit'
+    ? 'color-mix(in oklch, var(--color-brand-500) 20%, var(--surface))'
+    : 'var(--color-surface-3)',
+);
 
 const textClass = computed(() => (props.size < 64 ? 'text-[13px]' : 'text-[18px]'));
 </script>
@@ -58,7 +73,7 @@ const textClass = computed(() => (props.size < 64 ? 'text-[13px]' : 'text-[18px]
       :r="radius"
       fill="none"
       :stroke-width="strokeWidth"
-      stroke="var(--color-surface-3)"
+      :stroke="trackStroke"
     />
     <circle
       :cx="center"
@@ -81,7 +96,7 @@ const textClass = computed(() => (props.size < 64 ? 'text-[13px]' : 'text-[18px]
       :class="['font-display font-bold text-text-strong tabular-nums', textClass]"
       :style="{ transform: 'rotate(90deg)', transformOrigin: 'center' }"
     >
-      {{ clampedPercentage }}%
+      {{ label ?? `${clampedPercentage}%` }}
     </text>
   </svg>
 </template>

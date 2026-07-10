@@ -194,6 +194,8 @@ class ApiKeyStoreTests(TempConfigMixin, unittest.TestCase):
 
         self.assertEqual(user.username, "admin")
         self.assertEqual(user.source, "api_key")
+        self.assertEqual(user.api_key_id, created["id"])
+        self.assertEqual(user.api_key_name, "client")
         self.assertEqual(listed[0]["last_used_at"], 180)
         self.assertEqual(update_count, 2)
 

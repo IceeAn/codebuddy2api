@@ -18,6 +18,7 @@ from src.stream_service import (
     HTTP_CLIENT_CONFIG,
     SSEConnectionManager,
     SecurityConfig,
+    StreamObservation,
     StreamResponseAggregator,
     UpstreamAPIError,
     close_http_client,
@@ -975,6 +976,51 @@ class StreamServiceErrorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"content": "hello"', body)
         self.assertIn("data: [DONE]", body)
 
+    async def test_stream_completion_wins_a_simultaneous_late_disconnect(self):
+        observations = []
+
+        async def factory():
+            return FakeHttpClient([
+                'data: {"model":"model","choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n',
+                "data: [DONE]\n",
+            ])
+
+        response = await CodeBuddyStreamService(
+            http_client_factory=factory,
+            observer=observations.append,
+        ).handle_stream_response({"model": "model"}, {})
+        final_sent = asyncio.Event()
+
+        async def receive():
+            await final_sent.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            if message["type"] == "http.response.body" and not message.get("more_body", False):
+                final_sent.set()
+                await asyncio.sleep(0)
+
+        await response(
+            {"type": "http", "asgi": {"spec_version": "2.4"}},
+            receive,
+            send,
+        )
+
+        self.assertNotIn("client_disconnect", [item.kind for item in observations])
+
+    async def test_empty_finish_reason_does_not_complete_an_incomplete_stream(self):
+        async def factory():
+            return FakeHttpClient([
+                'data: {"choices":[{"delta":{"content":"partial"},"finish_reason":""}]}\n',
+            ])
+
+        with self.assertRaises(UpstreamAPIError) as raised:
+            await CodeBuddyStreamService(
+                http_client_factory=factory,
+            ).handle_non_stream_response({"model": "model"}, {})
+
+        self.assertEqual(raised.exception.error["type"], "upstream_incomplete")
+
     async def test_stream_response_closes_upstream_when_response_start_fails(self):
         class OpenResponse:
             status_code = 200
@@ -1201,6 +1247,235 @@ class StreamServiceErrorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(raised.exception.status_code, 502)
         self.assertEqual(raised.exception.error["message"], "quota exhausted")
+
+    async def test_observer_receives_retry_and_sanitized_upstream_event_signals(self):
+        observations = []
+        attempts = 0
+
+        async def factory():
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise httpx.ConnectError("secret endpoint details")
+            return FakeHttpClient([
+                'data: {"choices":[{"delta":{"reasoning_content":"private reasoning","content":"private answer","tool_calls":[{"id":"call_1","function":{"arguments":"private arguments"}}]},"finish_reason":"tool_calls"}]}'
+                '\n',
+                'data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":5}}\n',
+                "data: [DONE]\n",
+            ])
+
+        service = CodeBuddyStreamService(
+            http_client_factory=factory,
+            observer=observations.append,
+        )
+        service.connection_manager.retry_delay = 0
+
+        response = await service.handle_non_stream_response({"model": "model"}, {})
+
+        self.assertEqual(response["usage"], {"prompt_tokens": 3, "completion_tokens": 5})
+        self.assertEqual(observations[0], StreamObservation(
+            kind="retry",
+            retry_count=1,
+            error_type="upstream_connect_error",
+        ))
+        self.assertEqual(observations[1], StreamObservation(
+            kind="upstream_event",
+            has_reasoning_content=True,
+            has_content=True,
+            tool_call_count=1,
+            finish_reason="tool_calls",
+        ))
+        self.assertEqual(observations[2], StreamObservation(
+            kind="upstream_event",
+            usage={"prompt_tokens": 3, "completion_tokens": 5},
+        ))
+        self.assertEqual(observations[3], StreamObservation(
+            kind="upstream_event",
+            upstream_done=True,
+        ))
+        self.assertNotIn("private", repr(observations))
+        self.assertNotIn("secret", repr(observations))
+
+    async def test_observer_usage_is_detached_from_response_data(self):
+        def mutate_observation(observation):
+            if observation.usage is not None:
+                observation.usage["prompt_tokens"] = 999
+
+        async def factory():
+            return FakeHttpClient([
+                'data: {"choices":[{"delta":{"content":"answer"},"finish_reason":"stop"}],'
+                '"usage":{"prompt_tokens":3}}\n',
+                "data: [DONE]\n",
+            ])
+
+        response = await CodeBuddyStreamService(
+            http_client_factory=factory,
+            observer=mutate_observation,
+        ).handle_non_stream_response({"model": "model"}, {})
+
+        self.assertEqual(response["usage"], {"prompt_tokens": 3})
+
+    async def test_observer_counts_each_tool_call_once_across_fragments(self):
+        observations = []
+
+        async def factory():
+            return FakeHttpClient([
+                'data: {"choices":[{"delta":{"tool_calls":[{"id":"call_1",'
+                '"function":{"name":"lookup","arguments":""}}]},"finish_reason":null}]}\n',
+                'data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"{\\"q\\":"}}]},'
+                '"finish_reason":null}]}\n',
+                'data: {"choices":[{"delta":{"tool_calls":["invalid",{"id":"call_2",'
+                '"function":{"name":"other","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}\n',
+                "data: [DONE]\n",
+            ])
+
+        await CodeBuddyStreamService(
+            http_client_factory=factory,
+            observer=observations.append,
+        ).handle_non_stream_response({"model": "model"}, {})
+
+        self.assertEqual(
+            [item.tool_call_count for item in observations if not item.upstream_done],
+            [1, 0, 1],
+        )
+        self.assertEqual(sum(item.tool_call_count for item in observations), 2)
+
+    async def test_observer_errors_never_change_stream_or_non_stream_responses(self):
+        def broken_observer(_observation):
+            raise RuntimeError("observer failed")
+
+        chunks = [
+            'data: {"choices":[{"delta":{"content":"answer"},"finish_reason":"stop"}]}\n',
+            "data: [DONE]\n",
+        ]
+
+        async def non_stream_factory():
+            return FakeHttpClient(chunks)
+
+        non_stream = await CodeBuddyStreamService(
+            http_client_factory=non_stream_factory,
+            observer=broken_observer,
+        ).handle_non_stream_response({"model": "model"}, {})
+
+        async def stream_factory():
+            return FakeHttpClient(chunks)
+
+        stream = await CodeBuddyStreamService(
+            http_client_factory=stream_factory,
+            observer=broken_observer,
+        ).handle_stream_response({"model": "model"}, {})
+        stream_body = "".join([part async for part in stream.body_iterator])
+
+        self.assertEqual(non_stream["choices"][0]["message"]["content"], "answer")
+        self.assertIn('"content": "answer"', stream_body)
+        self.assertIn("data: [DONE]", stream_body)
+
+    async def test_observer_receives_non_stream_and_stream_error_signals(self):
+        non_stream_observations = []
+
+        async def failed_non_stream_factory():
+            raise httpx.ReadTimeout("private timeout details")
+
+        with self.assertRaises(UpstreamAPIError):
+            await CodeBuddyStreamService(
+                http_client_factory=failed_non_stream_factory,
+                observer=non_stream_observations.append,
+            ).handle_non_stream_response({"model": "model"}, {})
+
+        self.assertEqual(non_stream_observations, [StreamObservation(
+            kind="error",
+            error_type="upstream_timeout",
+            status_code=504,
+        )])
+
+        before_output_observations = []
+
+        async def failed_before_output_factory():
+            raise RuntimeError("private setup details")
+
+        before_output = await CodeBuddyStreamService(
+            http_client_factory=failed_before_output_factory,
+            observer=before_output_observations.append,
+        ).handle_stream_response({"model": "model"}, {})
+        with self.assertRaisesRegex(RuntimeError, "private setup details"):
+            await anext(before_output.body_iterator)
+
+        self.assertEqual(before_output_observations, [StreamObservation(
+            kind="error",
+            error_type="stream_error",
+        )])
+
+        stream_observations = []
+
+        async def failed_stream_factory():
+            return FakeHttpClient([
+                'data: {"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}\n',
+                RuntimeError("private stream details"),
+            ])
+
+        stream = await CodeBuddyStreamService(
+            http_client_factory=failed_stream_factory,
+            observer=stream_observations.append,
+        ).handle_stream_response({"model": "model"}, {})
+        await self._consume_stream(stream)
+
+        self.assertEqual(stream_observations[-1], StreamObservation(
+            kind="error",
+            error_type="stream_error",
+        ))
+        self.assertNotIn("private", repr(stream_observations))
+
+    async def test_observer_receives_client_disconnect_once(self):
+        observations = []
+
+        class OpenResponse:
+            status_code = 200
+            headers = {}
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, _exc_type, _exc, _tb):
+                return False
+
+            async def aiter_text(self, chunk_size=None):
+                yield 'data: {"choices":[{"delta":{"content":"hello"},"finish_reason":null}]}\n'
+                await asyncio.Event().wait()
+
+        client = mock.Mock()
+        client.stream.return_value = OpenResponse()
+
+        async def factory():
+            return client
+
+        response = await CodeBuddyStreamService(
+            http_client_factory=factory,
+            observer=observations.append,
+        ).handle_stream_response({"model": "model"}, {})
+        body_sent = asyncio.Event()
+
+        async def receive():
+            await body_sent.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            if message["type"] == "http.response.body" and message["body"]:
+                body_sent.set()
+
+        await response(
+            {"type": "http", "asgi": {"spec_version": "2.4"}},
+            receive,
+            send,
+        )
+
+        self.assertEqual(
+            [item for item in observations if item.kind == "client_disconnect"],
+            [StreamObservation(kind="client_disconnect")],
+        )
+
+    @staticmethod
+    async def _consume_stream(response):
+        return "".join([part async for part in response.body_iterator])
 
 
 class StreamingFormatTests(unittest.IsolatedAsyncioTestCase):

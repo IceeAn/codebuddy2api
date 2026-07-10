@@ -19,6 +19,15 @@ describe('CInputNumber', () => {
     expect(input.classes()).toContain('rounded-md');
   });
 
+  it('sm 尺寸使用 32px 高度和紧凑间距', () => {
+    const wrapper = mount(CInputNumber, { props: { modelValue: 0, size: 'sm' } });
+    const input = wrapper.find('input');
+    expect(input.classes()).toContain('h-8');
+    expect(input.classes()).toContain('px-2.5');
+    expect(input.classes()).toContain('text-[13px]');
+    expect(input.classes()).not.toContain('h-[38px]');
+  });
+
   it('modelValue 显示在 input value', () => {
     const wrapper = mount(CInputNumber, { props: { modelValue: 42 } });
     expect((wrapper.find('input').element as HTMLInputElement).value).toBe('42');

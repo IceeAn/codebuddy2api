@@ -38,6 +38,111 @@ describe('CTooltip', () => {
     expect(getPopover()).toBeNull();
   });
 
+  it('clickable 模式支持点击切换并点击外部关闭', async () => {
+    const wrapper = mount(CTooltip, {
+      props: { content: '触摸提示', clickable: true },
+      slots: { default: '<button>触发</button>' },
+    });
+
+    await wrapper.trigger('click');
+    await flushPromises();
+    expect(getPopover()?.textContent).toBe('触摸提示');
+    await wrapper.trigger('click');
+    await flushPromises();
+    expect(getPopover()).toBeNull();
+
+    await wrapper.trigger('click');
+    await flushPromises();
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    await flushPromises();
+    expect(getPopover()).toBeNull();
+  });
+
+  it('clickable 模式处理悬浮计时、内部点击和完整键盘分支', async () => {
+    const passive = mount(CTooltip, {
+      props: { content: '普通提示' },
+      slots: { default: '<button>普通触发</button>' },
+    });
+    await passive.trigger('click');
+    await passive.trigger('keydown', { key: 'Enter' });
+    expect(getPopover()).toBeNull();
+
+    const wrapper = mount(CTooltip, {
+      props: { content: '交互提示', clickable: true, delay: 300 },
+      slots: { default: '<button>交互触发</button>' },
+    });
+    await wrapper.trigger('mouseenter');
+    vi.advanceTimersByTime(100);
+    await wrapper.trigger('click');
+    await flushPromises();
+    expect(getPopover()?.textContent).toBe('交互提示');
+
+    (wrapper.vm.$ as any).setupState.handleOutsidePointer({ target: null });
+    await wrapper.trigger('pointerdown');
+    getPopover()?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    await wrapper.trigger('keydown', { key: 'a' });
+    await flushPromises();
+    expect(getPopover()).not.toBeNull();
+
+    await wrapper.trigger('keydown', { key: ' ' });
+    await flushPromises();
+    expect(getPopover()).toBeNull();
+  });
+
+  it('clickable 模式可将悬浮提示固定到点击后再关闭', async () => {
+    const wrapper = mount(CTooltip, {
+      props: { content: '固定提示', clickable: true, delay: 300 },
+      slots: { default: '<button>触发</button>' },
+    });
+
+    await wrapper.trigger('mouseenter');
+    vi.advanceTimersByTime(300);
+    await flushPromises();
+    expect(getPopover()).not.toBeNull();
+    await wrapper.trigger('click');
+    await wrapper.trigger('mouseleave');
+    await flushPromises();
+    expect(getPopover()?.textContent).toBe('固定提示');
+    await wrapper.trigger('click');
+    await flushPromises();
+    expect(getPopover()).toBeNull();
+  });
+
+  it('关闭点击固定的提示时一并移除触发器焦点', async () => {
+    const wrapper = mount(CTooltip, {
+      attachTo: document.body,
+      props: { content: '焦点提示', clickable: true },
+      slots: { default: '<button>触发</button>' },
+    });
+    const button = wrapper.get('button');
+
+    (button.element as HTMLButtonElement).focus();
+    await button.trigger('click');
+    await flushPromises();
+    expect(document.activeElement).toBe(button.element);
+    await button.trigger('click');
+    await flushPromises();
+    expect(getPopover()).toBeNull();
+    expect(document.activeElement).not.toBe(button.element);
+  });
+
+  it('clickable 模式支持键盘操作', async () => {
+    const wrapper = mount(CTooltip, {
+      props: { content: '数据点', clickable: true },
+      attrs: { tabindex: '0', role: 'button' },
+      slots: { default: '<span>数据点</span>' },
+    });
+
+    expect(wrapper.element.tagName.toLowerCase()).toBe('span');
+    expect(wrapper.attributes('tabindex')).toBe('0');
+    await wrapper.trigger('keydown', { key: 'Enter' });
+    await flushPromises();
+    expect(getPopover()?.textContent).toBe('数据点');
+    await wrapper.trigger('keydown', { key: 'Escape' });
+    await flushPromises();
+    expect(getPopover()).toBeNull();
+  });
+
   it('鼠标 enter 后 delay(300ms) 显示浮层', async () => {
     const wrapper = mount(CTooltip, {
       props: { content: '提示文本', delay: 300 },

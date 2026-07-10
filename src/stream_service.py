@@ -1,12 +1,14 @@
 """CodeBuddy 上游流式调用服务。"""
 import asyncio
+import copy
 import json
 import logging
 import random
 import time
 import uuid
 from contextlib import aclosing
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Any, AsyncIterator, Callable, Dict, List, Literal, Optional, Protocol
 
 import httpx
 from fastapi import HTTPException
@@ -32,6 +34,30 @@ from .sse import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class StreamObservation:
+    """上游请求观察器接收的脱敏信号。"""
+
+    kind: Literal["retry", "upstream_event", "error", "client_disconnect"]
+    retry_count: Optional[int] = None
+    error_type: Optional[str] = None
+    status_code: Optional[int] = None
+    has_reasoning_content: bool = False
+    has_content: bool = False
+    tool_call_count: int = 0
+    usage: Optional[Dict[str, Any]] = None
+    finish_reason: Optional[str] = None
+    upstream_model: Optional[str] = None
+    upstream_done: bool = False
+
+
+class StreamObserver(Protocol):
+    """同步接收脱敏上游信号的可调用观察器。"""
+
+    def __call__(self, observation: StreamObservation, /) -> None:
+        ...
 
 
 class UpstreamAPIError(HTTPException):
@@ -176,7 +202,13 @@ class SSEConnectionManager:
         )
         await asyncio.sleep(wait_time)
 
-    async def stream_with_retry(self, stream_func, *args, **kwargs):
+    async def stream_with_retry(
+            self,
+            stream_func,
+            *args,
+            on_retry: Optional[Callable[[int], None]] = None,
+            **kwargs,
+    ):
         """流式请求只在连接错误且尚未输出下游 chunk 时重试。"""
         has_emitted_chunk = False
         for attempt in range(self.max_connect_retries + 1):  # pragma: no branch
@@ -191,18 +223,26 @@ class SSEConnectionManager:
                     logger.error("流式响应已开始，连接错误后不重放请求: %s", e)
                     raise
                 if attempt < self.max_connect_retries:
+                    if on_retry is not None:
+                        on_retry(attempt + 1)
                     await self._wait_before_retry(attempt, e)
                     continue
                 logger.error("CodeBuddy 连接重试耗尽: %s", e)
                 raise
 
-    async def run_with_retry(self, operation: Callable[[], Any]) -> Any:
+    async def run_with_retry(
+            self,
+            operation: Callable[[], Any],
+            on_retry: Optional[Callable[[int], None]] = None,
+    ) -> Any:
         """为非流式聚合路径应用相同的连接阶段重试策略。"""
         for attempt in range(self.max_connect_retries + 1):  # pragma: no branch
             try:
                 return await operation()
             except (httpx.ConnectError, httpx.ConnectTimeout) as error:
                 if attempt < self.max_connect_retries:
+                    if on_retry is not None:
+                        on_retry(attempt + 1)
                     await self._wait_before_retry(attempt, error)
                     continue
                 logger.error("CodeBuddy 连接重试耗尽: %s", error)
@@ -224,9 +264,10 @@ class _ManagedStreamingResponse(StreamingResponse):
     响应体发送仍委托 Starlette，避免重复实现其编码和 ASGI 消息逻辑。
     """
 
-    def __init__(self, content, close_callback, **kwargs):
+    def __init__(self, content, close_callback, disconnect_callback, **kwargs):
         super().__init__(content, **kwargs)
         self._close_callback = close_callback
+        self._disconnect_callback = disconnect_callback
 
     async def _stream_from_first_chunk(self, first_chunk: Any, send) -> None:
         self.body_iterator = _prepend_chunk(first_chunk, self.body_iterator)
@@ -243,6 +284,7 @@ class _ManagedStreamingResponse(StreamingResponse):
             )
             if disconnect_task in completed:
                 await disconnect_task
+                self._disconnect_callback()
                 return
 
             first_chunk = await first_chunk_task
@@ -259,10 +301,15 @@ class _ManagedStreamingResponse(StreamingResponse):
                 (stream_task, disconnect_task),
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            if disconnect_task in completed:
-                await disconnect_task
+            if stream_task in completed:
+                await stream_task
                 return
-            await stream_task
+            await disconnect_task
+            self._disconnect_callback()
+            return
+        except ClientDisconnect:
+            self._disconnect_callback()
+            raise
         finally:
             for task in tasks:
                 task.cancel()
@@ -381,11 +428,61 @@ class CodeBuddyStreamService:
             http_client_factory: Callable[[], Any] = get_http_client,
             api_url_factory: Callable[[], str] = get_codebuddy_api_url,
             first_chunk_timeout: float = 310.0,
+            observer: Optional[StreamObserver] = None,
     ):
         self.connection_manager = SSEConnectionManager()
         self.http_client_factory = http_client_factory
         self.api_url_factory = api_url_factory
         self.first_chunk_timeout = first_chunk_timeout
+        self.observer = observer
+
+    def _observe(self, observation: StreamObservation) -> None:
+        if self.observer is None:
+            return
+        try:
+            self.observer(observation)
+        except Exception:
+            logger.exception("CodeBuddy 请求观察器执行失败")
+
+    def _observe_retry(self, retry_count: int) -> None:
+        self._observe(StreamObservation(
+            kind="retry",
+            retry_count=retry_count,
+            error_type="upstream_connect_error",
+        ))
+
+    def _observe_error(self, error_type: str, status_code: Optional[int] = None) -> None:
+        self._observe(StreamObservation(
+            kind="error",
+            error_type=error_type,
+            status_code=status_code,
+        ))
+
+    def _observe_upstream_event(
+            self,
+            event: CodeBuddyResponseEvent,
+            new_tool_call_count: int,
+    ) -> None:
+        usage = copy.deepcopy(event.usage) if isinstance(event.usage, dict) else None
+        finish_reason = event.finish_reason if isinstance(event.finish_reason, str) else None
+        self._observe(StreamObservation(
+            kind="upstream_event",
+            has_reasoning_content=(
+                isinstance(event.reasoning_content, str) and bool(event.reasoning_content)
+            ),
+            has_content=isinstance(event.content, str) and bool(event.content),
+            tool_call_count=new_tool_call_count,
+            usage=usage,
+            finish_reason=finish_reason,
+            upstream_model=(
+                event.chunk_data.get("model")
+                if isinstance(event.chunk_data.get("model"), str)
+                else None
+            ),
+        ))
+
+    def _observe_client_disconnect(self) -> None:
+        self._observe(StreamObservation(kind="client_disconnect"))
 
     @staticmethod
     def _create_response_context(
@@ -491,17 +588,38 @@ class CodeBuddyStreamService:
             response: Any,
     ) -> AsyncIterator[Any]:
         """统一解析上游 SSE，并把对象事件转换为共享响应语义。"""
+        observed_tool_call_indexes: set[int] = set()
+        observation_index_state = ToolCallIndexState()
         try:
             async for event in iter_sse_events(response.aiter_text()):
                 if event is SSE_DONE:
+                    self._observe(StreamObservation(
+                        kind="upstream_event",
+                        upstream_done=True,
+                    ))
                     yield SSE_DONE
                     return
                 if not isinstance(event, dict):
+                    self._observe(StreamObservation(kind="upstream_event"))
                     yield event
                     continue
                 if "error" in event:
+                    self._observe(StreamObservation(kind="upstream_event"))
                     raise self._upstream_sse_error(event)
-                yield CodeBuddyResponseEvent.parse(event)
+                response_event = CodeBuddyResponseEvent.parse(event)
+                new_tool_call_count = 0
+                for tool_call in response_event.tool_calls:
+                    if not isinstance(tool_call, dict):
+                        continue
+                    tool_call_index = observation_index_state.resolve(tool_call)
+                    if (
+                            tool_call_index is not None
+                            and tool_call_index not in observed_tool_call_indexes
+                    ):
+                        observed_tool_call_indexes.add(tool_call_index)
+                        new_tool_call_count += 1
+                self._observe_upstream_event(response_event, new_tool_call_count)
+                yield response_event
         except SSEDataError as error:
             raise UpstreamAPIError(
                 status_code=502,
@@ -556,7 +674,10 @@ class CodeBuddyStreamService:
                     return
                 raise self._incomplete_stream_error()
 
-        managed_stream = self.connection_manager.stream_with_retry(stream_core)
+        managed_stream = self.connection_manager.stream_with_retry(
+            stream_core,
+            on_retry=self._observe_retry,
+        )
 
         async def prefetch_first_chunk():
             try:
@@ -566,6 +687,7 @@ class CodeBuddyStreamService:
                 )
             except TimeoutError:
                 logger.error("等待 CodeBuddy 首个响应事件超时")
+                self._observe_error("upstream_timeout", 504)
                 raise UpstreamAPIError(
                     status_code=504,
                     message="CodeBuddy API first chunk timeout",
@@ -573,6 +695,7 @@ class CodeBuddyStreamService:
                 )
             except httpx.TimeoutException:
                 logger.error("CodeBuddy API 超时")
+                self._observe_error("upstream_timeout", 504)
                 raise UpstreamAPIError(
                     status_code=504,
                     message="CodeBuddy API timeout",
@@ -580,11 +703,18 @@ class CodeBuddyStreamService:
                 )
             except httpx.TransportError as error:
                 logger.error("上游传输错误: %s", error)
+                self._observe_error("upstream_transport_error", 502)
                 raise UpstreamAPIError(
                     status_code=502,
                     message=f"Upstream transport error: {str(error)}",
                     error_type="upstream_transport_error",
                 ) from error
+            except UpstreamAPIError as error:
+                self._observe_error(error.error["type"], error.status_code)
+                raise
+            except Exception:
+                self._observe_error("stream_error")
+                raise
 
         async def response_body():
             try:
@@ -594,12 +724,16 @@ class CodeBuddyStreamService:
                     async for chunk in managed_stream:
                         yield chunk
                 except httpx.TimeoutException as error:
+                    self._observe_error("upstream_timeout", 504)
                     yield format_sse_error(str(error), "upstream_timeout")
                 except httpx.TransportError as error:
+                    self._observe_error("upstream_transport_error", 502)
                     yield format_sse_error(str(error), "upstream_transport_error")
                 except UpstreamAPIError as error:
+                    self._observe_error(error.error["type"], error.status_code)
                     yield format_sse_event({"error": error.error})
                 except Exception as error:
+                    self._observe_error("stream_error")
                     yield format_sse_error(str(error), "stream_error")
             finally:
                 await managed_stream.aclose()
@@ -607,6 +741,7 @@ class CodeBuddyStreamService:
         return _ManagedStreamingResponse(
             response_body(),
             managed_stream.aclose,
+            self._observe_client_disconnect,
             media_type="text/event-stream",
             headers=SSE_HEADERS,
         )
@@ -650,9 +785,16 @@ class CodeBuddyStreamService:
             return aggregator.finalize()
 
         try:
-            return await self.connection_manager.run_with_retry(request_once)
+            return await self.connection_manager.run_with_retry(
+                request_once,
+                on_retry=self._observe_retry,
+            )
+        except UpstreamAPIError as error:
+            self._observe_error(error.error["type"], error.status_code)
+            raise
         except httpx.TimeoutException:
             logger.error("CodeBuddy API 超时")
+            self._observe_error("upstream_timeout", 504)
             raise UpstreamAPIError(
                 status_code=504,
                 message="CodeBuddy API timeout",
@@ -660,8 +802,12 @@ class CodeBuddyStreamService:
             )
         except httpx.TransportError as e:
             logger.error("上游传输错误: %s", e)
+            self._observe_error("upstream_transport_error", 502)
             raise UpstreamAPIError(
                 status_code=502,
                 message=f"Upstream transport error: {str(e)}",
                 error_type="upstream_transport_error",
             )
+        except Exception:
+            self._observe_error("stream_error")
+            raise

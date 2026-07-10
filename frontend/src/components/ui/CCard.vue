@@ -42,9 +42,9 @@ function hasHeader(): boolean {
   >
     <div
       v-if="hasHeader()"
-      class="c-card-header flex items-center justify-between gap-3 border-b border-border pb-4"
+      class="c-card-header flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4"
     >
-      <div class="min-w-0 flex-1">
+      <div class="c-card-header-main max-w-full min-w-0 flex-1">
         <slot name="header">
           <div
             v-if="title"
@@ -54,7 +54,10 @@ function hasHeader(): boolean {
           </div>
         </slot>
       </div>
-      <div v-if="$slots['header-extra']" class="c-card-header-extra ml-auto shrink-0">
+      <div
+        v-if="$slots['header-extra']"
+        class="c-card-header-extra ml-auto max-w-full min-w-0 shrink-0"
+      >
         <slot name="header-extra" />
       </div>
     </div>

@@ -8,7 +8,6 @@ from typing import Any, Dict, List, Optional
 from .auth_types import AuthenticatedUser
 from .credential_rotation import CredentialRotationPolicy, TokenExpiry
 from .credential_store import CodeBuddyCredentialStore, CredentialRecord, build_user_credentials_dirname
-from .usage_stats_manager import usage_stats_manager
 
 logger = logging.getLogger(__name__)
 
@@ -153,8 +152,6 @@ class CodeBuddyTokenManager:
         if not selection.credential_record:
             return None
 
-        if selection.filename:
-            usage_stats_manager.record_credential_usage(self.username or "", selection.filename)
         if selection.log_message:
             logger.info(selection.log_message)
 

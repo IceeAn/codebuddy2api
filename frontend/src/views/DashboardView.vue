@@ -1,18 +1,19 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
+import { useRouter } from 'vue-router';
 import { Activity, CheckCircle2, Clock3, KeyRound, Link } from '@lucide/vue';
 import StatTile from '../components/StatTile.vue';
 import RefreshButton from '../components/RefreshButton.vue';
 import CAlert from '../components/ui/CAlert.vue';
 import CButton from '../components/ui/CButton.vue';
 import CCard from '../components/ui/CCard.vue';
-import CDataTable, { type Column } from '../components/ui/CDataTable.vue';
 import CInput from '../components/ui/CInput.vue';
 import CInputGroup from '../components/ui/CInputGroup.vue';
 import CProgress from '../components/ui/CProgress.vue';
 import { adminApi } from '../api/admin';
 import { useClipboard } from '../composables/useClipboard';
+import { buildPresetRange, resolveBrowserTimeZone } from '../utils/stats';
 import {
   computeValidityPercent,
   describeCredentialStatus,
@@ -20,6 +21,7 @@ import {
 } from '../utils/dashboardStatus';
 
 const { copy } = useClipboard();
+const router = useRouter();
 const STATUS_REFETCH_INTERVAL_MS = 600_000;
 const FOCUS_REFETCH_STALE_MS = 180_000;
 const UPTIME_TICK_MS = 1_000;
@@ -31,6 +33,23 @@ const statusQuery = useQuery({
   refetchOnMount: 'always',
   refetchOnWindowFocus: true,
   staleTime: FOCUS_REFETCH_STALE_MS,
+});
+
+function todayStatsParams() {
+  const today = buildPresetRange('today');
+  return {
+    start_at: today.startAt,
+    end_at: today.endAt,
+    timezone: resolveBrowserTimeZone(),
+    traffic: 'all' as const,
+  };
+}
+
+const todayStatsQuery = useQuery({
+  queryKey: ['admin-stats-overview', 'dashboard-today'],
+  queryFn: () => adminApi.statsOverview(todayStatsParams()),
+  refetchOnMount: 'always',
+  refetchOnWindowFocus: 'always',
 });
 
 const isError = computed(() => statusQuery.isError.value);
@@ -126,26 +145,8 @@ const runningUptimeSeconds = computed(() => {
 
 const uptimeDisplay = computed(() => buildUptimeDisplay(runningUptimeSeconds.value));
 
-const totalCalls = computed(() => {
-  const usage = statusQuery.data.value?.usage.model_usage || {};
-  return Object.values(usage).reduce((sum, count) => sum + count, 0);
-});
-
-const modelRows = computed(
-  () =>
-    Object.entries(statusQuery.data.value?.usage.model_usage || {})
-      .sort((a, b) => b[1] - a[1])
-      .map(([model, count]) => ({ model, count })) as Record<string, unknown>[],
-);
-
-const credentialRows = computed(
-  () =>
-    Object.entries(statusQuery.data.value?.usage.credential_usage || {})
-      .sort((a, b) => b[1] - a[1])
-      .map(([credential, count]) => ({
-        credential: credential.split('/').pop() || credential,
-        count,
-      })) as Record<string, unknown>[],
+const todayRequestCount = computed(() =>
+  todayStatsQuery.isError.value ? '-' : (todayStatsQuery.data.value?.totals.request_count ?? 0),
 );
 
 const validityPercent = computed(() => {
@@ -154,20 +155,25 @@ const validityPercent = computed(() => {
   return computeValidityPercent(valid, total);
 });
 
-const usageColumns: Column[] = [
-  { title: '模型', key: 'model', ellipsis: { tooltip: true } },
-  { title: '调用', key: 'count', align: 'right', width: 120 },
-];
+const combinedFetching = computed(
+  () => statusQuery.isFetching.value || todayStatsQuery.isFetching.value,
+);
 
-const credentialColumns: Column[] = [
-  { title: '凭证', key: 'credential', ellipsis: { tooltip: true } },
-  { title: '调用', key: 'count', align: 'right', width: 120 },
-];
+async function refreshDashboard(): Promise<unknown> {
+  const results = await Promise.all([statusQuery.refetch(), todayStatsQuery.refetch()]);
+  return { isError: results.some((result) => (result as { isError?: boolean }).isError === true) };
+}
+
+const dashboardQuery = { isFetching: combinedFetching, refetch: refreshDashboard };
 
 function copyApiBaseUrl() {
   const value = statusQuery.data.value?.api_base_url;
   if (!value) return;
   copy(value, '客户端入口地址已复制');
+}
+
+function openStats(): void {
+  void router.push({ name: 'stats' });
 }
 </script>
 
@@ -175,13 +181,20 @@ function copyApiBaseUrl() {
   <div class="section-grid">
     <div class="toolbar">
       <span class="text-base font-semibold text-text-strong">总览</span>
-      <RefreshButton :query="statusQuery" />
+      <RefreshButton :query="dashboardQuery" />
     </div>
 
     <CAlert v-if="isError" type="error">
       <div class="toolbar">
         <span>加载状态失败</span>
-        <RefreshButton :query="statusQuery" label="重试" size="sm" />
+        <RefreshButton :query="dashboardQuery" label="重试" size="sm" />
+      </div>
+    </CAlert>
+
+    <CAlert v-if="todayStatsQuery.isError.value" type="error">
+      <div class="toolbar">
+        <span>加载今日请求统计失败</span>
+        <RefreshButton :query="todayStatsQuery" label="重试今日统计" size="sm" />
       </div>
     </CAlert>
 
@@ -206,11 +219,16 @@ function copyApiBaseUrl() {
         </template>
       </StatTile>
       <StatTile
-        label="API 调用"
-        :value="totalCalls"
+        label="今日请求"
+        :value="todayRequestCount"
         tone="warning"
         :icon="Activity"
-        meta="按当前进程内统计"
+        meta="查看持久化统计"
+        class="cursor-pointer"
+        role="link"
+        tabindex="0"
+        @click="openStats"
+        @keyup.enter="openStats"
       />
       <StatTile
         :label="uptimeDisplay.label"
@@ -220,36 +238,6 @@ function copyApiBaseUrl() {
         :meta="uptimeDisplay.meta"
         value-class="break-words text-[24px] leading-tight [overflow-wrap:anywhere]"
       />
-    </div>
-
-    <div
-      class="grid split-grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(20rem,0.8fr)]"
-    >
-      <CCard title="模型使用">
-        <CDataTable
-          :columns="usageColumns"
-          :data="modelRows"
-          :loading="statusQuery.isLoading.value || statusQuery.isFetching.value"
-          :error="statusQuery.isError.value"
-          :bordered="false"
-          size="small"
-        >
-          <template #empty>暂无使用数据</template>
-        </CDataTable>
-      </CCard>
-
-      <CCard title="凭证使用">
-        <CDataTable
-          :columns="credentialColumns"
-          :data="credentialRows"
-          :loading="statusQuery.isLoading.value || statusQuery.isFetching.value"
-          :error="statusQuery.isError.value"
-          :bordered="false"
-          size="small"
-        >
-          <template #empty>暂无使用数据</template>
-        </CDataTable>
-      </CCard>
     </div>
 
     <CCard title="客户端入口">

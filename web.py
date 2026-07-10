@@ -18,7 +18,9 @@ from src.codebuddy_auth_router import router as codebuddy_auth_router
 from src.frontend_router import router as frontend_router
 from src.openai_router import external_openai_router, playground_openai_router
 from src.private_response import PrivateNoStoreFastAPI, PrivateNoStoreRoute
+from src.stats_router import router as stats_router
 from src.stream_service import UpstreamAPIError, lifecycle_manager
+from src.usage_stats_store import usage_stats_retention_manager
 from src.users_store import validate_configured_users_file
 
 from config import (
@@ -47,10 +49,12 @@ async def lifespan(app: FastAPI):
         # 启动时初始化资源
         validate_configured_users_file()
         initialize_database()
+        await usage_stats_retention_manager.startup()
         await lifecycle_manager.startup()
         yield
     finally:
         # 关闭时清理资源
+        await usage_stats_retention_manager.shutdown()
         await lifecycle_manager.shutdown()
         logger.info("CodeBuddy2API Service stopped")
 
@@ -165,6 +169,13 @@ app.include_router(
     admin_router,
     prefix="/api/admin",
     tags=["Admin Management"]
+)
+
+# 挂载管理台持久化请求统计 API
+app.include_router(
+    stats_router,
+    prefix="/api/admin/stats",
+    tags=["Admin Usage Statistics"],
 )
 
 # 健康检查端点

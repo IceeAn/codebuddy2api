@@ -127,6 +127,7 @@ function mountApp(matches = true) {
         LoginView: { template: '<div class="login-view">登录页</div>' },
         RouterView: RouterViewStub,
         Activity: true,
+        ChartNoAxesCombined: true,
         KeyRound: true,
         LogOut: true,
         MenuIcon: true,
@@ -237,6 +238,16 @@ describe('App', () => {
 
     expect(wrapper.find('nav[aria-label="主导航"]').text()).toContain('开发文档');
     expect(wrapper.find('.topbar').text()).toContain('开发文档');
+  });
+
+  it('统计菜单与页面标题使用中文名称', () => {
+    sessionMock.ready = true;
+    sessionMock.authenticated = true;
+    routeMock.name = 'stats';
+    const { wrapper } = mountApp();
+
+    expect(wrapper.find('nav[aria-label="主导航"]').text()).toContain('统计');
+    expect(wrapper.find('.topbar').text()).toContain('统计');
   });
 
   it('桌面侧边栏使用主题化导轨样式', () => {
