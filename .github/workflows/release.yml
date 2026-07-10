@@ -495,7 +495,7 @@ jobs:
             "${tag_args[@]}" "${IMAGE}@${DIGEST}"
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@v4.0.0
+        uses: sigstore/cosign-installer@v4.1.2
 
       - name: Sign Docker image
         shell: bash
