@@ -507,7 +507,7 @@ jobs:
           changelog_path="CHANGELOG.md"
           manual_notes="$(mktemp)"
           generated_notes="$(mktemp)"
-          direct_commit_notes="$(mktemp)"
+          change_notes="$(mktemp)"
 
           if [[ ! -f "${changelog_path}" ]]; then
             echo "::error::Missing ${changelog_path}. Add a section for ${TAG} before publishing."
@@ -563,16 +563,17 @@ jobs:
 
           gh api "${release_notes_args[@]}" --jq .body > "${generated_notes}"
 
-          direct_notes_args=(
+          change_notes_args=(
             --repository "${GITHUB_REPOSITORY}"
             --repository-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
             --tag "${TAG}"
-            --output "${direct_commit_notes}"
+            --generated-notes "${generated_notes}"
+            --output "${change_notes}"
           )
           if [[ -n "${PREVIOUS_TAG}" ]]; then
-            direct_notes_args+=(--previous-tag "${PREVIOUS_TAG}")
+            change_notes_args+=(--previous-tag "${PREVIOUS_TAG}")
           fi
-          python3 scripts/build_direct_commit_notes.py "${direct_notes_args[@]}"
+          python3 scripts/build_release_change_notes.py "${change_notes_args[@]}"
 
           {
             echo "## 版本说明"
@@ -585,12 +586,7 @@ jobs:
             fi
             echo "- \`${IMAGE}@${DIGEST}\`"
             echo
-            echo "## 变更记录"
-            cat "${generated_notes}"
-            if [[ -s "${direct_commit_notes}" ]]; then
-              echo
-              cat "${direct_commit_notes}"
-            fi
+            cat "${change_notes}"
           } > release-notes.md
 
       - name: Publish GitHub Release

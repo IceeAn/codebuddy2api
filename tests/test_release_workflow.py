@@ -129,11 +129,13 @@ class ReleaseWorkflowTests(unittest.TestCase):
             "PREVIOUS_TAG: ${{ needs.resolve.outputs.previous_tag }}", build_notes
         )
         self.assertIn('previous_tag_name=${PREVIOUS_TAG}', build_notes)
-        self.assertIn("scripts/build_direct_commit_notes.py", build_notes)
+        self.assertIn("scripts/build_release_change_notes.py", build_notes)
+        self.assertIn('--generated-notes "${generated_notes}"', build_notes)
         self.assertIn('--previous-tag "${PREVIOUS_TAG}"', build_notes)
-        self.assertIn('cat "${direct_commit_notes}"', build_notes)
+        self.assertIn('cat "${change_notes}"', build_notes)
+        self.assertNotIn("direct_commit_notes", build_notes)
 
-    def test_publish_can_read_pull_requests_for_direct_commit_notes(self):
+    def test_publish_can_read_pull_requests_for_release_change_notes(self):
         publish_job = self.workflow.split("\n  publish:\n", maxsplit=1)[1]
         permissions = publish_job.split("\n\n    steps:\n", maxsplit=1)[0]
 
@@ -143,9 +145,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
         build_notes = self._step("Build release notes")
 
         self.assertIn('echo "## 版本说明"', build_notes)
-        self.assertIn('echo "## 变更记录"', build_notes)
+        self.assertIn('cat "${change_notes}"', build_notes)
         self.assertNotIn('echo "## 手动说明"', build_notes)
         self.assertNotIn('echo "## 自动生成的变更"', build_notes)
+        self.assertNotIn('echo "## 直接提交"', build_notes)
         self.assertNotIn('echo "## 本地运行包"', build_notes)
         self.assertNotIn("codebuddy2api.tar.gz", build_notes)
         self.assertNotIn("codebuddy2api.zip", build_notes)
