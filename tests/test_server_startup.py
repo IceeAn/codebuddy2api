@@ -24,7 +24,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
 
         self.assertIn("data/", entries)
 
-    def test_compose_forces_database_into_persistent_mount(self):
+    def test_compose_forces_all_runtime_data_into_single_persistent_mount(self):
         compose_text = (self.repository_root / "docker-compose.yml").read_text(
             encoding="utf-8"
         )
@@ -36,7 +36,9 @@ class RepositoryConfigurationTests(unittest.TestCase):
 
         self.assertIn("CODEBUDDY_DATA_DIR: /app/data", compose_lines)
         self.assertIn("image: ghcr.io/iceean/codebuddy2api:latest", compose_lines)
+        self.assertIn("- ./data:/app/data", compose_lines)
         self.assertIn("- ./secrets:/app/secrets:ro", compose_lines)
+        self.assertNotIn(".codebuddy_creds", compose_text)
         self.assertNotIn(
             "- ./secrets/users.txt:/app/secrets/users.txt:ro", compose_lines
         )
@@ -67,6 +69,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
 
         self.assertIn('CODEBUDDY_DATA_DIR="/app/data"', entrypoint)
         self.assertIn("export CODEBUDDY_DATA_DIR", entrypoint)
+        self.assertNotIn(".codebuddy_creds", entrypoint)
 
     def test_container_entrypoint_supports_user_setup_commands(self):
         entrypoint = (self.repository_root / "entrypoint.sh").read_text(encoding="utf-8")
@@ -108,6 +111,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
             "ln -s /app/scripts/hash_password.py /usr/local/bin/codebuddy2api-hash-password",
             dockerfile,
         )
+        self.assertNotIn(".codebuddy_creds", dockerfile)
 
     def test_coverage_configuration_measures_all_production_modules(self):
         coverage_config = configparser.ConfigParser()

@@ -5,13 +5,11 @@ services:
     ports:
       - "8001:8001"
     environment:
-      # 容器数据库必须写入持久化挂载点，不接受 .env 覆盖。
+      # 容器运行数据必须写入持久化挂载点，不接受 .env 覆盖。
       CODEBUDDY_DATA_DIR: /app/data
     volumes:
-      # SQLite 数据持久化
+      # SQLite 与 CodeBuddy 凭证持久化
       - ./data:/app/data
-      # CodeBuddy 凭证持久化
-      - ./.codebuddy_creds:/app/.codebuddy_creds
       # 多用户认证目录；服务只读，add-user 命令使用单独的可写挂载。
       - ./secrets:/app/secrets:ro
     env_file:

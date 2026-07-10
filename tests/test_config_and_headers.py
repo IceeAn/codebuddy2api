@@ -2,6 +2,7 @@ import sqlite3
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from unittest import mock
 
 import config
@@ -51,6 +52,36 @@ class ConfigTests(ConfigIsolationMixin, unittest.TestCase):
             config.get_rotation_count()
         with self.assertRaisesRegex(ValueError, "username is required"):
             config.update_settings({"CODEBUDDY_MODELS": "model"})
+
+    def test_credentials_directory_is_fixed_below_data_directory(self):
+        config._config_cache["CODEBUDDY_DATA_DIR"] = "/runtime/data"
+
+        self.assertNotIn("CODEBUDDY_CREDS_DIR", config._DEFAULT_CONFIG)
+        self.assertEqual(
+            config.get_codebuddy_creds_dir(),
+            "/runtime/data/credentials",
+        )
+
+    def test_relative_data_directory_is_resolved_from_application_root(self):
+        config._config_cache["CODEBUDDY_DATA_DIR"] = "relative-data"
+        application_root = Path(config.__file__).resolve().parent
+
+        with mock.patch(
+            "src.sqlite_database.Path.cwd",
+            return_value=Path("/unrelated-working-directory"),
+        ):
+            self.assertEqual(
+                config.get_data_dir(),
+                str(application_root / "relative-data"),
+            )
+            self.assertEqual(
+                config.get_database_path(),
+                application_root / "relative-data" / "codebuddy2api.sqlite3",
+            )
+            self.assertEqual(
+                config.get_codebuddy_creds_dir(),
+                str(application_root / "relative-data" / "credentials"),
+            )
 
     def test_unsafe_api_endpoint_falls_back_to_default(self):
         config._config_cache["CODEBUDDY_API_ENDPOINT"] = "https://evil.example"

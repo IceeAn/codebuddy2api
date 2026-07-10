@@ -604,7 +604,7 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
 
     def test_token_manager_registry_isolates_users(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            config._config_cache["CODEBUDDY_CREDS_DIR"] = tmp_dir
+            config._config_cache["CODEBUDDY_DATA_DIR"] = tmp_dir
             registry = CodeBuddyTokenManagerRegistry()
 
             alice_manager = registry.for_username("alice@example.com")
@@ -625,7 +625,7 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
 
     def test_get_token_manager_for_user_uses_username_identity(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            config._config_cache["CODEBUDDY_CREDS_DIR"] = tmp_dir
+            config._config_cache["CODEBUDDY_DATA_DIR"] = tmp_dir
             registry = CodeBuddyTokenManagerRegistry()
 
             first = registry.for_user(AuthenticatedUser(username="alice", source="session_cookie"))
@@ -635,7 +635,7 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
 
     def test_token_manager_uses_user_scoped_rotation_settings(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            config._config_cache["CODEBUDDY_CREDS_DIR"] = tmp_dir
+            config._config_cache["CODEBUDDY_DATA_DIR"] = tmp_dir
             config.update_settings(
                 {
                     "CODEBUDDY_AUTO_ROTATION_ENABLED": False,
@@ -659,7 +659,7 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
 
     def test_token_manager_toggle_auto_rotation_updates_user_setting(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            config._config_cache["CODEBUDDY_CREDS_DIR"] = tmp_dir
+            config._config_cache["CODEBUDDY_DATA_DIR"] = tmp_dir
             registry = CodeBuddyTokenManagerRegistry()
             manager = registry.for_user(AuthenticatedUser(username="alice", source="session_cookie"))
 

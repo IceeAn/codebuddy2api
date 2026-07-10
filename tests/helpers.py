@@ -17,7 +17,6 @@ class ConfigIsolationMixin:
         self._original_user_settings = deepcopy(config._user_settings_cache)
         runtime_root = Path(self._database_dir.name)
         config._config_cache["CODEBUDDY_DATA_DIR"] = str(runtime_root / "data")
-        config._config_cache["CODEBUDDY_CREDS_DIR"] = str(runtime_root / "credentials")
         config._user_settings_cache = {}
         reset_runtime_stores()
 

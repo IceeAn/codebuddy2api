@@ -16,7 +16,6 @@ class ProtocolRouteAuthenticationTests(TempConfigMixin, unittest.IsolatedAsyncio
     def setUp(self):
         super().setUp()
         configure_users_file(self.temp_path)
-        config._config_cache["CODEBUDDY_CREDS_DIR"] = str(self.temp_path / "creds")
         self.api_key = api_key_store.create_key("admin", "external")["api_key"]
         self.session_id = session_store.create("admin")
 

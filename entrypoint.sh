@@ -47,8 +47,8 @@ export CODEBUDDY_USERS_FILE
 # 确保挂载目录中的普通目录和普通文件归应用用户所有。
 # 使用 find 默认不跟随符号链接，避免递归 chown 误处理链接目标。
 echo "Ensuring ownership of mounted directories..."
-find /app/data /app/.codebuddy_creds -type d -exec chown "${APP_USER}:${APP_USER}" {} +
-find /app/data /app/.codebuddy_creds -type f -exec chown "${APP_USER}:${APP_USER}" {} +
+find /app/data -type d -exec chown "${APP_USER}:${APP_USER}" {} +
+find /app/data -type f -exec chown "${APP_USER}:${APP_USER}" {} +
 echo "Ownership fixed."
 
 # 切换到应用用户并执行 Dockerfile 中的 CMD。

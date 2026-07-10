@@ -50,7 +50,7 @@ source venv/bin/activate
 python3 -m pip install -r requirements.txt
 
 cp .env.example .env
-mkdir -p secrets data .codebuddy_creds
+mkdir -p secrets data
 python3 scripts/hash_password.py admin --output secrets/users.txt
 
 python3 web.py
@@ -85,7 +85,6 @@ py -3 -m venv venv
 Copy-Item .env.example .env
 New-Item -ItemType Directory -Force secrets | Out-Null
 New-Item -ItemType Directory -Force data | Out-Null
-New-Item -ItemType Directory -Force .codebuddy_creds | Out-Null
 .\venv\Scripts\python.exe scripts\hash_password.py admin --output secrets\users.txt
 
 .\venv\Scripts\python.exe web.py
@@ -97,7 +96,7 @@ New-Item -ItemType Directory -Force .codebuddy_creds | Out-Null
 
 ### 更新
 
-本地运行更新时，下载新版 Release 包并解压到新目录，停止旧服务后，把旧目录中的 `data`、`secrets`、`.codebuddy_creds` 和 `.env` 复制或移动到新目录，再重新创建虚拟环境并执行 `python3 -m pip install -r requirements.txt` 后启动。确认新版运行正常后，再删除旧目录。
+本地运行更新时，下载新版 Release 包并解压到新目录，停止旧服务后，把旧目录中的 `data`、`secrets` 和 `.env` 复制或移动到新目录，再重新创建虚拟环境并执行 `python3 -m pip install -r requirements.txt` 后启动。确认新版运行正常后，再删除旧目录。
 
 ## Docker 部署
 
@@ -138,7 +137,7 @@ docker compose up -d
 
 启动后访问 `http://127.0.0.1:8001`，继续执行 [开始使用](#开始使用)。
 
-数据和凭证保存在当前目录下的 `data`、`.codebuddy_creds` 和 `secrets/users.txt`。
+SQLite 与 CodeBuddy 凭证保存在当前目录的 `data` 中，系统用户保存在 `secrets/users.txt`。
 
 若需要通过域名、服务器 IP 访问服务或修改其他配置，可参考 [.env.example](.env.example) 创建 `.env` 并配置相关环境变量后再启动。
 
@@ -244,19 +243,18 @@ OpenAPI 文档会展示外部 `/openai/v1/*` 的 Bearer API Key 鉴权和 Chat C
 
 ### 启动与安全边界配置
 
-| 环境变量                          | 默认值                        | 说明                                                    |
-| --------------------------------- | ----------------------------- | ------------------------------------------------------- |
-| `CODEBUDDY_USERS_FILE`            | `secrets/users.txt`           | 系统用户文件路径；启动时必须存在且至少包含一个有效用户  |
-| `CODEBUDDY_HOST`                  | `127.0.0.1`                   | 本地启动监听地址                                        |
-| `CODEBUDDY_PORT`                  | `8001`                        | 本地启动监听端口                                        |
-| `CODEBUDDY_API_ENDPOINT`          | `https://copilot.tencent.com` | CodeBuddy 上游；国际站可使用 `https://www.codebuddy.ai` |
-| `CODEBUDDY_ALLOWED_API_ENDPOINTS` | 中国站、国际站                | 可接收真实 CodeBuddy Token 的上游白名单                 |
-| `CODEBUDDY_CREDS_DIR`             | `.codebuddy_creds`            | 上游凭证根目录                                          |
-| `CODEBUDDY_DATA_DIR`              | `data`                        | 运行数据目录，包含 SQLite；Docker 固定为 `/app/data`    |
-| `CODEBUDDY_ALLOWED_HOSTS`         | `localhost,127.0.0.1`         | 允许访问本服务的 Host 头                                |
-| `CODEBUDDY_ALLOWED_ORIGINS`       | 空                            | 允许跨域访问的浏览器 Origin；空表示不启用 CORS          |
-| `CODEBUDDY_SSL_VERIFY`            | `true`                        | 上游 TLS 证书校验；公网部署必须保持开启                 |
-| `CODEBUDDY_LOG_LEVEL`             | `INFO`                        | `DEBUG`、`INFO`、`WARNING`、`ERROR` 或 `CRITICAL`       |
+| 环境变量                          | 默认值                        | 说明                                                                                               |
+| --------------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------- |
+| `CODEBUDDY_USERS_FILE`            | `secrets/users.txt`           | 系统用户文件路径；启动时必须存在且至少包含一个有效用户                                             |
+| `CODEBUDDY_HOST`                  | `127.0.0.1`                   | 本地启动监听地址                                                                                   |
+| `CODEBUDDY_PORT`                  | `8001`                        | 本地启动监听端口                                                                                   |
+| `CODEBUDDY_API_ENDPOINT`          | `https://copilot.tencent.com` | CodeBuddy 上游；国际站可使用 `https://www.codebuddy.ai`                                            |
+| `CODEBUDDY_ALLOWED_API_ENDPOINTS` | 中国站、国际站                | 可接收真实 CodeBuddy Token 的上游白名单                                                            |
+| `CODEBUDDY_DATA_DIR`              | `data`                        | 运行数据目录，包含 SQLite 和 `credentials/`；相对路径以应用根目录为基准，Docker 固定为 `/app/data` |
+| `CODEBUDDY_ALLOWED_HOSTS`         | `localhost,127.0.0.1`         | 允许访问本服务的 Host 头                                                                           |
+| `CODEBUDDY_ALLOWED_ORIGINS`       | 空                            | 允许跨域访问的浏览器 Origin；空表示不启用 CORS                                                     |
+| `CODEBUDDY_SSL_VERIFY`            | `true`                        | 上游 TLS 证书校验；公网部署必须保持开启                                                            |
+| `CODEBUDDY_LOG_LEVEL`             | `INFO`                        | `DEBUG`、`INFO`、`WARNING`、`ERROR` 或 `CRITICAL`                                                  |
 
 `CODEBUDDY_API_ENDPOINT` 不在白名单内时会记录错误并回退到默认中国站，防止真实 Token 被转发到未授权地址。
 
@@ -300,7 +298,7 @@ python3 -m venv venv
 source venv/bin/activate
 python3 -m pip install -r requirements-dev.txt
 
-mkdir -p secrets data .codebuddy_creds
+mkdir -p secrets data
 python3 scripts/hash_password.py admin --output secrets/users.txt
 
 python3 web.py
@@ -324,7 +322,7 @@ pnpm run dev
 docker build -t codebuddy2api:local .
 ```
 
-可复用 [Docker 部署](#docker-部署) 中创建的 `data`、`.codebuddy_creds` 和 `secrets/users.txt` 启动本地镜像：
+可复用 [Docker 部署](#docker-部署) 中创建的 `data` 和 `secrets/users.txt` 启动本地镜像：
 
 ```bash
 docker run -d \
@@ -332,7 +330,6 @@ docker run -d \
   --restart unless-stopped \
   -p 8001:8001 \
   -v "$PWD/data:/app/data" \
-  -v "$PWD/.codebuddy_creds:/app/.codebuddy_creds" \
   -v "$PWD/secrets:/app/secrets:ro" \
   codebuddy2api:local
 ```

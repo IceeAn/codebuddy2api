@@ -7,9 +7,9 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from config import get_data_dir
+from config import get_database_path
 from .auth_types import API_KEY_PREFIX, AuthenticatedUser
-from .sqlite_database import SQLiteDatabase, resolve_database_path
+from .sqlite_database import SQLiteDatabase
 from .users_store import users_store
 
 API_KEY_SECRET_BYTES = 40
@@ -20,7 +20,7 @@ class ApiKeyStore:
     """管理用户生成的 sk- API Key。"""
 
     def _resolve_database_path(self) -> Path:
-        return resolve_database_path(get_data_dir())
+        return get_database_path()
 
     def _database(self) -> SQLiteDatabase:
         return SQLiteDatabase(self._resolve_database_path())

@@ -45,7 +45,6 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         super().setUp()
         configure_users_file(self.temp_path)
-        config._config_cache["CODEBUDDY_CREDS_DIR"] = str(self.temp_path / "creds")
         self.user = AuthenticatedUser(username="admin", source="session_cookie")
         self.registry = CodeBuddyTokenManagerRegistry()
         usage_stats_manager._reset_for_tests()

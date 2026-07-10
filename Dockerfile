@@ -41,8 +41,8 @@ COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 
 # 创建运行用户、持久化目录和镜像内辅助命令。
 RUN useradd --create-home --uid 1001 appuser && \
-    mkdir -p /app/data /app/.codebuddy_creds /app/secrets && \
-    chown -R appuser:appuser /app/data /app/.codebuddy_creds && \
+    mkdir -p /app/data /app/secrets && \
+    chown -R appuser:appuser /app/data && \
     chmod +x /usr/local/bin/entrypoint.sh /app/scripts/hash_password.py && \
     ln -s /app/scripts/hash_password.py /usr/local/bin/codebuddy2api-hash-password
 

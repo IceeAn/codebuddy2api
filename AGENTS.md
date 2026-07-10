@@ -38,7 +38,7 @@ docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:
 ## 架构
 
 - **入口点**: `web.py` — FastAPI 应用，使用 **Uvicorn** 提供服务，本地通过 `uvicorn.run()` 启动。
-- **配置**: `config.py` — 启动级配置优先级为：环境变量 > 硬编码默认值，日志级别等服务配置不支持运行时修改。管理台设置按本系统用户隔离，首次保存后持久化到 `data/codebuddy2api.sqlite3`；未保存的用户使用当前系统默认配置，安全边界配置不会从数据库加载。
+- **配置**: `config.py` — 启动级配置优先级为：环境变量 > 硬编码默认值，日志级别等服务配置不支持运行时修改。`CODEBUDDY_DATA_DIR` 的相对路径始终以应用根目录（`config.py` 所在目录）为基准，SQLite 与 CodeBuddy 凭证必须从该绝对数据目录派生，不得依赖进程工作目录。管理台设置按本系统用户隔离，首次保存后持久化到 `data/codebuddy2api.sqlite3`；未保存的用户使用当前系统默认配置，安全边界配置不会从数据库加载。
 - **SQLite 存储**: `src/sqlite_database.py` 维护 schema 版本、WAL、事务和 0600 权限；首次建表与 `user_version` 在同一 `BEGIN IMMEDIATE` 事务中提交。每次连接都检查并恢复 WAL，无法启用时快速失败；数据目录不得为符号链接，数据库文件及 `-wal`、`-shm`、`-journal` sidecar 必须是非符号链接普通文件。`src/user_settings_store.py` 保存用户设置，`src/api_key_store.py` 保存 API Key 的 SHA-256 摘要。服务启动时自动创建数据库及空表。
 - **认证**: 实际实现拆分在 `src/auth_router.py`、`src/users_store.py`、`src/api_key_store.py`、`src/session_store.py` 和 `src/auth_types.py`。生产代码应直接从这些真实模块导入，不再通过 `src/auth.py` 兼容层转导出。认证层包含两个独立入口：
    - Web UI 登录 → HttpOnly 会话 Cookie（7 天有效期），通过 `secrets/users.txt`（PBKDF2 哈希，每行格式 `用户名:哈希`）验证。
@@ -51,7 +51,7 @@ docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:
 - **开发文档**: `/docs`、`/redoc` 和 `/openapi.json` 仅接受管理台会话 Cookie，未登录时返回带 `WWW-Authenticate: Bearer` 的 401，外部 API Key 不可替代会话；三个端点的成功和鉴权失败响应都必须设置 `Cache-Control: private, no-store`。OpenAPI 使用 `ApiKeyBearer` 描述外部 `/openai/v1/*`，使用 `SessionCookie` 描述公开 schema 中受会话保护的管理接口。Chat Completions 的 `messages` 必须为非空数组且每项必须包含 `role` 和 `content`；仅带非空对象数组 `tool_calls` 的 assistant 消息可省略 `content`。隐藏 `/api/admin/playground/openai/v1/*`。Swagger 禁用外部 schema 验证器和授权持久化。
 - **管理 API**: 管理台专用接口集中在 `src/admin_router.py` 并挂载到 `/api/admin/*`。凭证管理使用稳定 `credential_id`，不要在前端或新 API 中依赖凭证列表 index；手动添加凭证的 `bearer_token` 在 Pydantic 模型层去除首尾空白并拒绝空值。
 - **CodeBuddy OAuth**: `src/codebuddy_auth_router.py` 只保留 FastAPI 路由；上游认证客户端、auth_state 所属关系和 token 解析/保存位于 `src/codebuddy_oauth.py`。认证可通过会话保护的 `POST /codebuddy/auth/cancel` 取消，state 被取消或消费后不可继续轮询或重放。轮询成功仅向浏览器返回保存结果，不得返回 access token、refresh token 或用户信息；凭证保存失败必须返回 500，且已消费的 state 不得恢复。手动添加与 OAuth 保存凭证共用 token 解析：`user_id` 优先取 JWT `sub`，解析失败或无 `sub` 时按真实 CLI token fallback 使用 `anonymous_<token 后 8 位>`，不读取 `ACC_USER_ID` 或 `ACC_USER_NICKNAME`。
-- **凭证隔离**: 每个系统用户在 `.codebuddy_creds/users/<哈希目录名>/` 下拥有独立的 CodeBuddy Token 目录。Token 管理器按用户单例化（`CodeBuddyTokenManagerRegistry`）；磁盘安全读写位于 `src/credential_store.py`，过期判断和轮换策略位于 `src/credential_rotation.py`。凭证轮换开关为用户级设置 `CODEBUDDY_AUTO_ROTATION_ENABLED`，轮换频率 `CODEBUDDY_ROTATION_COUNT` 必须为正整数。
+- **凭证隔离**: 每个系统用户在 `data/credentials/users/<哈希目录名>/` 下拥有独立的 CodeBuddy Token 目录。Token 管理器按用户单例化（`CodeBuddyTokenManagerRegistry`）；磁盘安全读写位于 `src/credential_store.py`，过期判断和轮换策略位于 `src/credential_rotation.py`。凭证轮换开关为用户级设置 `CODEBUDDY_AUTO_ROTATION_ENABLED`，轮换频率 `CODEBUDDY_ROTATION_COUNT` 必须为正整数。
 - **上游 API**: CodeBuddy 仅支持流式响应。客户端的非流式请求也必须通过 `client.stream()` 增量读取上游 SSE，再由 `StreamResponseAggregator` 聚合，禁止先缓冲完整响应体。所有请求体在 `RequestProcessor.prepare_request()` 中强制注入 `stream=True`。
 
 ## 特殊约定与注意事项
@@ -66,7 +66,7 @@ docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:
 - **HTTP 客户端代理**: 全局上游 HTTP 客户端设置 `trust_env=False`，避免本机 `ALL_PROXY`/`HTTP_PROXY` 指向 SOCKS 代理但未安装 `socksio` 时导致服务启动失败。
 - **端点前缀**: 外部聊天 API 路径为 `POST /openai/v1/chat/completions`，客户端应将 `base_url` 设置为包含 `/openai/v1`；管理台测试入口为 `/api/admin/playground/openai/v1`。
 - **管理台离线请求**: Vue Query 的查询和 mutation 全局使用 `networkMode="always"`，查询同时禁用 `refetchOnReconnect`，确保断网时立即失败而不是暂停排队，禁止恢复联网后补发读取或写入操作。所有手动刷新和错误重试统一使用 `RefreshButton`；该组件在调用 `refetch()` 前检查离线状态，并独立维护至少 300ms 的按钮加载状态，不能只依赖 `isFetching`。
-- **文件安全**: 凭证写入使用 `O_NOFOLLOW` + 0600 权限。加载时跳过 `.codebuddy_creds/` 中的符号链接。文件名经过路径穿越清理。SQLite 数据库拒绝符号链接路径并强制设置 0600 权限。
+- **文件安全**: 凭证写入使用 `O_NOFOLLOW` + 0600 权限。加载时跳过 `data/credentials/` 中的符号链接。文件名经过路径穿越清理。SQLite 数据库拒绝符号链接路径并强制设置 0600 权限。
 
 ## 开发规定
 
@@ -84,7 +84,7 @@ docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:
 ## Docker
 
 - 容器入口以 root 完成挂载目录准备，将宿主 `users.txt` 复制为 `/run/codebuddy2api/users.txt` 的 `appuser` 私有只读副本，再使用 `gosu` 以非 root 用户 `appuser`（UID 1001）运行服务；不要通过 Compose `user` 或 `docker run --user` 跳过启动准备。
-- 挂载卷：`./data`、`./.codebuddy_creds`、`./secrets:ro`；Compose 默认使用 `ghcr.io/iceean/codebuddy2api:latest` 发布镜像，`.env` 为可选覆盖文件。Compose 和 `entrypoint.sh` 强制 `CODEBUDDY_DATA_DIR=/app/data`，入口脚本同时强制 `CODEBUDDY_USERS_FILE=/run/codebuddy2api/users.txt`。
+- 挂载卷：`./data`、`./secrets:ro`；SQLite 和 CodeBuddy 凭证统一保存在 `data/`。Compose 默认使用 `ghcr.io/iceean/codebuddy2api:latest` 发布镜像，`.env` 为可选覆盖文件。Compose 和 `entrypoint.sh` 强制 `CODEBUDDY_DATA_DIR=/app/data`，入口脚本同时强制 `CODEBUDDY_USERS_FILE=/run/codebuddy2api/users.txt`。
 - 用户文件通过同目录临时文件原子替换，自动补齐缺失的末尾换行并保留或收紧 UID/GID 与 POSIX 权限；不支持符号链接、非普通文件和多硬链接，不保证保留 ACL、扩展属性或自定义安全标签。重复用户名会删除全部旧记录后写入新密码；并发写入不提供锁。服务运行后修改用户文件需执行 `docker compose restart codebuddy2api` 刷新运行时副本。
 - Dockerfile 固定使用 Node 24.11.1 构建前端，再将 `frontend/dist/` 与明确列出的后端运行文件复制到 Python 3.12 运行时镜像；镜像内提供 `hash-password` 和 `add-user` 辅助命令。
 - 容器 CMD 为 `uvicorn web:app --host 0.0.0.0 --port 8001 --no-access-log`。

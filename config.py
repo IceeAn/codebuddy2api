@@ -27,6 +27,9 @@ from src.user_settings_store import UserSettingsStore
 
 logger = logging.getLogger(__name__)
 
+# 相对运行数据路径始终以应用根目录为基准，不受进程工作目录影响。
+_APPLICATION_ROOT = Path(__file__).resolve().parent
+
 DEFAULT_FORCED_REASONING_MODELS = (
     "deepseek-v4-pro",
     "deepseek-v4-flash",
@@ -48,7 +51,6 @@ _DEFAULT_CONFIG = {
     "CODEBUDDY_USERS_FILE": "secrets/users.txt",
     "CODEBUDDY_API_ENDPOINT": "https://copilot.tencent.com",
     "CODEBUDDY_ALLOWED_API_ENDPOINTS": "https://copilot.tencent.com,https://www.codebuddy.ai",
-    "CODEBUDDY_CREDS_DIR": ".codebuddy_creds",
     "CODEBUDDY_DATA_DIR": "data",
     "CODEBUDDY_ALLOWED_HOSTS": "localhost,127.0.0.1",
     "CODEBUDDY_ALLOWED_ORIGINS": "",
@@ -225,11 +227,15 @@ def get_allowed_api_endpoints() -> list:
     return allowed
 
 def get_codebuddy_creds_dir() -> str:
-    return str(_get_config_value("CODEBUDDY_CREDS_DIR"))
+    return str(Path(get_data_dir()) / "credentials")
 
 
 def get_data_dir() -> str:
-    return str(_get_config_value("CODEBUDDY_DATA_DIR"))
+    """返回以应用根目录为基准解析后的绝对运行数据目录。"""
+    data_dir = Path(str(_get_config_value("CODEBUDDY_DATA_DIR")))
+    if not data_dir.is_absolute():
+        data_dir = _APPLICATION_ROOT / data_dir
+    return str(data_dir)
 
 
 def get_database_path() -> Path:

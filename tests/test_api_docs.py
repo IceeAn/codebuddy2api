@@ -14,7 +14,6 @@ class ApiDocumentationTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         super().setUp()
         configure_users_file(self.temp_path)
-        config._config_cache["CODEBUDDY_CREDS_DIR"] = str(self.temp_path / "creds")
         self.session_id = session_store.create("admin")
         self.api_key = api_key_store.create_key("admin", "docs-test")["api_key"]
 

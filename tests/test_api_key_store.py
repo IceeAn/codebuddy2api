@@ -280,15 +280,16 @@ class ApiKeyStoreTests(TempConfigMixin, unittest.TestCase):
 
         self.assertEqual(len(store.list_keys("admin")), 8)
 
-    def test_resolve_database_path_makes_relative_data_dir_absolute(self):
+    def test_resolve_database_path_uses_shared_config_path(self):
         store = ApiKeyStore()
-        with (
-            mock.patch("src.api_key_store.get_data_dir", return_value="relative-data"),
-            mock.patch("src.api_key_store.Path.cwd", return_value=self.temp_path),
+        expected_path = self.temp_path / "shared-data" / "codebuddy2api.sqlite3"
+        with mock.patch(
+            "src.api_key_store.get_database_path",
+            return_value=expected_path,
         ):
             path = store._resolve_database_path()
 
-        self.assertEqual(path, self.temp_path / "relative-data" / "codebuddy2api.sqlite3")
+        self.assertEqual(path, expected_path)
 
 
 if __name__ == "__main__":

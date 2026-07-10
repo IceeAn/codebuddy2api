@@ -17,7 +17,6 @@ class PrivateNoStoreResponseTests(TempConfigMixin, unittest.IsolatedAsyncioTestC
     def setUp(self):
         super().setUp()
         configure_users_file(self.temp_path)
-        config._config_cache["CODEBUDDY_CREDS_DIR"] = str(self.temp_path / "creds")
         self.api_key = api_key_store.create_key("admin", "cache-test")["api_key"]
         self.session_id = session_store.create("admin")
 

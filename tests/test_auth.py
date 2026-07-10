@@ -268,7 +268,6 @@ class AuthDependencyTests(TempConfigMixin, unittest.TestCase):
 
     def test_api_key_auth_accepts_generated_api_key(self):
         configure_users_file(self.temp_path)
-        config._config_cache["CODEBUDDY_CREDS_DIR"] = self._temp_dir.name
 
         key_data = api_key_store.create_key("admin", "test")
         user = require_api_key_user(make_request(authorization=f"Bearer {key_data['api_key']}"))
@@ -289,7 +288,6 @@ class AuthSessionTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         super().setUp()
         configure_users_file(self.temp_path)
-        config._config_cache["CODEBUDDY_CREDS_DIR"] = self._temp_dir.name
 
     async def _login_and_get_cookie(self, request=None) -> str:
         response = Response()
