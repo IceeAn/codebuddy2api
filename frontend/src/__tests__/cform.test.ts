@@ -738,7 +738,11 @@ describe('CFormItem', () => {
       },
       { attachTo: document.body },
     );
-    expect(wrapper.find('.c-form-item-required').exists()).toBe(true);
+    const label = wrapper.find('.c-form-item-label');
+    const labelText = label.find('span:not(.c-form-item-required)');
+    expect(labelText.classes()).toContain('inline');
+    expect(labelText.classes()).not.toContain('block');
+    expect(label.find('.c-form-item-required').exists()).toBe(true);
   });
 
   it('CForm labelPlacement 动态变化时 CFormItem 响应', async () => {

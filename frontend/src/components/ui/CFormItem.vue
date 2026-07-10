@@ -119,7 +119,7 @@ onBeforeUnmount(() => {
         class="c-form-item-label mb-1.5 block max-w-full min-w-0 text-[13px] font-medium text-text"
       >
         <slot name="label">
-          <span class="block max-w-full min-w-0 break-words whitespace-normal">{{ label }}</span>
+          <span class="inline max-w-full min-w-0 break-words whitespace-normal">{{ label }}</span>
         </slot>
         <span v-if="isRequired" class="c-form-item-required ml-0.5 text-error-500">*</span>
       </label>
