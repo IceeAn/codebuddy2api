@@ -14,6 +14,7 @@ from config import get_codebuddy_api_endpoint, get_codebuddy_api_host, get_ssl_v
 from .auth_types import AuthenticatedUser
 
 logger = logging.getLogger(__name__)
+AUTH_START_FAILED_MESSAGE = "认证启动失败，请稍后重试"
 
 AUTH_STATE_TTL_SECONDS = 1800
 
@@ -170,12 +171,12 @@ class CodeBuddyAuthClient:
                 "message": "无法启动认证流程",
             }
 
-        except Exception as e:
-            logger.error(f"启动CodeBuddy认证失败: {e}")
+        except Exception:
+            logger.exception("启动CodeBuddy认证失败")
             return {
                 "success": False,
                 "error": "auth_start_failed",
-                "message": f"认证启动失败: {str(e)}",
+                "message": AUTH_START_FAILED_MESSAGE,
             }
 
     async def _request_state(self, client: httpx.AsyncClient, headers: Dict[str, str]) -> Dict[str, Optional[str]]:

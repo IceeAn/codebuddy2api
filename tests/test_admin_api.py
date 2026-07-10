@@ -265,7 +265,7 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
             mock.patch("src.admin_router.get_token_manager_for_user", return_value=manager),
             mock.patch(
                 "src.admin_router.models_manager.get_first_actual_model_for_credential",
-                mock.AsyncMock(side_effect=RuntimeError("config api unavailable")),
+                mock.AsyncMock(side_effect=RuntimeError("敏感的模型查询异常详情")),
             ),
         ):
             result = await test_admin_credential(
@@ -277,7 +277,8 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(result["ok"], False)
         self.assertEqual(result["status_code"], 502)
-        self.assertIn("config api unavailable", result["detail"])
+        self.assertEqual(result["detail"], "无法获取凭证模型")
+        self.assertNotIn("敏感的模型查询异常详情", result["detail"])
 
     async def test_missing_admin_credential_returns_404(self):
         with self.assertRaises(HTTPException) as context:
@@ -318,10 +319,15 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         credential_id = manager.get_credentials_info()[0]["credential_id"]
 
         errors = [
-            (HTTPException(status_code=401, detail="unauthorized"), 401, "unauthorized"),
-            (RuntimeError("broken service"), 500, "broken service"),
+            (HTTPException(status_code=401, detail="unauthorized"), 401, "unauthorized", None),
+            (
+                RuntimeError("敏感的凭证测试异常详情"),
+                500,
+                "凭证测试失败",
+                "敏感的凭证测试异常详情",
+            ),
         ]
-        for error, expected_status, expected_detail in errors:
+        for error, expected_status, expected_detail, sensitive_detail in errors:
             with self.subTest(error=error):
                 service = mock.Mock()
                 service.handle_non_stream_response = mock.AsyncMock(side_effect=error)
@@ -342,6 +348,8 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(result["ok"])
                 self.assertEqual(result["status_code"], expected_status)
                 self.assertEqual(result["detail"], expected_detail)
+                if sensitive_detail:
+                    self.assertNotIn(sensitive_detail, result["detail"])
 
     async def test_settings_contract_returns_typed_fields_and_saves_hot_reloadable_values(self):
         settings = await get_admin_settings(self.user)

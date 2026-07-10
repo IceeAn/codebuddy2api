@@ -206,13 +206,14 @@ class CodeBuddyAuthClientTests(unittest.IsolatedAsyncioTestCase):
     async def test_start_auth_maps_client_exception(self):
         class BrokenAsyncClient:
             def __init__(self, **_kwargs):
-                raise RuntimeError("network unavailable")
+                raise RuntimeError("敏感的认证客户端异常详情")
 
         with mock.patch("src.codebuddy_oauth.httpx.AsyncClient", BrokenAsyncClient):
             result = await CodeBuddyAuthClient().start_auth()
 
         self.assertFalse(result["success"])
-        self.assertIn("network unavailable", result["message"])
+        self.assertEqual(result["message"], "认证启动失败，请稍后重试")
+        self.assertNotIn("敏感的认证客户端异常详情", result["message"])
 
     async def test_request_state_rejects_invalid_responses(self):
         responses = [
@@ -373,14 +374,15 @@ class CodeBuddyAuthRouterTests(unittest.IsolatedAsyncioTestCase):
     async def test_start_device_auth_maps_unexpected_exception(self):
         with mock.patch(
             "src.codebuddy_auth_router.start_codebuddy_auth",
-            new=mock.AsyncMock(side_effect=RuntimeError("broken")),
+            new=mock.AsyncMock(side_effect=RuntimeError("敏感的认证路由异常详情")),
         ):
             result = await start_device_auth(
                 AuthenticatedUser(username="alice", source="session_cookie")
             )
 
         self.assertFalse(result["success"])
-        self.assertIn("broken", result["message"])
+        self.assertEqual(result["message"], "认证启动失败，请稍后重试")
+        self.assertNotIn("敏感的认证路由异常详情", result["message"])
 
     async def test_successful_poll_consumes_state_before_saving_token(self):
         user = AuthenticatedUser(username="alice", source="session_cookie")

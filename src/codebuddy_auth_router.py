@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from .auth_router import require_session_user
 from .auth_types import AuthenticatedUser
 from .codebuddy_oauth import (
+    AUTH_START_FAILED_MESSAGE,
     consume_auth_state,
     poll_codebuddy_auth_status,
     remember_auth_state,
@@ -50,12 +51,12 @@ async def start_device_auth(_user: AuthenticatedUser = Depends(require_session_u
         logger.warning(f"真实认证API失败: {real_auth_result}")
         return real_auth_result
 
-    except Exception as e:
-        logger.error(f"认证启动过程发生异常: {e}")
+    except Exception:
+        logger.exception("认证启动过程发生异常")
         return {
             "success": False,
             "error": "Unexpected error",
-            "message": f"认证启动失败: {str(e)}",
+            "message": AUTH_START_FAILED_MESSAGE,
         }
 
 

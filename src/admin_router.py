@@ -299,12 +299,12 @@ async def test_admin_credential(
 
     try:
         model = await models_manager.get_first_actual_model_for_credential(_user, credential_id, credential)
-    except Exception as e:
-        logger.warning("Credential model lookup failed: %s", e)
+    except Exception:
+        logger.exception("Credential model lookup failed")
         return {
             "ok": False,
             "status_code": 502,
-            "detail": str(e),
+            "detail": "无法获取凭证模型",
         }
 
     prepared_request = RequestProcessor.prepare_request(
@@ -336,12 +336,12 @@ async def test_admin_credential(
             "status_code": e.status_code,
             "detail": e.detail,
         }
-    except Exception as e:
-        logger.warning("Credential test failed: %s", e)
+    except Exception:
+        logger.exception("Credential test failed")
         return {
             "ok": False,
             "status_code": 500,
-            "detail": str(e),
+            "detail": "凭证测试失败",
         }
 
 
