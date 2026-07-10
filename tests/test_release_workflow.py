@@ -50,6 +50,12 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
     def test_scans_the_pushed_digest_and_does_not_rebuild_during_publish(self):
         scan_build = self._step("Build and push Docker image by digest")
+        self.assertNotIn("tags:", scan_build)
+        self.assertIn(
+            "outputs: type=image,name=${{ needs.resolve.outputs.image }},"
+            "push-by-digest=true,name-canonical=true,push=true",
+            scan_build,
+        )
         self.assertIn("push-by-digest=true", scan_build)
         self.assertIn("name-canonical=true", scan_build)
         self.assertIn("sbom: true", scan_build)
