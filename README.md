@@ -1,5 +1,5 @@
 <h1 align="center">
-  <img src="frontend/public/assets/codebuddy2api.svg" alt="Logo" style="height: 1em; width: 1em; vertical-align: middle;">
+  <img src="frontend/public/assets/codebuddy2api.svg" alt="Logo" style="height: 3em; width: 3em;"><br />
   CodeBuddy2API
 </h1>
 
