@@ -96,6 +96,10 @@ class RepositoryConfigurationTests(unittest.TestCase):
         dockerfile = (self.repository_root / "Dockerfile").read_text(encoding="utf-8")
 
         self.assertIn("ARG PYTHON_VERSION=3.12", dockerfile)
+        self.assertIn(
+            "FROM --platform=$BUILDPLATFORM node:${NODE_VERSION}-slim AS frontend-build",
+            dockerfile,
+        )
         self.assertIn("FROM python:${PYTHON_VERSION}-slim AS runtime", dockerfile)
         self.assertNotIn("COPY . .", dockerfile)
         for runtime_copy in (

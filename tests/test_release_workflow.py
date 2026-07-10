@@ -62,16 +62,39 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("provenance: mode=max", scan_build)
 
         digest_reference = (
-            "image-ref: ${{ needs.resolve.outputs.image }}@${{ steps.build.outputs.digest }}"
+            "image-ref: ${{ needs.resolve.outputs.image }}@"
+            "${{ needs.build_image.outputs.digest }}"
         )
         self.assertEqual(self.workflow.count(digest_reference), 2)
 
         publish_job = self.workflow.split("\n  publish:\n", maxsplit=1)[1]
         self.assertNotIn("docker/build-push-action", publish_job)
+        self.assertIn("- build_image", publish_job)
+        self.assertEqual(
+            publish_job.count("DIGEST: ${{ needs.build_image.outputs.digest }}"),
+            3,
+        )
         self.assertRegex(
             publish_job,
             r"docker buildx imagetools create --prefer-index=false \\\n"
             r'\s+"\$\{tag_args\[@\]\}" "\$\{IMAGE\}@\$\{DIGEST\}"',
+        )
+
+    def test_builds_and_scans_every_supported_linux_platform(self):
+        platforms = "linux/amd64,linux/arm64,linux/arm/v7"
+        scan_build = self._step("Build and push Docker image by digest")
+        self.assertIn(f"platforms: {platforms}", scan_build)
+
+        qemu = self._step("Set up QEMU")
+        buildx = self._step("Set up Docker Buildx")
+        self.assertLess(self.workflow.index(qemu), self.workflow.index(buildx))
+
+        scan_job = self.workflow.split("\n  scan:\n", maxsplit=1)[1].split(
+            "\n  publish:\n", maxsplit=1
+        )[0]
+        self.assertIn(f"platform: [{platforms}]", scan_job)
+        self.assertEqual(
+            scan_job.count("TRIVY_PLATFORM: ${{ matrix.platform }}"), 2
         )
 
     def test_latest_markers_are_only_updated_for_highest_stable_tag(self):
