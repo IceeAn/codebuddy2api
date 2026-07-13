@@ -131,7 +131,7 @@ onBeforeUnmount(() => {
       </div>
       <div
         v-if="error"
-        class="c-form-item-error mt-1 h-4 animate-[shake_0.3s_ease] text-xs text-error-600 dark:text-error-400"
+        class="c-form-item-error mt-1 h-4 animate-[shake_0.3s_ease] text-xs text-tone-error"
       >
         {{ error }}
       </div>

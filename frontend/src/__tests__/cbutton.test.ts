@@ -15,13 +15,12 @@ describe('CButton', () => {
     expect(wrapper.classes()).toContain('text-sm');
   });
 
-  it('variant=primary 含 primary class 与暗色 class', () => {
+  it('variant=primary 使用随主题进度插值的固定语义色', () => {
     const wrapper = mount(CButton, { props: { variant: 'primary' } });
-    expect(wrapper.classes()).toContain('bg-brand-600');
+    expect(wrapper.classes()).toContain('bg-primary-action');
     expect(wrapper.classes()).toContain('!text-white');
-    expect(wrapper.classes()).toContain('dark:bg-brand-500');
-    expect(wrapper.classes()).toContain('dark:hover:bg-brand-400');
-    expect(wrapper.classes()).not.toContain('dark:hover:text-slate-950');
+    expect(wrapper.classes()).toContain('hover:bg-primary-action-hover');
+    expect(wrapper.classes().some((className) => className.startsWith('dark:'))).toBe(false);
   });
 
   it('variant=secondary 含 secondary class', () => {

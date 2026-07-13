@@ -6,9 +6,7 @@ import CCard from '../components/ui/CCard.vue';
 <template>
   <CCard title="Swagger API 文档">
     <div class="flex flex-col items-start gap-5">
-      <div
-        class="grid h-12 w-12 place-items-center rounded-lg bg-brand-500/12 text-brand-700 dark:text-brand-300"
-      >
+      <div class="grid h-12 w-12 place-items-center rounded-lg bg-brand-500/12 text-tone-brand">
         <BookOpen :size="24" />
       </div>
 
@@ -26,7 +24,7 @@ import CCard from '../components/ui/CCard.vue';
       </div>
 
       <a
-        class="inline-flex h-[38px] shrink-0 items-center justify-center gap-2 rounded-md bg-brand-600 px-4 text-sm font-medium whitespace-nowrap !text-white shadow-sm transition-[background-color,box-shadow,transform] duration-(--duration-fast) ease-out-quad hover:bg-brand-500 hover:shadow-[var(--shadow-brand-glow)] active:scale-[0.98] dark:bg-brand-500 dark:hover:bg-brand-400"
+        class="inline-flex h-[38px] shrink-0 items-center justify-center gap-2 rounded-md bg-primary-action px-4 text-sm font-medium whitespace-nowrap !text-white shadow-sm transition-[background-color,box-shadow,transform] duration-(--duration-fast) ease-out-quad hover:bg-primary-action-hover hover:shadow-[var(--shadow-brand-glow)] active:scale-[0.98]"
         href="/docs"
         target="_blank"
         rel="noopener noreferrer"

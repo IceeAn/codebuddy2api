@@ -304,13 +304,12 @@ describe('CTooltip', () => {
     expect(classes).toContain('px-2.5');
     expect(classes).toContain('py-1.5');
     expect(classes).toContain('rounded-md');
-    expect(classes).toContain('bg-slate-950');
-    expect(classes).toContain('text-slate-50');
+    expect(classes).toContain('bg-tooltip');
+    expect(classes).toContain('text-tooltip-text');
     expect(classes).toContain('text-xs');
     expect(classes).toContain('w-max');
     expect(classes).toContain('max-w-[20rem]');
-    expect(classes).toContain('dark:bg-slate-700');
-    expect(classes).toContain('dark:text-slate-100');
+    expect(classes.some((className) => className.startsWith('dark:'))).toBe(false);
   });
 
   it('短中文提示按内容宽度展开，避免在表格图标按钮上单字换行', async () => {

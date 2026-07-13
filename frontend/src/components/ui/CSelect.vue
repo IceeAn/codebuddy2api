@@ -168,11 +168,7 @@ onBeforeUnmount(() => {
             v-for="opt in filteredOptions"
             :key="opt.value"
             class="c-select-option flex h-9 cursor-pointer items-center justify-between gap-2 rounded-md px-3 text-sm text-text hover:bg-surface-2"
-            :class="
-              opt.value === modelValue
-                ? 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300'
-                : ''
-            "
+            :class="opt.value === modelValue ? 'bg-soft-brand text-tone-brand' : ''"
             @click="select(opt)"
           >
             <span class="min-w-0 truncate">{{ opt.label }}</span>

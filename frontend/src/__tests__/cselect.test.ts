@@ -270,8 +270,8 @@ describe('CSelect', () => {
     });
     await wrapper.find('.c-select-trigger').trigger('click');
     const options = wrapper.findAll('.c-select-option');
-    expect(options[0].classes()).toContain('bg-brand-50');
-    expect(options[0].classes()).toContain('text-brand-700');
+    expect(options[0].classes()).toContain('bg-soft-brand');
+    expect(options[0].classes()).toContain('text-tone-brand');
     expect(options[0].find('svg').exists()).toBe(true);
   });
 
@@ -287,7 +287,7 @@ describe('CSelect', () => {
     });
     await wrapper.find('.c-select-trigger').trigger('click');
     const options = wrapper.findAll('.c-select-option');
-    expect(options[1].classes()).not.toContain('bg-brand-50');
+    expect(options[1].classes()).not.toContain('bg-soft-brand');
   });
 
   it('filterable：面板顶部含 input', async () => {

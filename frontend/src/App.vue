@@ -51,8 +51,9 @@ const routeKey = computed(() => route.fullPath || activeRoute.value);
 /** 移动端导航：与 Tailwind md 断点保持一致，< 48rem 用 CDrawer 承载导航。 */
 const mobileNavOpen = ref(false);
 const isMobile = ref(false);
-let mediaQuery: MediaQueryList | null = null;
+const pageTransitioning = ref(false);
 const visibleThemeIconMode = ref<ThemeMode>(theme.mode);
+let mediaQuery: MediaQueryList | null = null;
 let themeIconSwapTimer: number | undefined;
 
 function updateMobile(event: MediaQueryListEvent | MediaQueryList): void {
@@ -64,13 +65,12 @@ function navigateMobile(routeName: string): void {
   router.push({ name: routeName });
 }
 
-/** 主题颜色渐变到前景/背景最低对比点后再切换图标，降低换形突兀感。 */
-function scheduleThemeIconSwap(nextMode: ThemeMode): void {
-  window.clearTimeout(themeIconSwapTimer);
-  themeIconSwapTimer = window.setTimeout(() => {
-    visibleThemeIconMode.value = nextMode;
-    themeIconSwapTimer = undefined;
-  }, THEME_ICON_SWAP_DELAY_MS);
+function startPageTransition(): void {
+  pageTransitioning.value = true;
+}
+
+function finishPageTransition(): void {
+  pageTransitioning.value = false;
 }
 
 onMounted(async () => {
@@ -90,8 +90,8 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
-  mediaQuery!.removeEventListener('change', updateMobile);
   window.clearTimeout(themeIconSwapTimer);
+  mediaQuery!.removeEventListener('change', updateMobile);
   setUnauthorizedHandler(null);
 });
 
@@ -102,9 +102,15 @@ async function logout() {
 }
 
 function toggleTheme() {
+  if (pageTransitioning.value) return;
+
   const nextMode = theme.mode === 'dark' ? 'light' : 'dark';
   theme.toggle();
-  scheduleThemeIconSwap(nextMode);
+  window.clearTimeout(themeIconSwapTimer);
+  themeIconSwapTimer = window.setTimeout(() => {
+    visibleThemeIconMode.value = nextMode;
+    themeIconSwapTimer = undefined;
+  }, THEME_ICON_SWAP_DELAY_MS);
 }
 </script>
 
@@ -175,6 +181,7 @@ function toggleTheme() {
           <CButton
             shape="circle"
             variant="ghost"
+            :disabled="pageTransitioning"
             :aria-label="theme.mode === 'light' ? '切换到暗色模式' : '切换到亮色模式'"
             @click="toggleTheme"
           >
@@ -195,7 +202,15 @@ function toggleTheme() {
       <main class="mx-auto w-full max-w-[90rem] px-5 py-6 md:px-7">
         <div class="page-transition-frame">
           <RouterView v-slot="{ Component }">
-            <Transition name="page" mode="out-in">
+            <Transition
+              name="page"
+              mode="out-in"
+              @before-enter="startPageTransition"
+              @after-enter="finishPageTransition"
+              @enter-cancelled="finishPageTransition"
+              @before-leave="startPageTransition"
+              @leave-cancelled="finishPageTransition"
+            >
               <component :is="Component" :key="routeKey" />
             </Transition>
           </RouterView>
@@ -211,7 +226,7 @@ function toggleTheme() {
           :class="[
             'flex h-10 w-full items-center gap-3 rounded-md px-3 text-sm transition-colors',
             activeRoute === item.routeName
-              ? 'bg-brand-500/12 text-brand-700 shadow-[inset_3px_0_0_0_var(--color-brand-400)] dark:text-brand-300'
+              ? 'bg-brand-500/12 text-tone-brand shadow-[inset_3px_0_0_0_var(--color-brand-400)]'
               : 'text-text hover:bg-surface-2 hover:text-text-strong',
           ]"
           :aria-current="activeRoute === item.routeName ? 'page' : undefined"

@@ -34,10 +34,10 @@ const typeClasses: Record<ToastType, string> = {
 };
 
 const iconClasses: Record<ToastType, string> = {
-  success: 'bg-success-500/12 text-success-600 dark:text-success-400',
-  info: 'bg-brand-500/12 text-brand-700 dark:text-brand-300',
-  warning: 'bg-warning-500/14 text-warning-600 dark:text-warning-400',
-  error: 'bg-error-500/12 text-error-600 dark:text-error-400',
+  success: 'bg-success-500/12 text-tone-success',
+  info: 'bg-brand-500/12 text-tone-brand',
+  warning: 'bg-warning-500/14 text-tone-warning',
+  error: 'bg-error-500/12 text-tone-error',
 };
 
 const accentClasses: Record<ToastType, string> = {

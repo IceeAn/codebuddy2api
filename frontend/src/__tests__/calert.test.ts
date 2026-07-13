@@ -100,28 +100,28 @@ describe('CAlert', () => {
     expect(wrapper.classes()).toContain('items-start');
   });
 
-  it('info 图标文字色为 brand', () => {
+  it('info 图标使用品牌语义色', () => {
     const wrapper = mount(CAlert, { props: { type: 'info' } });
     const icon = wrapper.find('.c-alert-icon');
     expect(icon.exists()).toBe(true);
-    expect(icon.classes()).toContain('text-brand-700');
+    expect(icon.classes()).toContain('text-tone-brand');
   });
 
-  it('success 图标文字色为 success-600', () => {
+  it('success 图标使用成功语义色', () => {
     const wrapper = mount(CAlert, { props: { type: 'success' } });
     const icon = wrapper.find('.c-alert-icon');
-    expect(icon.classes()).toContain('text-success-600');
+    expect(icon.classes()).toContain('text-tone-success');
   });
 
-  it('warning 图标文字色为 warning-600', () => {
+  it('warning 图标使用警告语义色', () => {
     const wrapper = mount(CAlert, { props: { type: 'warning' } });
     const icon = wrapper.find('.c-alert-icon');
-    expect(icon.classes()).toContain('text-warning-600');
+    expect(icon.classes()).toContain('text-tone-warning');
   });
 
-  it('error 图标文字色为 error-600', () => {
+  it('error 图标使用错误语义色', () => {
     const wrapper = mount(CAlert, { props: { type: 'error' } });
     const icon = wrapper.find('.c-alert-icon');
-    expect(icon.classes()).toContain('text-error-600');
+    expect(icon.classes()).toContain('text-tone-error');
   });
 });

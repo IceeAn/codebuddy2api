@@ -5,29 +5,28 @@ export type ThemeMode = 'light' | 'dark';
 
 const STORAGE_KEY = 'admin-theme';
 export const THEME_TRANSITION_MS = 520;
-/** 图标切换延迟到主题过渡的最低对比点，避免亮暗图标在高反差阶段跳变。 */
-const THEME_ICON_LOW_CONTRAST_TIME_RATIO = 0.27490147862248004;
-export const THEME_ICON_SWAP_DELAY_MS = Math.round(
-  THEME_TRANSITION_MS * THEME_ICON_LOW_CONTRAST_TIME_RATIO,
-);
+export const THEME_ICON_SWAP_DELAY_MS = 143;
 let transitionTimer: number | undefined;
 
 export const useThemeStore = defineStore('theme', () => {
   const mode = ref<ThemeMode>((localStorage.getItem(STORAGE_KEY) as ThemeMode) || 'light');
 
   function apply(value: ThemeMode): void {
+    mode.value = value;
+    localStorage.setItem(STORAGE_KEY, value);
     document.documentElement.classList.toggle('dark', value === 'dark');
     document.documentElement.style.colorScheme = value;
   }
 
   function set(value: ThemeMode): void {
-    mode.value = value;
-    localStorage.setItem(STORAGE_KEY, value);
+    const root = document.documentElement;
+
     window.clearTimeout(transitionTimer);
-    document.documentElement.classList.add('theme-transitioning');
+    root.classList.add('theme-transitioning');
     apply(value);
     transitionTimer = window.setTimeout(() => {
-      document.documentElement.classList.remove('theme-transitioning');
+      root.classList.remove('theme-transitioning');
+      transitionTimer = undefined;
     }, THEME_TRANSITION_MS);
   }
 

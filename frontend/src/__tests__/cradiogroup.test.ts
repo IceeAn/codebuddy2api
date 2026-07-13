@@ -97,6 +97,7 @@ describe('CRadioGroup', () => {
       },
       global: { components: { CRadioButton } },
     });
+
     expect(observe).toHaveBeenCalledTimes(2);
     wrapper.unmount();
     expect(unobserve).toHaveBeenCalledTimes(2);

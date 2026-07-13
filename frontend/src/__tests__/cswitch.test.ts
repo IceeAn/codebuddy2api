@@ -16,16 +16,15 @@ describe('CSwitch', () => {
     expect(wrapper.classes()).toContain('h-[22px]');
   });
 
-  it('modelValue=false 时 track off class（bg-slate-300 dark:bg-slate-600）', () => {
+  it('modelValue=false 时 track 使用固定的关闭态语义色', () => {
     const wrapper = mount(CSwitch, { props: { modelValue: false } });
-    expect(wrapper.classes()).toContain('bg-slate-300');
-    expect(wrapper.classes()).toContain('dark:bg-slate-600');
+    expect(wrapper.classes()).toContain('bg-switch-off');
+    expect(wrapper.classes().some((className) => className.startsWith('dark:'))).toBe(false);
   });
 
-  it('modelValue=true 时 track on class（bg-brand-600 dark:bg-brand-500）且 aria-checked=true', () => {
+  it('modelValue=true 时 track 使用固定的开启态语义色且 aria-checked=true', () => {
     const wrapper = mount(CSwitch, { props: { modelValue: true } });
-    expect(wrapper.classes()).toContain('bg-brand-600');
-    expect(wrapper.classes()).toContain('dark:bg-brand-500');
+    expect(wrapper.classes()).toContain('bg-switch-on');
     expect(wrapper.attributes('aria-checked')).toBe('true');
   });
 

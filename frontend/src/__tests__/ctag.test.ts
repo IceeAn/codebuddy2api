@@ -9,35 +9,29 @@ describe('CTag', () => {
     expect(wrapper.classes()).toContain('text-muted');
   });
 
-  it('type=brand 含 brand class 与暗色变体', () => {
+  it('type=brand 使用固定语义色', () => {
     const wrapper = mount(CTag, { props: { type: 'brand' } });
-    expect(wrapper.classes()).toContain('bg-brand-50');
-    expect(wrapper.classes()).toContain('text-brand-700');
-    expect(wrapper.classes()).toContain('dark:bg-brand-500/15');
-    expect(wrapper.classes()).toContain('dark:text-brand-300');
+    expect(wrapper.classes()).toContain('bg-soft-brand');
+    expect(wrapper.classes()).toContain('text-tone-brand');
+    expect(wrapper.classes().some((className) => className.startsWith('dark:'))).toBe(false);
   });
 
-  it('type=success 含 success class 与暗色变体', () => {
+  it('type=success 使用固定语义色', () => {
     const wrapper = mount(CTag, { props: { type: 'success' } });
-    expect(wrapper.classes()).toContain('bg-success-500/12');
-    expect(wrapper.classes()).toContain('text-success-600');
-    expect(wrapper.classes()).toContain('dark:bg-success-500/15');
-    expect(wrapper.classes()).toContain('dark:text-success-400');
+    expect(wrapper.classes()).toContain('bg-soft-success');
+    expect(wrapper.classes()).toContain('text-tone-success');
   });
 
-  it('type=warning 含 warning class 与暗色变体', () => {
+  it('type=warning 使用固定语义色', () => {
     const wrapper = mount(CTag, { props: { type: 'warning' } });
-    expect(wrapper.classes()).toContain('bg-warning-500/15');
-    expect(wrapper.classes()).toContain('text-warning-600');
-    expect(wrapper.classes()).toContain('dark:text-warning-400');
+    expect(wrapper.classes()).toContain('bg-soft-warning');
+    expect(wrapper.classes()).toContain('text-tone-warning');
   });
 
-  it('type=error 含 error class 与暗色变体', () => {
+  it('type=error 使用固定语义色', () => {
     const wrapper = mount(CTag, { props: { type: 'error' } });
-    expect(wrapper.classes()).toContain('bg-error-500/12');
-    expect(wrapper.classes()).toContain('text-error-600');
-    expect(wrapper.classes()).toContain('dark:bg-error-500/15');
-    expect(wrapper.classes()).toContain('dark:text-error-400');
+    expect(wrapper.classes()).toContain('bg-soft-error');
+    expect(wrapper.classes()).toContain('text-tone-error');
   });
 
   it('dot=true 时渲染圆点 span', () => {

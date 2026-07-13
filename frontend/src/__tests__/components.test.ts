@@ -210,7 +210,7 @@ describe('StatTile', () => {
       },
     });
 
-    const iconBox = wrapper.find('.bg-brand-500\\/15');
+    const iconBox = wrapper.find('.bg-stat-brand-bg');
     expect(iconBox.exists()).toBe(true);
   });
 

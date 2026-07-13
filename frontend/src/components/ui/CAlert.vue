@@ -36,10 +36,10 @@ const typeClasses: Record<AlertType, string> = {
 };
 
 const iconColorClasses: Record<AlertType, string> = {
-  info: 'text-brand-700 dark:text-brand-300',
-  success: 'text-success-600 dark:text-success-400',
-  warning: 'text-warning-600 dark:text-warning-400',
-  error: 'text-error-600 dark:text-error-400',
+  info: 'text-tone-brand',
+  success: 'text-tone-success',
+  warning: 'text-tone-warning',
+  error: 'text-tone-error',
 };
 
 const iconMap = {

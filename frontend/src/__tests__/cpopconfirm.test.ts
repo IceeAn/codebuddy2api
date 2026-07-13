@@ -214,7 +214,7 @@ describe('CPopconfirm', () => {
     });
     await openPopover(wrapper);
     const buttons = getPopoverButtons();
-    expect(buttons[1].classList.contains('bg-brand-600')).toBe(true);
+    expect(buttons[1].classList.contains('bg-primary-action')).toBe(true);
   });
 
   it('浮层含正确 class', async () => {

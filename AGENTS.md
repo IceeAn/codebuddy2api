@@ -67,6 +67,7 @@ docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:
 - **HTTP 客户端代理**: 全局上游 HTTP 客户端设置 `trust_env=False`，避免本机 `ALL_PROXY`/`HTTP_PROXY` 指向 SOCKS 代理但未安装 `socksio` 时导致服务启动失败。
 - **端点前缀**: 外部聊天 API 路径为 `POST /openai/v1/chat/completions`，客户端应将 `base_url` 设置为包含 `/openai/v1`；管理台测试入口为 `/api/admin/playground/openai/v1`。
 - **管理台离线请求**: Vue Query 的查询和 mutation 全局使用 `networkMode="always"`，查询同时禁用 `refetchOnReconnect`，确保断网时立即失败而不是暂停排队，禁止恢复联网后补发读取或写入操作。所有手动刷新和错误重试统一使用 `RefreshButton`；该组件在调用 `refetch()` 前检查离线状态，并独立维护至少 300ms 的按钮加载状态，不能只依赖 `isFetching`。
+- **新版管理台主题切换**: 根节点只注册并执行一个 520ms 的 `--theme-progress` 数值过渡，所有动画语义颜色必须在 `:root` 中通过 `color-mix(in oklab, 亮色端点, 暗色端点 var(--theme-dark-weight))` 由该进度派生；新增视觉角色不再单独注册 `@property` 或加入 transition 列表。不得给所有后代元素递归添加颜色、描边或阴影过渡；主题切换期间临时禁用后代组件的局部 transition，后代只继承根节点的派生颜色。组件不得通过 `dark:` 在两个不同的动画语义变量之间切换，同一视觉角色须使用固定的专用语义变量，避免主题 class 切换瞬间跳到错误中间色。分隔线等要求明度单调变化的角色不得在不透明色与低 Alpha 颜色之间插值，应将低 Alpha 端点换算为叠加在目标背景上的等效不透明色，避免中间帧泛白。主题按钮在主题过渡期间必须保持可交互，连续切换从当前进度平滑转向新主题；图标在每次点击 143ms 后切换。页面路由切换动画期间必须禁用主题按钮，避免两个全页动画重叠。
 - **文件安全**: 凭证写入使用 `O_NOFOLLOW` + 0600 权限。加载时跳过 `data/credentials/` 中的符号链接。文件名经过路径穿越清理。SQLite 数据库拒绝符号链接路径并强制设置 0600 权限。
 
 ## 开发规定

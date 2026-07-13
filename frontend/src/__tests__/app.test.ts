@@ -293,13 +293,30 @@ describe('App', () => {
     expect(topbar.classes()).toContain('shrink-0');
   });
 
-  it('页面切换使用稳定过渡框架和 out-in 模式', () => {
+  it('页面切换期间禁用主题按钮，完成后恢复', async () => {
     sessionMock.ready = true;
     sessionMock.authenticated = true;
     const { wrapper } = mountApp();
+    const state = (wrapper.vm.$ as any).setupState;
+    const toggleButton = wrapper
+      .findAll('button')
+      .find((button) => button.attributes('aria-label')?.includes('切换'))!;
 
     expect(wrapper.find('.page-transition-frame').exists()).toBe(true);
     expect(wrapper.find('transition-stub[name="page"]').attributes('mode')).toBe('out-in');
+
+    state.startPageTransition();
+    await wrapper.vm.$nextTick();
+    expect(toggleButton.attributes('disabled')).toBeDefined();
+    await toggleButton.trigger('click');
+    state.toggleTheme();
+    expect(themeMock.toggle).not.toHaveBeenCalled();
+
+    state.finishPageTransition();
+    await wrapper.vm.$nextTick();
+    expect(toggleButton.attributes('disabled')).toBeUndefined();
+    await toggleButton.trigger('click');
+    expect(themeMock.toggle).toHaveBeenCalledOnce();
   });
 
   it('移动端显示菜单并执行移动导航', async () => {
@@ -382,7 +399,7 @@ describe('App', () => {
     expect(toggleButton?.attributes('aria-label')).toBe('切换到亮色模式');
   });
 
-  it('主题切换图标在前景和背景最低对比点切换', async () => {
+  it('从亮色切到暗色时，图标在最低对比点延迟切换', async () => {
     vi.useFakeTimers();
     sessionMock.ready = true;
     sessionMock.authenticated = true;
@@ -400,6 +417,8 @@ describe('App', () => {
     expect(toggleButton?.find('.lucide-sun').exists()).toBe(false);
 
     await toggleButton?.trigger('click');
+    wrapper.vm.$forceUpdate();
+    await wrapper.vm.$nextTick();
     expect(themeMock.toggle).toHaveBeenCalledOnce();
     expect(toggleButton?.find('.lucide-moon').exists()).toBe(true);
     expect(toggleButton?.find('.lucide-sun').exists()).toBe(false);
@@ -407,7 +426,6 @@ describe('App', () => {
     vi.advanceTimersByTime(142);
     await wrapper.vm.$nextTick();
     expect(toggleButton?.find('.lucide-moon').exists()).toBe(true);
-    expect(toggleButton?.find('.lucide-sun').exists()).toBe(false);
 
     vi.advanceTimersByTime(1);
     await wrapper.vm.$nextTick();
@@ -415,7 +433,7 @@ describe('App', () => {
     expect(toggleButton?.find('.lucide-sun').exists()).toBe(true);
   });
 
-  it('从暗色切回亮色时图标同样在最低对比点切换', async () => {
+  it('从暗色切回亮色时，图标在最低对比点延迟切换', async () => {
     vi.useFakeTimers();
     sessionMock.ready = true;
     sessionMock.authenticated = true;
@@ -433,14 +451,55 @@ describe('App', () => {
     expect(toggleButton?.find('.lucide-moon').exists()).toBe(false);
 
     await toggleButton?.trigger('click');
+    wrapper.vm.$forceUpdate();
+    await wrapper.vm.$nextTick();
     expect(themeMock.toggle).toHaveBeenCalledOnce();
     expect(toggleButton?.find('.lucide-sun').exists()).toBe(true);
     expect(toggleButton?.find('.lucide-moon').exists()).toBe(false);
 
-    vi.advanceTimersByTime(143);
+    vi.advanceTimersByTime(142);
+    await wrapper.vm.$nextTick();
+    expect(toggleButton?.find('.lucide-sun').exists()).toBe(true);
+
+    vi.advanceTimersByTime(1);
     await wrapper.vm.$nextTick();
     expect(toggleButton?.find('.lucide-sun').exists()).toBe(false);
     expect(toggleButton?.find('.lucide-moon').exists()).toBe(true);
+  });
+
+  it('主题颜色过渡中允许再次切换，图标按最后一次点击重新计时', async () => {
+    vi.useFakeTimers();
+    sessionMock.ready = true;
+    sessionMock.authenticated = true;
+    themeMock.mode = 'light';
+    themeMock.toggle.mockImplementation(() => {
+      themeMock.mode = themeMock.mode === 'light' ? 'dark' : 'light';
+    });
+    const { wrapper } = mountApp();
+    const toggleButton = wrapper
+      .findAll('button')
+      .find((button) => button.attributes('aria-label')?.includes('切换'))!;
+
+    await toggleButton.trigger('click');
+    wrapper.vm.$forceUpdate();
+    vi.advanceTimersByTime(260);
+    await wrapper.vm.$nextTick();
+    expect(toggleButton.attributes('disabled')).toBeUndefined();
+    expect(toggleButton.find('.lucide-sun').exists()).toBe(true);
+
+    await toggleButton.trigger('click');
+    wrapper.vm.$forceUpdate();
+    await wrapper.vm.$nextTick();
+    expect(themeMock.toggle).toHaveBeenCalledTimes(2);
+    expect(toggleButton.find('.lucide-sun').exists()).toBe(true);
+
+    vi.advanceTimersByTime(142);
+    await wrapper.vm.$nextTick();
+    expect(toggleButton.find('.lucide-sun').exists()).toBe(true);
+
+    vi.advanceTimersByTime(1);
+    await wrapper.vm.$nextTick();
+    expect(toggleButton.find('.lucide-moon').exists()).toBe(true);
   });
 
   it('右上角退出按钮使用默认按钮尺寸', () => {

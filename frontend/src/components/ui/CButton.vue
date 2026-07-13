@@ -46,7 +46,7 @@ const circleSizeClasses: Record<ButtonSize, string> = {
 
 const variantClasses: Record<ButtonVariant, string> = {
   primary:
-    'bg-brand-600 !text-white shadow-sm hover:bg-brand-500 hover:shadow-[var(--shadow-brand-glow)] active:bg-brand-700 dark:bg-brand-500 dark:hover:bg-brand-400 disabled:bg-brand-600/50 disabled:!text-white/60 disabled:hover:bg-brand-600/50 disabled:hover:shadow-none',
+    'bg-primary-action !text-white shadow-sm hover:bg-primary-action-hover hover:shadow-[var(--shadow-brand-glow)] active:bg-brand-700 disabled:bg-brand-600/50 disabled:!text-white/60 disabled:hover:bg-brand-600/50 disabled:hover:shadow-none',
   secondary:
     'bg-surface text-text border border-border shadow-[var(--shadow-xs)] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 disabled:opacity-50',
   ghost:

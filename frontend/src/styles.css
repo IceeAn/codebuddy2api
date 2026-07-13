@@ -1,7 +1,11 @@
 @import 'tailwindcss';
 
-/* 暗黑模式 class 策略 */
-@custom-variant dark (&:where(.dark, .dark *));
+/* 只注册一个主题进度；所有语义颜色在 Oklab 中由同一进度派生。 */
+@property --theme-progress {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
 
 /* 静态色阶 */
 @theme {
@@ -111,6 +115,7 @@
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
   --color-surface-3: var(--surface-3);
+  --color-segment-active: var(--segment-active);
   --color-rail: var(--rail);
   --color-rail-2: var(--rail-2);
   --color-rail-text: var(--rail-text);
@@ -127,61 +132,208 @@
   --color-border: var(--border);
   --color-border-strong: var(--border-strong);
   --color-overlay: var(--overlay);
+  --color-tone-brand: var(--tone-brand);
+  --color-tone-success: var(--tone-success);
+  --color-tone-warning: var(--tone-warning);
+  --color-tone-error: var(--tone-error);
+  --color-tone-accent: var(--tone-accent);
+  --color-stat-brand: var(--stat-brand);
+  --color-stat-brand-bg: var(--stat-brand-bg);
+  --color-stat-success-bg: var(--stat-success-bg);
+  --color-stat-warning-bg: var(--stat-warning-bg);
+  --color-stat-error-bg: var(--stat-error-bg);
+  --color-stat-accent-bg: var(--stat-accent-bg);
+  --color-soft-brand: var(--soft-brand);
+  --color-soft-success: var(--soft-success);
+  --color-soft-warning: var(--soft-warning);
+  --color-soft-error: var(--soft-error);
+  --color-primary-action: var(--primary-action);
+  --color-primary-action-hover: var(--primary-action-hover);
+  --color-switch-on: var(--switch-on);
+  --color-switch-off: var(--switch-off);
+  --color-tooltip: var(--tooltip);
+  --color-tooltip-text: var(--tooltip-text);
 }
 
-/* 亮色 */
+/* 主题语义色：每个视觉角色在同一声明中维护亮暗端点。 */
 :root {
   color-scheme: light;
-  --bg: #f8fafc; /* slate-50 */
-  --surface: #ffffff;
-  --surface-2: #f1f5f9; /* slate-100 */
-  --surface-3: #e2e8f0; /* slate-200 */
-  --rail: #ffffff; /* 亮色侧边栏 */
-  --rail-2: #f8fafc; /* slate-50 */
-  --rail-text: #334155; /* slate-700 */
-  --rail-text-strong: #0f172a; /* slate-900 */
-  --rail-muted: #64748b; /* slate-500 */
-  --rail-border: #e2e8f0; /* slate-200 */
-  --rail-hover: oklch(0.58 0.21 277 / 0.07);
-  --rail-active: oklch(0.58 0.21 277 / 0.12);
-  --rail-active-text: var(--color-brand-700);
-  --rail-active-indicator: var(--color-brand-500);
-  --text: #334155; /* slate-700 */
-  --text-strong: #0f172a; /* slate-900 */
-  --muted: #64748b; /* slate-500 */
-  --border: #e2e8f0; /* slate-200 */
-  --border-strong: #cbd5e1; /* slate-300 */
-  --overlay: oklch(0.15 0.02 260 / 0.55);
+  --theme-progress: 0;
+  --theme-dark-weight: calc(var(--theme-progress) * 100%);
+  --bg: color-mix(in oklab, #f8fafc, #020617 var(--theme-dark-weight));
+  --surface: color-mix(in oklab, #ffffff, #0f172a var(--theme-dark-weight));
+  --surface-2: color-mix(in oklab, #f1f5f9, #1e293b var(--theme-dark-weight));
+  --surface-3: color-mix(in oklab, #e2e8f0, #334155 var(--theme-dark-weight));
+  --segment-active: color-mix(in oklab, #ffffff, #334155 var(--theme-dark-weight));
+  --rail: color-mix(in oklab, #ffffff, #080b14 var(--theme-dark-weight));
+  --rail-2: color-mix(in oklab, #f8fafc, #0f172a var(--theme-dark-weight));
+  --rail-text: color-mix(in oklab, #334155, #cbd5e1 var(--theme-dark-weight));
+  --rail-text-strong: color-mix(in oklab, #0f172a, #ffffff var(--theme-dark-weight));
+  --rail-muted: color-mix(in oklab, #64748b, #94a3b8 var(--theme-dark-weight));
+  /* #141720 等效于 5% 白色叠加在暗色导轨上，且避免透明度插值产生泛白中间帧。 */
+  --rail-border: color-mix(in oklab, #e2e8f0, #141720 var(--theme-dark-weight));
+  --rail-hover: color-mix(
+    in oklab,
+    oklch(0.58 0.21 277 / 0.07),
+    oklch(1 0 0 / 0.05) var(--theme-dark-weight)
+  );
+  --rail-active: color-mix(
+    in oklab,
+    oklch(0.58 0.21 277 / 0.12),
+    oklch(0.58 0.21 277 / 0.15) var(--theme-dark-weight)
+  );
+  --rail-active-text: color-mix(in oklab, var(--color-brand-700), #ffffff var(--theme-dark-weight));
+  --rail-active-indicator: color-mix(
+    in oklab,
+    var(--color-brand-500),
+    var(--color-brand-400) var(--theme-dark-weight)
+  );
+  --text: color-mix(in oklab, #334155, #f1f5f9 var(--theme-dark-weight));
+  --text-strong: color-mix(in oklab, #0f172a, #ffffff var(--theme-dark-weight));
+  --muted: color-mix(in oklab, #64748b, #94a3b8 var(--theme-dark-weight));
+  --border: color-mix(in oklab, #e2e8f0, #243049 var(--theme-dark-weight));
+  --border-strong: color-mix(in oklab, #cbd5e1, #475569 var(--theme-dark-weight));
+  --overlay: color-mix(
+    in oklab,
+    oklch(0.15 0.02 260 / 0.55),
+    oklch(0.1 0.02 260 / 0.68) var(--theme-dark-weight)
+  );
   --focus-ring-inner: oklch(0.58 0.21 277 / 0.7);
-  --focus-ring: oklch(0.58 0.21 277 / 0.3);
-  --focus-ring-error: oklch(0.63 0.24 13 / 0.3);
+  --focus-ring: color-mix(
+    in oklab,
+    oklch(0.58 0.21 277 / 0.3),
+    oklch(0.68 0.17 277 / 0.36) var(--theme-dark-weight)
+  );
+  --focus-ring-error: color-mix(
+    in oklab,
+    oklch(0.63 0.24 13 / 0.3),
+    oklch(0.72 0.2 13 / 0.36) var(--theme-dark-weight)
+  );
+  --tone-brand: color-mix(
+    in oklab,
+    var(--color-brand-700),
+    var(--color-brand-300) var(--theme-dark-weight)
+  );
+  --tone-success: color-mix(
+    in oklab,
+    var(--color-success-600),
+    var(--color-success-400) var(--theme-dark-weight)
+  );
+  --tone-warning: color-mix(
+    in oklab,
+    var(--color-warning-600),
+    var(--color-warning-400) var(--theme-dark-weight)
+  );
+  --tone-error: color-mix(
+    in oklab,
+    var(--color-error-600),
+    var(--color-error-400) var(--theme-dark-weight)
+  );
+  --tone-accent: color-mix(
+    in oklab,
+    var(--color-accent-600),
+    var(--color-accent-400) var(--theme-dark-weight)
+  );
+  --stat-brand: color-mix(
+    in oklab,
+    var(--color-brand-600),
+    var(--color-brand-300) var(--theme-dark-weight)
+  );
+  --stat-brand-bg: color-mix(
+    in oklab,
+    oklch(0.58 0.21 277 / 0.15),
+    oklch(0.58 0.21 277 / 0.2) var(--theme-dark-weight)
+  );
+  --stat-success-bg: color-mix(
+    in oklab,
+    oklch(0.7 0.17 162 / 0.15),
+    oklch(0.7 0.17 162 / 0.2) var(--theme-dark-weight)
+  );
+  --stat-warning-bg: color-mix(
+    in oklab,
+    oklch(0.77 0.16 70 / 0.18),
+    oklch(0.77 0.16 70 / 0.2) var(--theme-dark-weight)
+  );
+  --stat-error-bg: color-mix(
+    in oklab,
+    oklch(0.63 0.24 13 / 0.15),
+    oklch(0.63 0.24 13 / 0.2) var(--theme-dark-weight)
+  );
+  --stat-accent-bg: color-mix(
+    in oklab,
+    oklch(0.72 0.14 200 / 0.15),
+    oklch(0.72 0.14 200 / 0.2) var(--theme-dark-weight)
+  );
+  --soft-brand: color-mix(
+    in oklab,
+    var(--color-brand-50),
+    oklch(0.58 0.21 277 / 0.15) var(--theme-dark-weight)
+  );
+  --soft-success: color-mix(
+    in oklab,
+    oklch(0.7 0.17 162 / 0.12),
+    oklch(0.7 0.17 162 / 0.15) var(--theme-dark-weight)
+  );
+  --soft-warning: color-mix(
+    in oklab,
+    oklch(0.77 0.16 70 / 0.15),
+    oklch(0.77 0.16 70 / 0.15) var(--theme-dark-weight)
+  );
+  --soft-error: color-mix(
+    in oklab,
+    oklch(0.63 0.24 13 / 0.12),
+    oklch(0.63 0.24 13 / 0.15) var(--theme-dark-weight)
+  );
+  --primary-action: color-mix(
+    in oklab,
+    var(--color-brand-600),
+    var(--color-brand-500) var(--theme-dark-weight)
+  );
+  --primary-action-hover: color-mix(
+    in oklab,
+    var(--color-brand-500),
+    var(--color-brand-400) var(--theme-dark-weight)
+  );
+  --switch-on: color-mix(
+    in oklab,
+    var(--color-brand-600),
+    var(--color-brand-500) var(--theme-dark-weight)
+  );
+  --switch-off: color-mix(
+    in oklab,
+    var(--color-slate-300),
+    var(--color-slate-600) var(--theme-dark-weight)
+  );
+  --tooltip: color-mix(
+    in oklab,
+    var(--color-slate-950),
+    var(--color-slate-700) var(--theme-dark-weight)
+  );
+  --tooltip-text: color-mix(
+    in oklab,
+    var(--color-slate-50),
+    var(--color-slate-100) var(--theme-dark-weight)
+  );
+  --control-error-border: color-mix(
+    in oklab,
+    var(--color-error-500),
+    var(--color-error-400) var(--theme-dark-weight)
+  );
+  --current-credential-bg: color-mix(
+    in oklab,
+    oklch(0.7 0.17 162 / 0.08),
+    oklch(0.7 0.17 162 / 0.1) var(--theme-dark-weight)
+  );
+  --current-credential-text: color-mix(
+    in oklab,
+    color-mix(in oklch, var(--color-success-600) 72%, #64748b),
+    color-mix(in oklch, var(--color-success-400) 70%, #94a3b8) var(--theme-dark-weight)
+  );
 }
 
-/* 暗色 */
 .dark {
   color-scheme: dark;
-  --bg: #020617; /* slate-950 */
-  --surface: #0f172a; /* slate-900 */
-  --surface-2: #1e293b; /* slate-800 */
-  --surface-3: #334155; /* slate-700 */
-  --rail: #080b14; /* 比 bg 更深 */
-  --rail-2: #0f172a; /* slate-900 */
-  --rail-text: #cbd5e1; /* slate-300 */
-  --rail-text-strong: #ffffff;
-  --rail-muted: #94a3b8; /* slate-400 */
-  --rail-border: oklch(1 0 0 / 0.05);
-  --rail-hover: oklch(1 0 0 / 0.05);
-  --rail-active: oklch(0.58 0.21 277 / 0.15);
-  --rail-active-text: #ffffff;
-  --rail-active-indicator: var(--color-brand-400);
-  --text: #f1f5f9; /* slate-100 */
-  --text-strong: #ffffff;
-  --muted: #94a3b8; /* slate-400 */
-  --border: #243049; /* 介于 bg/surface，若隐若现 */
-  --border-strong: #475569; /* slate-600 */
-  --overlay: oklch(0.1 0.02 260 / 0.68);
-  --focus-ring: oklch(0.68 0.17 277 / 0.36);
-  --focus-ring-error: oklch(0.72 0.2 13 / 0.36);
+  --theme-progress: 1;
 }
 
 /* 基础重置 */
@@ -202,18 +354,18 @@ body {
   line-height: var(--text-base--line-height);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* 只过渡颜色属性，避免主题切换影响布局动画。 */
-  transition:
-    background-color var(--duration-base),
-    border-color var(--duration-base),
-    color var(--duration-base);
 }
 
-.theme-transitioning,
-.theme-transitioning * {
-  transition-property: background-color, border-color, color, fill, stroke, box-shadow;
+/* 只插值一个主题进度；连续切换会从当前进度平滑转向另一端。 */
+.theme-transitioning {
+  transition-property: --theme-progress;
   transition-duration: var(--duration-theme);
   transition-timing-function: var(--ease-out-quad);
+}
+
+/* 主题切换期间暂停组件局部过渡，避免后代各自追赶继承颜色。 */
+.theme-transitioning * {
+  transition: none !important;
 }
 
 button,
@@ -300,7 +452,7 @@ button:disabled {
 }
 
 /* 表单控件焦点：品牌色边框 + 柔和外发光，避免硬质双实线。 */
-html:not(.theme-transitioning) .c-control-focus {
+.c-control-focus {
   transition-property: background-color, border-color, box-shadow;
   transition-duration: var(--duration-fast);
   transition-timing-function: var(--ease-out-quad);
@@ -326,21 +478,13 @@ html:not(.theme-transitioning) .c-control-focus {
 }
 
 .c-control-focus[aria-invalid='true']:focus {
-  border-color: var(--color-error-500);
+  border-color: var(--control-error-border);
   --tw-ring-shadow: 0 0 0 3px var(--focus-ring-error);
-}
-
-.dark .c-control-focus[aria-invalid='true']:focus {
-  border-color: var(--color-error-400);
 }
 
 .peer:focus-visible + .c-checkbox-box {
   border-color: var(--color-brand-500);
-  box-shadow: 0 0 0 3px oklch(0.58 0.21 277 / 0.3);
-}
-
-.dark .peer:focus-visible + .c-checkbox-box {
-  box-shadow: 0 0 0 3px oklch(0.68 0.17 277 / 0.36);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 /* 滚动条（WebKit）——细而克制 */
@@ -420,15 +564,9 @@ html:not(.theme-transitioning) .c-control-focus {
 .current-credential-action-button,
 .current-credential-action-button:disabled {
   border-color: color-mix(in oklch, var(--color-success-500) 28%, var(--border));
-  background: color-mix(in oklch, var(--color-success-500) 8%, transparent);
-  color: color-mix(in oklch, var(--color-success-600) 72%, var(--muted));
+  background: var(--current-credential-bg);
+  color: var(--current-credential-text);
   opacity: 0.72;
-}
-
-.dark .current-credential-action-button,
-.dark .current-credential-action-button:disabled {
-  background: color-mix(in oklch, var(--color-success-500) 10%, transparent);
-  color: color-mix(in oklch, var(--color-success-400) 70%, var(--muted));
 }
 
 @utility c-input-group {

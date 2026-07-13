@@ -14,11 +14,11 @@ interface Props {
 const props = defineProps<Props>();
 
 const toneClasses: Record<Props['tone'], string> = {
-  brand: 'bg-brand-500/15 text-brand-600 dark:bg-brand-500/20 dark:text-brand-300',
-  success: 'bg-success-500/15 text-success-600 dark:bg-success-500/20 dark:text-success-400',
-  warning: 'bg-warning-500/18 text-warning-600 dark:bg-warning-500/20 dark:text-warning-400',
-  error: 'bg-error-500/15 text-error-600 dark:bg-error-500/20 dark:text-error-400',
-  accent: 'bg-accent-500/15 text-accent-600 dark:bg-accent-500/20 dark:text-accent-400',
+  brand: 'bg-stat-brand-bg text-stat-brand',
+  success: 'bg-stat-success-bg text-tone-success',
+  warning: 'bg-stat-warning-bg text-tone-warning',
+  error: 'bg-stat-error-bg text-tone-error',
+  accent: 'bg-stat-accent-bg text-tone-accent',
 };
 
 const iconBoxClass = computed(() => toneClasses[props.tone]);

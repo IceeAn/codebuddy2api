@@ -55,7 +55,7 @@ const thumbTranslateClass = computed(() =>
     :class="[
       'relative inline-flex items-center rounded-full transition-[background-color,box-shadow] duration-[var(--duration-fast)]',
       trackClass,
-      modelValue ? 'bg-brand-600 dark:bg-brand-500' : 'bg-slate-300 dark:bg-slate-600',
+      modelValue ? 'bg-switch-on' : 'bg-switch-off',
       disabled ? 'opacity-50' : '',
     ]"
     @click="toggle"
