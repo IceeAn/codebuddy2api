@@ -42,7 +42,6 @@ class ReleasePackageTests(unittest.TestCase):
             "config.py",
             "web.py",
             "frontend/package.json",
-            "frontend/admin.html",
             "frontend/dist/index.html",
             "frontend/dist/assets/app.js",
             "frontend/public/assets/logo.svg",
@@ -99,6 +98,7 @@ class ReleasePackageTests(unittest.TestCase):
         self.assertNotIn("codebuddy2api/secrets/users.txt", tar_names)
         self.assertNotIn("codebuddy2api/data/codebuddy2api.sqlite3", tar_names)
         self.assertNotIn("codebuddy2api/frontend/node_modules/vue/index.js", tar_names)
+        self.assertNotIn("codebuddy2api/frontend/admin.html", tar_names)
         self.assertNotIn("codebuddy2api/tests/test_example.py", tar_names)
 
         with zipfile.ZipFile(artifacts.zipfile) as archive:

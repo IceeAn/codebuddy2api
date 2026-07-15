@@ -122,11 +122,11 @@ class RepositoryConfigurationTests(unittest.TestCase):
             "COPY config.py web.py ./",
             "COPY src ./src",
             "COPY scripts/hash_password.py ./scripts/hash_password.py",
-            "COPY frontend/admin.html ./frontend/admin.html",
             "COPY frontend/public ./frontend/public",
         ):
             with self.subTest(runtime_copy=runtime_copy):
                 self.assertIn(runtime_copy, dockerfile)
+        self.assertNotIn("frontend/admin.html", dockerfile)
         self.assertIn(
             "ln -s /app/scripts/hash_password.py /usr/local/bin/codebuddy2api-hash-password",
             dockerfile,

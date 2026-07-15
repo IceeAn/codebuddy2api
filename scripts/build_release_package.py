@@ -33,7 +33,6 @@ REQUIRED_FILES = (
     "requirements.txt",
     "config.py",
     "web.py",
-    "frontend/admin.html",
     "secrets/users.txt.example",
 )
 

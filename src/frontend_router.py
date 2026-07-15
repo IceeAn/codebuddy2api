@@ -11,7 +11,6 @@ FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 DIST_DIR = FRONTEND_DIR / "dist"
 PUBLIC_DIR = FRONTEND_DIR / "public"
 INDEX_FILE = "index.html"
-LEGACY_ADMIN_FILE = FRONTEND_DIR / "admin.html"
 
 NO_CACHE_HEADERS = {
     "Cache-Control": "no-cache, no-store, must-revalidate",
@@ -44,32 +43,16 @@ def _safe_static_file(relative_path: str) -> Path:
 
 
 async def get_frontend_index_response() -> FileResponse:
-    """返回 Vue 管理台入口；未构建时回退到旧版单文件管理台。"""
+    """返回已构建的 Vue 管理台入口。"""
     index_path = DIST_DIR / INDEX_FILE
     if not index_path.is_file():
-        return await get_legacy_admin_response()
+        raise HTTPException(status_code=503, detail="Built frontend not found.")
 
     return FileResponse(
         index_path,
         media_type="text/html",
         headers=NO_CACHE_HEADERS,
     )
-
-
-async def get_legacy_admin_response() -> FileResponse:
-    """返回旧版单文件管理台入口。"""
-    if not LEGACY_ADMIN_FILE.is_file():
-        raise HTTPException(
-            status_code=503,
-            detail="Legacy admin frontend not found.",
-        )
-
-    return FileResponse(
-        LEGACY_ADMIN_FILE,
-        media_type="text/html",
-        headers=NO_CACHE_HEADERS,
-    )
-
 
 async def get_frontend_static_response(asset_path: str) -> FileResponse:
     """优先返回 Vite 构建产物，未构建时回退到公共静态资源。"""
@@ -94,7 +77,7 @@ async def serve_frontend():
 
 @router.get("/admin", response_class=FileResponse, include_in_schema=False)
 async def serve_admin():
-    return await get_legacy_admin_response()
+    return await get_frontend_index_response()
 
 
 @router.get("/assets/{asset_path:path}", response_class=FileResponse, include_in_schema=False)

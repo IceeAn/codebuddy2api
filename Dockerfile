@@ -34,7 +34,6 @@ COPY LICENSE LICENSING.md ./
 COPY config.py web.py ./
 COPY src ./src
 COPY scripts/hash_password.py ./scripts/hash_password.py
-COPY frontend/admin.html ./frontend/admin.html
 COPY frontend/public ./frontend/public
 COPY --from=frontend-build /frontend/dist /app/frontend/dist
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
