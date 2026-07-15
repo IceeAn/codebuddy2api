@@ -20,13 +20,16 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIsNotNone(match, f"缺少工作流步骤：{name}")
         return match.group("body")
 
-    def test_manual_release_can_include_unfixed_vulnerabilities(self):
+    def test_release_blocks_unfixed_vulnerabilities_by_default(self):
         self.assertRegex(
             self.workflow,
             r"(?ms)^      ignore_unfixed:\n"
-            r"        .*?default: true\n"
+            r"        .*?default: false\n"
             r"        type: boolean$",
         )
+
+        resolve_release = self._step("Resolve release target")
+        self.assertIn('ignore_unfixed="false"', resolve_release)
 
         for step_name in (
             "Report HIGH and CRITICAL vulnerabilities",

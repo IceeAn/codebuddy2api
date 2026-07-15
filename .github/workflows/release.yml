@@ -17,7 +17,7 @@ on:
       ignore_unfixed:
         description: "Trivy 扫描时忽略尚无修复版本的漏洞"
         required: true
-        default: true
+        default: false
         type: boolean
 
 permissions:
@@ -58,7 +58,7 @@ jobs:
             ignore_unfixed="${INPUT_IGNORE_UNFIXED}"
           else
             release_tag="${GITHUB_REF_NAME}"
-            ignore_unfixed="true"
+            ignore_unfixed="false"
           fi
 
           if [[ ! "${release_tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
