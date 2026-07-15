@@ -20,8 +20,12 @@ import { useToast } from '../composables/useToast';
 import CredentialActions from '../components/CredentialActions.vue';
 import RefreshButton from '../components/RefreshButton.vue';
 import { filterCredentials, type CredentialFilterTab } from '../utils/credentialsFilter';
+import { useSessionStore } from '../stores/session';
+import { adminQueryKeys } from '../utils/adminQueryKeys';
 
 const queryClient = useQueryClient();
+const session = useSessionStore();
+const queryKeys = adminQueryKeys(session.username);
 const toast = useToast();
 const { copy } = useClipboard();
 
@@ -36,7 +40,9 @@ const credentialRules: FormRules = {
   },
 };
 
-const testingId = ref<string | null>(null);
+const testingIds = reactive(new Set<string>());
+const selectingId = ref<string | null>(null);
+const deletingId = ref<string | null>(null);
 
 const filterTab = ref<CredentialFilterTab>('all');
 const credentialFilterOrder: Record<CredentialFilterTab, number> = {
@@ -47,7 +53,7 @@ const credentialFilterOrder: Record<CredentialFilterTab, number> = {
 const credentialFilterTransition = ref('credential-slide-left');
 
 const credentialsQuery = useQuery({
-  queryKey: ['admin-credentials'],
+  queryKey: queryKeys.credentials,
   queryFn: adminApi.credentials,
 });
 
@@ -123,7 +129,7 @@ const {
   polling,
   elapsedSeconds,
   manualOpenRequired,
-  start,
+  start: startOAuth,
   cancel,
   openAuthUrl,
 } = useOAuthPolling({
@@ -145,21 +151,30 @@ const createMutation = useMutation({
 
 const selectMutation = useMutation({
   mutationFn: adminApi.selectCredential,
+  onMutate: (credentialId: string) => {
+    selectingId.value = credentialId;
+  },
   onSuccess: async (data) => {
     toast.success(
       data.auto_rotation_disabled_by_select ? '已切换凭证，自动轮换已关闭' : '已切换凭证',
     );
     await invalidateCredentials();
-    await queryClient.invalidateQueries({ queryKey: ['admin-settings'] });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.settings });
+  },
+  onSettled: (_data, _error, credentialId) => {
+    if (selectingId.value === credentialId) selectingId.value = null;
   },
 });
 
 const deleteMutation = useMutation({
   mutationFn: (credentialId: string) => adminApi.deleteCredential(credentialId),
+  onMutate: (credentialId: string) => {
+    deletingId.value = credentialId;
+  },
   onSuccess: async (data, credentialId) => {
     toast.success('凭证已删除');
     // 利用返回的 current 直接更新缓存，减少一次 refetch 先用缓存数据渲染
-    queryClient.setQueryData<CredentialsResponse>(['admin-credentials'], (old) => {
+    queryClient.setQueryData<CredentialsResponse>(queryKeys.credentials, (old) => {
       if (!old) return old;
       return {
         ...old,
@@ -168,31 +183,38 @@ const deleteMutation = useMutation({
       };
     });
     // 凭证计数变化仍 invalidate status；credentials 静默刷新确保一致性
-    await queryClient.invalidateQueries({ queryKey: ['admin-status'] });
-    await queryClient.invalidateQueries({ queryKey: ['admin-credentials'] });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.status });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.credentials });
+  },
+  onSettled: (_data, _error, credentialId) => {
+    if (deletingId.value === credentialId) deletingId.value = null;
   },
 });
 
 /**
  * 凭证测试 mutation。
- * 通过 testingId 记录当前正在测试的 credential_id 实现按行独立 loading：
- * onMutate 置位、onSettled 清空，避免 testMutation.isPending 跨行共享。
+ * 通过 testingIds 记录全部正在测试的 credential_id，实现不同凭证并行测试，
+ * 同时避免先完成的请求清掉其他仍在进行的行状态。
  * onSuccess 保留业务逻辑（可用/不可用提示），错误由全局 MutationCache 处理。
  */
 const testMutation = useMutation({
   mutationFn: (credentialId: string) => adminApi.testCredential(credentialId),
   onMutate: (credentialId: string) => {
-    testingId.value = credentialId;
+    testingIds.add(credentialId);
   },
   onSuccess: (result) => {
     if (result.ok) {
+      if (result.model_source === 'configured_fallback') {
+        toast.warning('凭证可用（使用本地配置模型回退）');
+        return;
+      }
       toast.success('凭证可用');
     } else {
-      toast.error(`测试失败：HTTP ${result.status_code}`);
+      toast.error(`测试失败：${result.detail || `HTTP ${result.status_code}`}`);
     }
   },
-  onSettled: () => {
-    testingId.value = null;
+  onSettled: (_data, _error, credentialId) => {
+    testingIds.delete(credentialId);
   },
 });
 
@@ -201,13 +223,22 @@ const toggleRotationMutation = useMutation({
   onSuccess: async (data) => {
     toast.success(data.auto_rotation_enabled ? '自动轮换已启用' : '自动轮换已暂停');
     await invalidateCredentials();
-    await queryClient.invalidateQueries({ queryKey: ['admin-settings'] });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.settings });
   },
 });
 
+const hasActiveTests = computed(() => testingIds.size > 0);
+const writeInProgress = computed(
+  () =>
+    selectingId.value !== null ||
+    deletingId.value !== null ||
+    createMutation.isPending.value ||
+    toggleRotationMutation.isPending.value,
+);
+
 async function invalidateCredentials() {
-  await queryClient.invalidateQueries({ queryKey: ['admin-credentials'] });
-  await queryClient.invalidateQueries({ queryKey: ['admin-status'] });
+  await queryClient.invalidateQueries({ queryKey: queryKeys.credentials });
+  await queryClient.invalidateQueries({ queryKey: queryKeys.status });
 }
 
 function formatElapsed(totalSeconds: number): string {
@@ -217,12 +248,38 @@ function formatElapsed(totalSeconds: number): string {
 }
 
 async function submitCredential(): Promise<void> {
+  if (writeInProgress.value || hasActiveTests.value) return;
   try {
     await credentialFormRef.value?.validate();
   } catch {
     return;
   }
   createMutation.mutate();
+}
+
+function start(): void {
+  if (writeInProgress.value || hasActiveTests.value) return;
+  void startOAuth();
+}
+
+function selectCredential(credentialId: string): void {
+  if (writeInProgress.value || hasActiveTests.value) return;
+  selectMutation.mutate(credentialId);
+}
+
+function testCredential(credentialId: string): void {
+  if (writeInProgress.value || testingIds.has(credentialId)) return;
+  testMutation.mutate(credentialId);
+}
+
+function deleteCredential(credentialId: string): void {
+  if (writeInProgress.value || hasActiveTests.value) return;
+  deleteMutation.mutate(credentialId);
+}
+
+function toggleRotation(): void {
+  if (!autoRotationKnown.value || writeInProgress.value || hasActiveTests.value) return;
+  toggleRotationMutation.mutate();
 }
 
 const columns: Column<CredentialRecord>[] = [
@@ -233,10 +290,14 @@ const columns: Column<CredentialRecord>[] = [
     render: (row) => {
       const active = row.credential_id === currentId.value;
       const expired = row.is_expired;
+      const activeExpired = active && expired;
       return h(
         CTag,
-        { type: active ? 'success' : expired ? 'error' : 'default' },
-        { default: () => (active ? '当前' : expired ? '过期' : '可用') },
+        { type: activeExpired || expired ? 'error' : active ? 'success' : 'default' },
+        {
+          default: () =>
+            activeExpired ? '当前 · 已过期' : active ? '当前' : expired ? '过期' : '可用',
+        },
       );
     },
   },
@@ -255,10 +316,14 @@ const columns: Column<CredentialRecord>[] = [
         credential: row,
         isCurrent: row.credential_id === currentId.value,
         autoRotationEnabled: autoRotationEnabled.value,
-        isTesting: testingId.value === row.credential_id,
-        onSelect: (credentialId) => selectMutation.mutate(credentialId),
-        onTest: (credentialId) => testMutation.mutate(credentialId),
-        onDelete: (credentialId) => deleteMutation.mutate(credentialId),
+        isTesting: testingIds.has(row.credential_id),
+        isSelecting: selectingId.value === row.credential_id,
+        isDeleting: deletingId.value === row.credential_id,
+        writeInProgress: writeInProgress.value,
+        hasActiveTests: hasActiveTests.value,
+        onSelect: selectCredential,
+        onTest: testCredential,
+        onDelete: deleteCredential,
       }),
   },
 ];
@@ -282,6 +347,7 @@ const tableRows = computed(() => rows.value as unknown as Record<string, unknown
             <CButton
               variant="primary"
               :loading="starting || polling"
+              :disabled="writeInProgress || hasActiveTests"
               class="credential-auth-start-button"
               @click="start"
             >
@@ -341,6 +407,7 @@ const tableRows = computed(() => rows.value as unknown as Record<string, unknown
             <CButton
               variant="primary"
               :loading="createMutation.isPending.value"
+              :disabled="writeInProgress || hasActiveTests"
               @click="submitCredential"
             >
               <template #icon>
@@ -358,8 +425,8 @@ const tableRows = computed(() => rows.value as unknown as Record<string, unknown
         <div class="toolbar-actions">
           <CButton
             :loading="toggleRotationMutation.isPending.value"
-            :disabled="!autoRotationKnown"
-            @click="toggleRotationMutation.mutate()"
+            :disabled="!autoRotationKnown || writeInProgress || hasActiveTests"
+            @click="toggleRotation"
           >
             <template #icon>
               <Pause v-if="autoRotationEnabled" :size="16" />
@@ -390,6 +457,7 @@ const tableRows = computed(() => rows.value as unknown as Record<string, unknown
             <CDataTable
               :columns="tableColumns"
               :data="tableRows"
+              row-key="credential_id"
               :loading="credentialsQuery.isLoading.value || credentialsQuery.isFetching.value"
               :error="credentialsQuery.isError.value"
               :bordered="false"

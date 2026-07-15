@@ -39,16 +39,31 @@ describe('CInput', () => {
     expect(wrapper.find('input').attributes('placeholder')).toBe('请输入');
   });
 
+  it('maxlength 透传到真实 input 与 textarea', () => {
+    const input = mount(CInput, { props: { maxlength: 80 } });
+    const textarea = mount(CInput, { props: { type: 'textarea', maxlength: 120 } });
+    expect(input.get('input').attributes('maxlength')).toBe('80');
+    expect(textarea.get('textarea').attributes('maxlength')).toBe('120');
+  });
+
   it('type=password 时渲染 password toggle 按钮', () => {
     const wrapper = mount(CInput, { props: { type: 'password' } });
-    expect(wrapper.find('button').exists()).toBe(true);
-    expect(wrapper.find('input').attributes('type')).toBe('password');
+    const button = wrapper.get('button');
+    const input = wrapper.get('input');
+    expect(input.attributes('type')).toBe('password');
+    expect(input.attributes('id')).toBeDefined();
+    expect(button.attributes('aria-label')).toBe('显示密码');
+    expect(button.attributes('aria-pressed')).toBe('false');
+    expect(button.attributes('aria-controls')).toBe(input.attributes('id'));
+    expect(button.attributes('tabindex')).toBeUndefined();
   });
 
   it('点击 password toggle 切换 input type 为 text', async () => {
     const wrapper = mount(CInput, { props: { type: 'password' } });
     await wrapper.find('button').trigger('click');
     expect(wrapper.find('input').attributes('type')).toBe('text');
+    expect(wrapper.find('button').attributes('aria-label')).toBe('隐藏密码');
+    expect(wrapper.find('button').attributes('aria-pressed')).toBe('true');
     await wrapper.find('button').trigger('click');
     expect(wrapper.find('input').attributes('type')).toBe('password');
   });

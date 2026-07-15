@@ -1,5 +1,6 @@
 """用户密码文件存储。"""
 import logging
+import threading
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -21,6 +22,7 @@ class UsersFileStore:
         self._users: Dict[str, str] = {}
         self._loaded_path: Optional[Path] = None
         self._loaded_mtime: Optional[float] = None
+        self._cache_lock = threading.RLock()
 
     def _resolve_users_file(self) -> Path:
         users_file = Path(get_users_file_path())
@@ -72,20 +74,23 @@ class UsersFileStore:
         logger.info("Loaded %s user(s) from %s", len(users), users_file)
 
     def verify(self, username: str, password: str) -> bool:
-        self._load_if_needed()
-        password_hash = self._users.get(username)
+        with self._cache_lock:
+            self._load_if_needed()
+            password_hash = self._users.get(username)
         if not password_hash:
             verify_password(password, DUMMY_PASSWORD_HASH)
             return False
         return verify_password(password, password_hash)
 
     def has_users_file(self) -> bool:
-        self._load_if_needed()
-        return bool(self._users)
+        with self._cache_lock:
+            self._load_if_needed()
+            return bool(self._users)
 
     def has_username(self, username: str) -> bool:
-        self._load_if_needed()
-        return username in self._users
+        with self._cache_lock:
+            self._load_if_needed()
+            return username in self._users
 
     def validate_configured_users_file(self) -> None:
         """启动期校验系统用户文件，避免服务以不可登录状态运行。"""
@@ -99,8 +104,10 @@ class UsersFileStore:
                 f"Authentication users file is not a regular file: {users_file}"
             )
 
-        self._load_if_needed()
-        if not self._users:
+        with self._cache_lock:
+            self._load_if_needed()
+            has_users = bool(self._users)
+        if not has_users:
             raise UsersFileConfigurationError(
                 f"Authentication users file has no valid users: {users_file}"
             )

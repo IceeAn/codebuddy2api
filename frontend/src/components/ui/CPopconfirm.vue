@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref } from 'vue';
+import { nextTick, onBeforeUnmount, ref, useId } from 'vue';
 import { AlertTriangle } from '@lucide/vue';
 import CButton from './CButton.vue';
+import { registerOverlay } from './overlayStack';
 
 interface Props {
   title?: string;
@@ -26,6 +27,10 @@ const visible = ref(false);
 const positioned = ref(false);
 const triggerRef = ref<HTMLElement | null>(null);
 const popoverRef = ref<HTMLElement | null>(null);
+const instanceId = useId().replace(/[^A-Za-z0-9_-]/g, '');
+const popoverId = `c-popconfirm-${instanceId}`;
+const descriptionId = `c-popconfirm-description-${instanceId}`;
+let unregisterOverlay: (() => void) | null = null;
 const positionStyle = ref<Record<string, string>>({
   left: '0px',
   top: '0px',
@@ -49,20 +54,26 @@ async function open(): Promise<void> {
   if (!visible.value) return;
   updatePosition();
   document.addEventListener('click', handleOutsideClick);
-  document.addEventListener('keydown', handleKeydown);
   window.addEventListener('scroll', updatePosition, true);
   window.addEventListener('resize', updatePosition);
+  unregisterOverlay = registerOverlay({
+    elements: [popoverRef.value!],
+    focusRoot: popoverRef.value!,
+    modal: false,
+    onEscape: handleCancel,
+  });
 }
 
 function close(): void {
   visible.value = false;
   positioned.value = false;
   removeListeners();
+  unregisterOverlay?.();
+  unregisterOverlay = null;
 }
 
 function removeListeners(): void {
   document.removeEventListener('click', handleOutsideClick);
-  document.removeEventListener('keydown', handleKeydown);
   window.removeEventListener('scroll', updatePosition, true);
   window.removeEventListener('resize', updatePosition);
 }
@@ -70,12 +81,6 @@ function removeListeners(): void {
 /** 外部点击关闭：触发区和浮层内 click.stop 阻止冒泡。 */
 function handleOutsideClick(): void {
   close();
-}
-
-function handleKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape') {
-    close();
-  }
 }
 
 function handleConfirm(): void {
@@ -107,36 +112,55 @@ function updatePosition(): void {
 
 onBeforeUnmount(() => {
   removeListeners();
+  unregisterOverlay?.();
+  unregisterOverlay = null;
 });
 </script>
 
 <template>
   <span class="relative inline-flex">
-    <span ref="triggerRef" class="inline-flex" @click.stop="toggle">
+    <span
+      ref="triggerRef"
+      class="inline-flex"
+      aria-haspopup="dialog"
+      :aria-expanded="visible"
+      :aria-controls="visible ? popoverId : undefined"
+      @click.stop="toggle"
+    >
       <slot />
     </span>
     <Teleport to="body">
       <Transition name="c-popconfirm">
         <div
           v-if="visible"
+          :id="popoverId"
           ref="popoverRef"
           :style="positionStyle"
           :class="[
             'c-popconfirm-popover fixed z-50 w-[15rem] rounded-lg border border-border bg-surface p-3.5 shadow-[var(--shadow-popover)]',
             positioned ? '' : 'pointer-events-none opacity-0',
           ]"
+          role="alertdialog"
+          aria-modal="true"
+          aria-label="确认操作"
+          :aria-describedby="title ? descriptionId : undefined"
+          tabindex="-1"
           @click.stop
         >
           <div class="flex gap-2.5">
             <span class="c-popconfirm-icon shrink-0 text-warning-500">
               <AlertTriangle :size="18" />
             </span>
-            <div v-if="title" class="c-popconfirm-desc flex-1 text-sm text-text">
+            <div
+              v-if="title"
+              :id="descriptionId"
+              class="c-popconfirm-desc flex-1 text-sm text-text"
+            >
               {{ title }}
             </div>
           </div>
           <div class="c-popconfirm-actions mt-3 flex justify-end gap-2">
-            <CButton size="sm" variant="ghost" @click="handleCancel">
+            <CButton size="sm" variant="ghost" data-overlay-initial-focus @click="handleCancel">
               {{ cancelText }}
             </CButton>
             <CButton

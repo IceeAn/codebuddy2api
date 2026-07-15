@@ -16,13 +16,19 @@ import CInput from '../components/ui/CInput.vue';
 import CCheckbox from '../components/ui/CCheckbox.vue';
 import CButton from '../components/ui/CButton.vue';
 import RefreshButton from '../components/RefreshButton.vue';
+import { useSessionStore } from '../stores/session';
+import { adminQueryKeys } from '../utils/adminQueryKeys';
 
 const toast = useToast();
+const session = useSessionStore();
+const queryKeys = adminQueryKeys(session.username);
 const selectedModel = ref('');
 const prompt = ref('Hello, what is 2+2?');
 const stream = ref(false);
 const output = ref('点击发送查看响应');
 const loading = ref(false);
+let pendingStreamOutput = '';
+let streamOutputFrame: number | null = null;
 
 // prompt 是 ref，放入 reactive 后模板校验读取到的是 unwrap 后的字符串。
 const consoleForm = reactive({ prompt });
@@ -33,8 +39,37 @@ const consoleRules: FormRules = {
 
 const abortController = ref<AbortController | null>(null);
 
+function flushStreamOutput(): void {
+  if (streamOutputFrame !== null) {
+    window.cancelAnimationFrame(streamOutputFrame);
+    streamOutputFrame = null;
+  }
+  if (!pendingStreamOutput) return;
+  output.value += pendingStreamOutput;
+  pendingStreamOutput = '';
+}
+
+function queueStreamOutput(value: unknown): void {
+  pendingStreamOutput += `${JSON.stringify(value, null, 2)}\n\n`;
+  if (streamOutputFrame !== null) return;
+  streamOutputFrame = window.requestAnimationFrame(() => {
+    streamOutputFrame = null;
+    if (!pendingStreamOutput) return;
+    output.value += pendingStreamOutput;
+    pendingStreamOutput = '';
+  });
+}
+
+function resetStreamOutput(): void {
+  if (streamOutputFrame !== null) {
+    window.cancelAnimationFrame(streamOutputFrame);
+    streamOutputFrame = null;
+  }
+  pendingStreamOutput = '';
+}
+
 const modelsQuery = useQuery({
-  queryKey: ['openai-playground-models'],
+  queryKey: queryKeys.playgroundModels,
   queryFn: openaiPlaygroundApi.models,
 });
 
@@ -62,6 +97,7 @@ async function doSend(): Promise<void> {
 
   loading.value = true;
   output.value = '';
+  resetStreamOutput();
 
   const requestStream = stream.value;
   const model = selectedModel.value || modelOptions.value[0]?.value || 'glm-5.2';
@@ -98,16 +134,31 @@ async function doSend(): Promise<void> {
     try {
       const decoder = new SseStreamDecoder();
       const textDecoder = new TextDecoder();
-      while (true) {
+      let doneReceived = false;
+
+      readLoop: while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = textDecoder.decode(value, { stream: true });
-        for (const event of decoder.feed(chunk)) {
-          output.value += `${JSON.stringify(event, null, 2)}\n\n`;
+        const results = done
+          ? [...decoder.feed(textDecoder.decode()), ...decoder.finish()]
+          : decoder.feed(textDecoder.decode(value, { stream: true }));
+
+        for (const result of results) {
+          if (result.type === 'error') throw new Error(result.message);
+          if (result.type === 'done') {
+            doneReceived = true;
+            break readLoop;
+          }
+          queueStreamOutput(result.data);
         }
+
+        if (done) break;
       }
+
+      if (!doneReceived) throw new Error('流式响应在 [DONE] 之前结束');
+      flushStreamOutput();
       toast.success('流式请求完成');
     } finally {
+      flushStreamOutput();
       // 主动释放 reader，避免连接泄漏（cancel 会向服务端发送取消信号）
       try {
         await reader.cancel();
@@ -117,6 +168,7 @@ async function doSend(): Promise<void> {
       reader.releaseLock();
     }
   } catch (error) {
+    flushStreamOutput();
     if (controller.signal.aborted) {
       // 用户主动取消，不算错误
       output.value = '已取消';
@@ -128,7 +180,9 @@ async function doSend(): Promise<void> {
       toast.error('认证过期，请重新登录');
       return;
     }
-    output.value = error instanceof Error ? error.message : String(error);
+    const message = error instanceof Error ? error.message : String(error);
+    output.value =
+      requestStream && output.value ? `${output.value.trimEnd()}\n\n错误：${message}` : message;
     toast.error('请求失败');
   } finally {
     loading.value = false;
@@ -152,6 +206,7 @@ function stop(): void {
 
 onBeforeUnmount(() => {
   abortInFlight();
+  resetStreamOutput();
 });
 </script>
 

@@ -44,6 +44,9 @@ class TempConfigMixin(ConfigIsolationMixin):
 
 def reset_runtime_stores():
     session_store.sessions.clear()
+    from src.login_security import login_attempt_guard
+
+    login_attempt_guard.reset()
 
 
 def write_users_file(directory: Path, users=None) -> Path:

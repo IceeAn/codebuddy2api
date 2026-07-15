@@ -27,9 +27,10 @@ import { buildStatsSearchParams } from '../utils/stats';
 const CREDENTIAL_TEST_TIMEOUT_MS = 335_000;
 const OAUTH_START_TIMEOUT_MS = 35_000;
 const OAUTH_POLL_TIMEOUT_MS = 35_000;
+const MODEL_LIST_TIMEOUT_MS = 35_000;
 
 export const authApi = {
-  session: () => apiRequest<SessionInfo>('/auth/session'),
+  session: (signal?: AbortSignal) => apiRequest<SessionInfo>('/auth/session', { signal }),
   login: (username: string, password: string) =>
     apiRequest<SessionInfo>('/auth/login', {
       method: 'POST',
@@ -81,14 +82,16 @@ export const adminApi = {
       },
     ),
   testCredential: (credentialId: string) =>
-    apiRequest<{ ok: boolean; status_code: number; detail?: string }>(
-      `/api/admin/credentials/${encodeURIComponent(credentialId)}/test`,
-      {
-        method: 'POST',
-        json: {},
-        timeoutMs: CREDENTIAL_TEST_TIMEOUT_MS,
-      },
-    ),
+    apiRequest<{
+      ok: boolean;
+      status_code: number;
+      detail?: string;
+      model_source?: 'actual' | 'configured_fallback';
+    }>(`/api/admin/credentials/${encodeURIComponent(credentialId)}/test`, {
+      method: 'POST',
+      json: {},
+      timeoutMs: CREDENTIAL_TEST_TIMEOUT_MS,
+    }),
   toggleRotation: () =>
     apiRequest<{
       message?: string;
@@ -103,9 +106,9 @@ export const adminApi = {
     apiRequest<StatsDimensionResponse>(
       `/api/admin/stats/dimensions/${encodeURIComponent(dimension)}?${buildStatsSearchParams(query)}`,
     ),
-  statsRequestDetail: (requestId: number) =>
+  statsRequestDetail: (requestId: number, snapshot: { id: number; time: number }) =>
     apiRequest<StatsRequestRecord>(
-      `/api/admin/stats/requests/${encodeURIComponent(String(requestId))}`,
+      `/api/admin/stats/requests/${encodeURIComponent(String(requestId))}?snapshot_id=${encodeURIComponent(String(snapshot.id))}&snapshot_time=${encodeURIComponent(String(snapshot.time))}`,
     ),
 };
 
@@ -118,14 +121,14 @@ export const codebuddyOAuthApi = {
         auth_state?: string;
         success?: boolean;
         message?: string;
-      }>(path, { signal, timeoutMs: OAUTH_START_TIMEOUT_MS });
+      }>(path, { method: 'POST', signal, timeoutMs: OAUTH_START_TIMEOUT_MS });
     }
     return apiRequest<{
       verification_uri_complete?: string;
       auth_state?: string;
       success?: boolean;
       message?: string;
-    }>(path, { timeoutMs: OAUTH_START_TIMEOUT_MS });
+    }>(path, { method: 'POST', timeoutMs: OAUTH_START_TIMEOUT_MS });
   },
   pollAuth: (authState: string, signal?: AbortSignal) => {
     const options: {
@@ -160,7 +163,10 @@ export const codebuddyOAuthApi = {
 };
 
 export const openaiPlaygroundApi = {
-  models: () => apiRequest<ModelListResponse>('/api/admin/playground/openai/v1/models'),
+  models: () =>
+    apiRequest<ModelListResponse>('/api/admin/playground/openai/v1/models', {
+      timeoutMs: MODEL_LIST_TIMEOUT_MS,
+    }),
   /**
    * 直接使用 fetch，避免 apiRequest 先消费 body；调用方需要自行读取流式响应。
    * 仅将带 Bearer challenge 的 401 识别为本系统会话失效；上游凭证 401 交给调用方处理。

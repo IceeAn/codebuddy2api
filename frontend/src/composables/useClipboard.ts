@@ -8,6 +8,7 @@ import { useToast } from './useToast';
 export function useClipboard() {
   const toast = useToast();
   const copied = ref(false);
+  let copiedTimer: ReturnType<typeof setTimeout> | null = null;
 
   async function copy(text: string, successMsg = '已复制'): Promise<boolean> {
     try {
@@ -15,18 +16,26 @@ export function useClipboard() {
         await navigator.clipboard.writeText(text);
       } else {
         const textarea = document.createElement('textarea');
+        const previousFocus = document.activeElement as HTMLElement | null;
+        let appended = false;
         textarea.value = text;
         textarea.style.position = 'fixed';
         textarea.style.opacity = '0';
-        document.body.appendChild(textarea);
-        textarea.select();
-        const ok = document.execCommand('copy');
-        document.body.removeChild(textarea);
-        if (!ok) throw new Error('复制失败');
+        try {
+          document.body.appendChild(textarea);
+          appended = true;
+          textarea.select();
+          if (!document.execCommand('copy')) throw new Error('复制失败');
+        } finally {
+          if (appended) document.body.removeChild(textarea);
+          previousFocus?.focus();
+        }
       }
       copied.value = true;
-      setTimeout(() => {
+      if (copiedTimer !== null) clearTimeout(copiedTimer);
+      copiedTimer = setTimeout(() => {
         copied.value = false;
+        copiedTimer = null;
       }, 2000);
       toast.success(successMsg);
       return true;

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, provide, ref } from 'vue';
+import { computed, provide, shallowRef } from 'vue';
 
 export interface FormRule {
   required?: boolean;
@@ -36,15 +36,14 @@ const props = withDefaults(defineProps<Props>(), {
   requireMarkPlacement: 'right-hanging',
 });
 
-const items = ref<FormItemExpose[]>([]);
+const items = shallowRef<FormItemExpose[]>([]);
 
 function registerItem(item: FormItemExpose): void {
-  items.value.push(item);
+  items.value = [...items.value, item];
 }
 
 function unregisterItem(item: FormItemExpose): void {
-  const idx = items.value.indexOf(item);
-  items.value.splice(idx, 1);
+  items.value = items.value.filter((registered) => registered !== item);
 }
 
 provide('c-form-context', {

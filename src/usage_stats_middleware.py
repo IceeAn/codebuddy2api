@@ -15,8 +15,8 @@ logger = logging.getLogger(__name__)
 USAGE_STATS_CONTEXT_STATE_KEY = "usage_stats_context"
 
 
-class DroppedUsageEvents:
-    """记录当前进程因统计写入异常而丢失的请求数。"""
+class DroppedCompletionEvents:
+    """记录当前进程因统计完成阶段异常而丢失的请求数。"""
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
@@ -35,7 +35,7 @@ class DroppedUsageEvents:
             self._counts.clear()
 
 
-dropped_usage_events = DroppedUsageEvents()
+dropped_completion_events = DroppedCompletionEvents()
 
 
 class UsageStatsMiddleware:
@@ -103,5 +103,5 @@ class UsageStatsMiddleware:
                             await result
                 except Exception:
                     username = str(getattr(context, "username", "") or "")
-                    dropped_usage_events.record(username)
+                    dropped_completion_events.record(username)
                     logger.exception("持久化请求统计失败，已保留原始响应")

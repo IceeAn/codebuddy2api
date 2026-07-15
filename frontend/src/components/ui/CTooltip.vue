@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, useId } from 'vue';
 
 interface Props {
   content?: string;
@@ -24,35 +24,87 @@ const positioned = ref(false);
 const pinned = ref(false);
 const triggerRef = ref<HTMLElement | null>(null);
 const popoverRef = ref<HTMLElement | null>(null);
+const fallbackTabIndex = ref<0 | undefined>();
+const tooltipId = `c-tooltip-${useId().replace(/[^A-Za-z0-9_-]/g, '')}`;
 const positionStyle = ref<Record<string, string>>({
   left: '0px',
   top: '0px',
 });
 
 let showTimer: ReturnType<typeof setTimeout> | null = null;
+let hovered = false;
+let focused = false;
+let focusedTarget: HTMLElement | null = null;
+let describedElement: HTMLElement | null = null;
+let previousDescribedBy: string | null = null;
+let mounted = false;
 const viewportPadding = 8;
 const popoverGap = 4;
+const focusableDescendantSelector = [
+  'a[href]',
+  'area[href]',
+  'button:not(:disabled)',
+  'input:not(:disabled):not([type="hidden"])',
+  'select:not(:disabled)',
+  'textarea:not(:disabled)',
+  'summary',
+  'iframe',
+  'audio[controls]',
+  'video[controls]',
+  '[contenteditable]:not([contenteditable="false"])',
+  '[tabindex]:not([tabindex^="-"])',
+].join(',');
 
-function handleEnter(): void {
+function updateFallbackTabStop(): void {
+  fallbackTabIndex.value = triggerRef.value!.querySelector(focusableDescendantSelector)
+    ? undefined
+    : 0;
+}
+
+function scheduleShow(): void {
+  if (visible.value || showTimer !== null) return;
   showTimer = setTimeout(() => {
+    showTimer = null;
     void show();
   }, props.delay);
 }
 
-function handleLeave(): void {
+function cancelShowTimer(): void {
   if (showTimer !== null) {
     clearTimeout(showTimer);
     showTimer = null;
   }
-  if (!pinned.value) hide();
+}
+
+function handleEnter(): void {
+  hovered = true;
+  scheduleShow();
+}
+
+function handleLeave(): void {
+  hovered = false;
+  cancelShowTimer();
+  if (!focused && !pinned.value) hide();
+}
+
+function handleFocusIn(event: FocusEvent): void {
+  focused = true;
+  focusedTarget = event.target as HTMLElement;
+  scheduleShow();
+}
+
+function handleFocusOut(event: FocusEvent): void {
+  const nextTarget = event.relatedTarget;
+  if (nextTarget instanceof Node && triggerRef.value?.contains(nextTarget)) return;
+  focused = false;
+  focusedTarget = null;
+  cancelShowTimer();
+  if (!hovered && !pinned.value) hide();
 }
 
 function handleClick(): void {
   if (!props.clickable) return;
-  if (showTimer !== null) {
-    clearTimeout(showTimer);
-    showTimer = null;
-  }
+  cancelShowTimer();
   if (visible.value && pinned.value) {
     hide();
     return;
@@ -62,12 +114,12 @@ function handleClick(): void {
 }
 
 function handleKeydown(event: KeyboardEvent): void {
-  if (!props.clickable) return;
   if (event.key === 'Escape') {
+    cancelShowTimer();
     hide();
     return;
   }
-  if (event.key !== 'Enter' && event.key !== ' ') return;
+  if (!props.clickable || (event.key !== 'Enter' && event.key !== ' ')) return;
   event.preventDefault();
   handleClick();
 }
@@ -83,21 +135,52 @@ async function show(): Promise<void> {
   positioned.value = false;
   visible.value = true;
   await nextTick();
+  if (!mounted || !visible.value) return;
   updatePosition();
+  applyDescription();
   window.addEventListener('scroll', updatePosition, true);
   window.addEventListener('resize', updatePosition);
   if (props.clickable) window.addEventListener('pointerdown', handleOutsidePointer);
 }
 
 function hide(): void {
+  const shouldBlur = pinned.value;
   visible.value = false;
   positioned.value = false;
   pinned.value = false;
-  const activeElement = document.activeElement;
-  if (activeElement instanceof HTMLElement && triggerRef.value?.contains(activeElement)) {
-    activeElement.blur();
-  }
+  restoreDescription();
   removeListeners();
+  if (shouldBlur) {
+    const activeElement = document.activeElement;
+    if (activeElement instanceof HTMLElement && triggerRef.value?.contains(activeElement)) {
+      activeElement.blur();
+    }
+  }
+}
+
+function accessibleTrigger(): HTMLElement {
+  return (
+    focusedTarget ??
+    triggerRef.value?.querySelector<HTMLElement>(focusableDescendantSelector) ??
+    triggerRef.value!
+  );
+}
+
+function applyDescription(): void {
+  const target = accessibleTrigger();
+  describedElement = target;
+  previousDescribedBy = target.getAttribute('aria-describedby');
+  const ids = new Set((previousDescribedBy ?? '').split(/\s+/).filter(Boolean));
+  ids.add(tooltipId);
+  target.setAttribute('aria-describedby', Array.from(ids).join(' '));
+}
+
+function restoreDescription(): void {
+  if (!describedElement) return;
+  if (previousDescribedBy === null) describedElement.removeAttribute('aria-describedby');
+  else describedElement.setAttribute('aria-describedby', previousDescribedBy);
+  describedElement = null;
+  previousDescribedBy = null;
 }
 
 function removeListeners(): void {
@@ -108,9 +191,8 @@ function removeListeners(): void {
 
 /** 根据触发元素和浮层尺寸计算坐标，并限制在视口内。 */
 function updatePosition(): void {
-  const trigger = triggerRef.value;
-  const popover = popoverRef.value;
-  if (!trigger || !popover) return;
+  const trigger = triggerRef.value!;
+  const popover = popoverRef.value!;
 
   const triggerRect = trigger.getBoundingClientRect();
   const popoverRect = popover.getBoundingClientRect();
@@ -137,12 +219,16 @@ const placementClasses: Record<Placement, string> = {
 };
 const placementClass = computed(() => placementClasses[currentPlacement.value]);
 
+onMounted(() => {
+  mounted = true;
+  updateFallbackTabStop();
+});
+onUpdated(updateFallbackTabStop);
+
 onBeforeUnmount(() => {
-  if (showTimer !== null) {
-    clearTimeout(showTimer);
-    showTimer = null;
-  }
-  removeListeners();
+  mounted = false;
+  cancelShowTimer();
+  hide();
 });
 </script>
 
@@ -150,9 +236,12 @@ onBeforeUnmount(() => {
   <span
     ref="triggerRef"
     class="relative inline-flex"
+    :tabindex="fallbackTabIndex"
     :aria-expanded="clickable ? visible : undefined"
     @mouseenter="handleEnter"
     @mouseleave="handleLeave"
+    @focusin="handleFocusIn"
+    @focusout="handleFocusOut"
     @click="handleClick"
     @keydown="handleKeydown"
   >
@@ -161,6 +250,7 @@ onBeforeUnmount(() => {
       <Transition name="c-tooltip">
         <span
           v-if="visible"
+          :id="tooltipId"
           ref="popoverRef"
           :style="positionStyle"
           :class="[
@@ -168,6 +258,7 @@ onBeforeUnmount(() => {
             positioned ? '' : 'pointer-events-none opacity-0',
             placementClass,
           ]"
+          role="tooltip"
         >
           <slot name="content">{{ content }}</slot>
         </span>

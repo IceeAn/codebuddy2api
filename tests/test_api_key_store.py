@@ -25,10 +25,12 @@ class ApiKeyStoreTests(TempConfigMixin, unittest.TestCase):
         store = ApiKeyStore()
 
         blank = store.create_key("admin", " ")
-        long = store.create_key("admin", "x" * 100)
+        boundary = store.create_key("admin", "x" * 80)
+        with self.assertRaisesRegex(ValueError, "80"):
+            store.create_key("admin", "x" * 81)
 
         self.assertEqual(blank["name"], "API Key")
-        self.assertEqual(long["name"], "x" * 80)
+        self.assertEqual(boundary["name"], "x" * 80)
         self.assertTrue(blank["api_key"].startswith("sk-"))
         self.assertEqual(API_KEY_SECRET_BYTES, 40)
         self.assertEqual(len(blank["api_key"]), 57)

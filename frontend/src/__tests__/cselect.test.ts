@@ -513,4 +513,174 @@ describe('CSelect', () => {
     const filterInput = wrapper.find('.c-select-filter');
     expect(filterInput.element).toBe(document.activeElement);
   });
+
+  it('暴露 combobox、listbox、option 与选中态语义', async () => {
+    const wrapper = mount(CSelect, {
+      props: {
+        modelValue: 'b',
+        options: [
+          { label: 'A', value: 'a' },
+          { label: 'B', value: 'b' },
+        ],
+      },
+    });
+    const trigger = wrapper.get('.c-select-trigger');
+    expect(trigger.attributes('role')).toBe('combobox');
+    expect(trigger.attributes('aria-expanded')).toBe('false');
+    expect(trigger.attributes('aria-haspopup')).toBe('listbox');
+
+    await trigger.trigger('click');
+    expect(trigger.attributes('aria-expanded')).toBe('true');
+    const listbox = wrapper.get('[role="listbox"]');
+    expect(trigger.attributes('aria-controls')).toBe(listbox.attributes('id'));
+    const options = wrapper.findAll('[role="option"]');
+    expect(options.map((option) => option.attributes('aria-selected'))).toEqual(['false', 'true']);
+    expect(trigger.attributes('aria-activedescendant')).toBe(options[1].attributes('id'));
+  });
+
+  it('触发器支持方向键、Home/End、Enter/Space、Escape 和 Tab', async () => {
+    const wrapper = mount(CSelect, {
+      attachTo: document.body,
+      props: {
+        options: [
+          { label: 'A', value: 'a' },
+          { label: 'B', value: 'b' },
+          { label: 'C', value: 'c' },
+        ],
+      },
+    });
+    const trigger = wrapper.get('.c-select-trigger');
+    (trigger.element as HTMLButtonElement).focus();
+    await trigger.trigger('keydown', { key: 'ArrowDown' });
+    expect(wrapper.find('.c-select-panel').exists()).toBe(true);
+    await trigger.trigger('keydown', { key: 'End' });
+    await trigger.trigger('keydown', { key: 'Enter' });
+    expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual(['c']);
+
+    await trigger.trigger('keydown', { key: ' ' });
+    expect(wrapper.find('.c-select-panel').exists()).toBe(true);
+    await trigger.trigger('keydown', { key: 'Home' });
+    await trigger.trigger('keydown', { key: 'ArrowDown' });
+    await trigger.trigger('keydown', { key: 'ArrowUp' });
+    await trigger.trigger('keydown', { key: 'Escape' });
+    expect(wrapper.find('.c-select-panel').exists()).toBe(false);
+    expect(document.activeElement).toBe(trigger.element);
+
+    await trigger.trigger('keydown', { key: 'ArrowUp' });
+    expect(wrapper.find('.c-select-panel').exists()).toBe(true);
+    await trigger.trigger('keydown', { key: 'Tab' });
+    expect(wrapper.find('.c-select-panel').exists()).toBe(false);
+  });
+
+  it('筛选输入支持方向键和 Enter，并把活动项滚动到可见区域', async () => {
+    const scrollIntoView = vi.fn<(options?: ScrollIntoViewOptions) => void>();
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    const wrapper = mount(CSelect, {
+      props: {
+        filterable: true,
+        options: [
+          { label: 'Apple', value: 'a' },
+          { label: 'Banana', value: 'b' },
+          { label: 'Cherry', value: 'c' },
+        ],
+      },
+    });
+    await wrapper.get('.c-select-trigger').trigger('click');
+    const filter = wrapper.get('.c-select-filter');
+    expect(filter.attributes('role')).toBe('combobox');
+    await filter.setValue('a');
+    await filter.trigger('keydown', { key: 'ArrowDown' });
+    await filter.trigger('keydown', { key: 'End' });
+    await flushPromises();
+    expect(scrollIntoView).toHaveBeenCalled();
+    await filter.trigger('keydown', { key: 'Enter' });
+    expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual(['b']);
+
+    await wrapper.get('.c-select-trigger').trigger('click');
+    await wrapper.get('.c-select-filter').setValue('zzz');
+    await wrapper.get('.c-select-filter').trigger('keydown', { key: 'Enter' });
+    expect(wrapper.find('.c-select-panel').exists()).toBe(true);
+  });
+
+  it('筛选选择后把焦点恢复到触发器', async () => {
+    const wrapper = mount(CSelect, {
+      attachTo: document.body,
+      props: {
+        filterable: true,
+        options: [
+          { label: 'Apple', value: 'a' },
+          { label: 'Banana', value: 'b' },
+        ],
+      },
+    });
+    const trigger = wrapper.get('.c-select-trigger');
+
+    await trigger.trigger('click');
+    const filter = wrapper.get('.c-select-filter');
+    await filter.trigger('keydown', { key: 'Enter' });
+    await wrapper.vm.$nextTick();
+    expect(document.activeElement).toBe(trigger.element);
+
+    await trigger.trigger('click');
+    await wrapper.get('.c-select-option').trigger('click');
+    await wrapper.vm.$nextTick();
+    expect(document.activeElement).toBe(trigger.element);
+  });
+
+  it('空选项和关闭状态下的键盘边界不会产生无效选择', async () => {
+    const wrapper = mount(CSelect, { props: { options: [] } });
+    const trigger = wrapper.get('.c-select-trigger');
+    await trigger.trigger('keydown', { key: 'Home' });
+    await trigger.trigger('keydown', { key: 'End' });
+    await trigger.trigger('keydown', { key: 'Escape' });
+    await trigger.trigger('keydown', { key: 'Tab' });
+    await trigger.trigger('keydown', { key: 'ArrowDown' });
+    await trigger.trigger('keydown', { key: 'ArrowDown' });
+    await trigger.trigger('keydown', { key: 'Home' });
+    await trigger.trigger('keydown', { key: 'End' });
+    await trigger.trigger('keydown', { key: 'Enter' });
+    expect(wrapper.emitted('update:modelValue')).toBeFalsy();
+  });
+
+  it('disabled 时忽略程序化键盘操作', async () => {
+    const wrapper = mount(CSelect, {
+      props: { disabled: true, options: [{ label: 'A', value: 'a' }] },
+    });
+    await wrapper.get('.c-select-trigger').trigger('keydown', { key: 'ArrowDown' });
+    expect(wrapper.find('.c-select-panel').exists()).toBe(false);
+  });
+
+  it('筛选输入保留空格输入，并处理组件内外焦点切换', async () => {
+    const wrapper = mount(CSelect, {
+      attachTo: document.body,
+      props: { filterable: true, options: [{ label: 'A B', value: 'ab' }] },
+    });
+    const trigger = wrapper.get('.c-select-trigger');
+    await trigger.trigger('click');
+    const filter = wrapper.get('.c-select-filter');
+    await filter.trigger('keydown', { key: ' ' });
+    await wrapper.trigger('focusout', { relatedTarget: trigger.element });
+    await wrapper.trigger('focusout', { relatedTarget: document.body });
+    expect(wrapper.find('.c-select-panel').exists()).toBe(true);
+  });
+
+  it('选项变化时按打开状态同步活动项，鼠标悬停也更新活动项', async () => {
+    const wrapper = mount(CSelect, { props: { options: [{ label: 'A', value: 'a' }] } });
+    await wrapper.setProps({ options: [{ label: 'B', value: 'b' }] });
+    await wrapper.get('.c-select-trigger').trigger('click');
+    await wrapper.setProps({
+      options: [
+        { label: 'B', value: 'b' },
+        { label: 'C', value: 'c' },
+      ],
+    });
+    const options = wrapper.findAll('.c-select-option');
+    await options[1].trigger('mouseenter');
+    expect(wrapper.get('.c-select-trigger').attributes('aria-activedescendant')).toBe(
+      options[1].attributes('id'),
+    );
+  });
 });

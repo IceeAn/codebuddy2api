@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, inject, onMounted, ref, useId, watch } from 'vue';
 import { Check } from '@lucide/vue';
+import { formItemControlKey } from './formContext';
 
 interface Props {
+  id?: string;
   modelValue?: boolean;
   disabled?: boolean;
   indeterminate?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
+  id: undefined,
   modelValue: false,
   disabled: false,
   indeterminate: false,
@@ -19,9 +22,21 @@ const emit = defineEmits<{
 }>();
 
 const isActive = computed(() => props.modelValue || props.indeterminate);
+const inputRef = ref<HTMLInputElement | null>(null);
+const formItem = inject(formItemControlKey, null);
+const ownId = `c-checkbox-${useId().replace(/[^A-Za-z0-9_-]/g, '')}`;
+const controlId = computed(() => props.id ?? formItem?.controlId ?? ownId);
+
+function syncIndeterminate(): void {
+  inputRef.value!.indeterminate = props.indeterminate;
+}
+
+onMounted(syncIndeterminate);
+watch(() => props.indeterminate, syncIndeterminate, { flush: 'post' });
 
 function handleChange(event: Event): void {
   emit('update:modelValue', (event.currentTarget as HTMLInputElement).checked);
+  formItem?.onInput();
 }
 </script>
 
@@ -33,11 +48,18 @@ function handleChange(event: Event): void {
     ]"
   >
     <input
+      :id="controlId"
+      ref="inputRef"
       type="checkbox"
       class="peer sr-only"
       :checked="modelValue"
       :disabled="disabled"
+      :aria-checked="indeterminate ? 'mixed' : modelValue"
+      :aria-labelledby="formItem?.labelId.value"
+      :aria-invalid="formItem?.invalid.value || undefined"
+      :aria-describedby="formItem?.describedBy.value"
       @change="handleChange"
+      @blur="formItem?.onBlur"
     />
     <span
       :class="[

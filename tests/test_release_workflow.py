@@ -48,6 +48,17 @@ class ReleaseWorkflowTests(unittest.TestCase):
         resolve_job = self.workflow.split("\n  backend:\n", maxsplit=1)[0]
         self.assertIn("- name: Validate release versions", resolve_job)
 
+    def test_release_package_uses_tag_commit_timestamp(self):
+        timestamp = self._step("Resolve release archive timestamp")
+        self.assertIn('git show -s --format=%ct "${TAG}^{commit}"', timestamp)
+        self.assertIn('echo "source_date_epoch=${source_date_epoch}"', timestamp)
+
+        build = self._step("Build release package")
+        self.assertIn(
+            "SOURCE_DATE_EPOCH: ${{ steps.release_archive.outputs.source_date_epoch }}",
+            build,
+        )
+
     def test_scans_the_pushed_digest_and_does_not_rebuild_during_publish(self):
         scan_build = self._step("Build and push Docker image by digest")
         self.assertNotIn("tags:", scan_build)
@@ -118,6 +129,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("create_args+=(--latest)", publish_release)
         self.assertIn("create_args+=(--latest=false)", publish_release)
         self.assertIn("edit_args+=(--latest)", publish_release)
+        self.assertIn("edit_args+=(--latest=false)", publish_release)
 
     def test_release_notes_api_has_authentication(self):
         comparison = self._step("Resolve previous stable tag")

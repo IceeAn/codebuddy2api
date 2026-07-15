@@ -1,4 +1,4 @@
-import type { SettingsResponse } from '../types';
+import type { SettingField, SettingsResponse } from '../types';
 
 interface ApplySettingsOptions {
   force?: boolean;
@@ -12,8 +12,40 @@ export function createSettingsFormController(
   form: Record<string, string | number | boolean | null>,
   tagValues: Record<string, string[]>,
 ) {
-  let dirty = false;
   let editVersion = 0;
+  let currentFields: SettingField[] = [];
+  let baseline: string | null = null;
+
+  function snapshot(): string {
+    return JSON.stringify(
+      currentFields.map((field) => [
+        field.key,
+        field.type,
+        field.type === 'tags' ? [...(tagValues[field.key] || [])] : form[field.key],
+      ]),
+    );
+  }
+
+  function isDirty(): boolean {
+    return baseline !== null && snapshot() !== baseline;
+  }
+
+  function resetBaseline(): void {
+    baseline = snapshot();
+  }
+
+  function updateBaseline(data: SettingsResponse): void {
+    currentFields = [...data.fields];
+    baseline = JSON.stringify(
+      data.fields.map((field) => [
+        field.key,
+        field.type,
+        field.type === 'tags'
+          ? parseTags(data.settings[field.key], field.separator || ',')
+          : (data.settings[field.key] ?? (field.nullable ? null : '')),
+      ]),
+    );
+  }
 
   /**
    * 按 dirty 状态应用服务端设置；force 用于保存结果或显式刷新。
@@ -21,20 +53,24 @@ export function createSettingsFormController(
   function applySettings(
     data: SettingsResponse | null | undefined,
     options: ApplySettingsOptions = {},
-  ): void {
-    if (!data) return;
-    if (dirty && !options.force) return;
+  ): boolean {
+    if (!data) return false;
+    if (isDirty() && !options.force) return false;
     fillFields(form, tagValues, data);
-    if (options.force) dirty = false;
+    currentFields = [...data.fields];
+    resetBaseline();
+    return true;
   }
 
   return {
     applySettings,
     markDirty: () => {
-      dirty = true;
       editVersion += 1;
     },
     getEditVersion: () => editVersion,
+    isDirty,
+    resetBaseline,
+    updateBaseline,
   };
 }
 

@@ -19,6 +19,16 @@ const emit = defineEmits<{
 
 const inputValue = ref('');
 
+function appendUniqueTags(candidates: string[]): void {
+  const seen = new Set(props.modelValue);
+  const additions = candidates.filter((tag) => {
+    if (seen.has(tag)) return false;
+    seen.add(tag);
+    return true;
+  });
+  if (additions.length > 0) emit('update:modelValue', [...props.modelValue, ...additions]);
+}
+
 function onInput(event: Event): void {
   const input = event.target as HTMLInputElement;
   const value = input.value;
@@ -37,15 +47,15 @@ function onInput(event: Event): void {
     .map((segment) => segment.trim())
     .filter(Boolean);
   if (tags.length > 0) {
-    emit('update:modelValue', [...props.modelValue, ...tags]);
+    appendUniqueTags(tags);
   }
 }
 
 function commit(): void {
   const trimmed = inputValue.value.trim();
   if (!trimmed) return;
-  emit('update:modelValue', [...props.modelValue, trimmed]);
   inputValue.value = '';
+  appendUniqueTags([trimmed]);
 }
 
 function onKeyup(event: KeyboardEvent): void {
@@ -76,7 +86,6 @@ function removeAt(index: number): void {
       <button
         type="button"
         class="c-dynamic-tags-remove -mr-0.5 inline-flex shrink-0 items-center justify-center text-muted hover:text-text"
-        tabindex="-1"
         :aria-label="`删除标签 ${tag}`"
         @click="removeAt(index)"
       >

@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 
 from src.api_key_store import api_key_store
 from src.auth_types import SESSION_COOKIE_NAME
-from src.private_response import PrivateNoStoreMiddleware
+from src.private_response import PrivateNoStoreMiddleware, _is_secure_scope
 from src.session_store import session_store
 from tests.helpers import TempConfigMixin, configure_users_file
 from web import app
@@ -31,6 +31,7 @@ class PrivateNoStoreResponseTests(TempConfigMixin, unittest.IsolatedAsyncioTestC
         content=None,
         headers=None,
         raise_app_exceptions=True,
+        base_url="http://localhost",
     ):
         request_headers = dict(headers or {})
         if api_key:
@@ -41,7 +42,7 @@ class PrivateNoStoreResponseTests(TempConfigMixin, unittest.IsolatedAsyncioTestC
             app=app,
             raise_app_exceptions=raise_app_exceptions,
         )
-        async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+        async with httpx.AsyncClient(transport=transport, base_url=base_url) as client:
             return await client.request(
                 method,
                 path,
@@ -94,6 +95,53 @@ class PrivateNoStoreResponseTests(TempConfigMixin, unittest.IsolatedAsyncioTestC
                 self.assertEqual(response.status_code, expected_status)
                 self.assertEqual(response.headers["Cache-Control"], "private, no-store")
 
+    async def test_successful_session_auth_refreshes_cookie_on_success_error_and_redirect(self):
+        responses = [
+            await self._request("GET", "/api/admin/api-keys", session=True),
+            await self._request("DELETE", "/api/admin/api-keys/missing", session=True),
+            await self._request("GET", "/api/admin/api-keys/", session=True),
+        ]
+
+        self.assertEqual([response.status_code for response in responses], [200, 404, 307])
+        for response in responses:
+            with self.subTest(status=response.status_code):
+                cookie = response.headers["Set-Cookie"]
+                self.assertIn(f"{SESSION_COOKIE_NAME}={self.session_id}", cookie)
+                self.assertIn("Max-Age=604800", cookie)
+                self.assertIn("HttpOnly", cookie)
+                self.assertIn("SameSite=lax", cookie)
+
+    async def test_session_cookie_refresh_covers_streaming_and_trusted_https_scope(self):
+        async def chunks():
+            yield b"data: [DONE]\n\n"
+
+        stream = StreamingResponse(chunks(), media_type="text/event-stream")
+        with mock.patch(
+            "src.openai_router.chat_completions",
+            new=mock.AsyncMock(return_value=stream),
+        ):
+            response = await self._request(
+                "POST",
+                "/api/admin/playground/openai/v1/chat/completions",
+                session=True,
+                json={"messages": [{"role": "user", "content": "hello"}], "stream": True},
+                base_url="https://localhost",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Max-Age=604800", response.headers["Set-Cookie"])
+        self.assertIn("Secure", response.headers["Set-Cookie"])
+
+    async def test_invalid_session_does_not_refresh_cookie(self):
+        response = await self._request(
+            "GET",
+            "/api/admin/api-keys",
+            headers={"Cookie": f"{SESSION_COOKIE_NAME}=invalid"},
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertNotIn("Set-Cookie", response.headers)
+
     async def test_private_method_not_allowed_response_is_private_no_store(self):
         response = await self._request(
             "POST",
@@ -105,17 +153,35 @@ class PrivateNoStoreResponseTests(TempConfigMixin, unittest.IsolatedAsyncioTestC
         self.assertEqual(response.headers["Allow"], "GET")
         self.assertEqual(response.headers["Cache-Control"], "private, no-store")
 
-    async def test_public_sensitive_routes_mark_validation_and_callback_responses(self):
+    async def test_public_sensitive_routes_mark_validation_and_logout_responses(self):
         invalid_login = await self._request("POST", "/auth/login", json={})
         logout = await self._request("POST", "/auth/logout", session=True)
-        callback = await self._request("GET", "/codebuddy/auth/callback?code=code")
 
         self.assertEqual(invalid_login.status_code, 422)
         self.assertEqual(invalid_login.headers["Cache-Control"], "private, no-store")
         self.assertEqual(logout.status_code, 200)
         self.assertEqual(logout.headers["Cache-Control"], "private, no-store")
-        self.assertEqual(callback.status_code, 200)
-        self.assertEqual(callback.headers["Cache-Control"], "private, no-store")
+
+    async def test_login_body_over_8_kib_is_rejected_before_validation(self):
+        response = await self._request(
+            "POST",
+            "/auth/login",
+            content=b"x" * (8 * 1024 + 1),
+            headers={"Content-Type": "application/json"},
+        )
+
+        self.assertEqual(response.status_code, 413)
+        self.assertEqual(response.headers["Cache-Control"], "private, no-store")
+
+    async def test_removed_oauth_callback_returns_natural_404_without_echoing_parameters(self):
+        callback = await self._request(
+            "GET",
+            "/codebuddy/auth/callback?code=sensitive-code&state=sensitive-state",
+        )
+
+        self.assertEqual(callback.status_code, 404)
+        self.assertNotIn("sensitive-code", callback.text)
+        self.assertNotIn("sensitive-state", callback.text)
 
     async def test_malformed_json_responses_are_private_no_store(self):
         cases = [
@@ -150,6 +216,7 @@ class PrivateNoStoreResponseTests(TempConfigMixin, unittest.IsolatedAsyncioTestC
 
         self.assertEqual(response.status_code, 500)
         self.assertEqual(response.headers["Cache-Control"], "private, no-store")
+        self.assertIn("Max-Age=604800", response.headers["Set-Cookie"])
 
     async def test_public_health_response_is_not_forced_to_no_store(self):
         response = await self._request("GET", "/health")
@@ -159,13 +226,15 @@ class PrivateNoStoreResponseTests(TempConfigMixin, unittest.IsolatedAsyncioTestC
 
     async def test_only_private_slash_redirect_is_private_no_store(self):
         private_redirect = await self._request(
-            "GET",
-            "/codebuddy/auth/callback/?code=secret&state=s1",
+            "POST",
+            "/codebuddy/auth/poll/",
+            session=True,
+            json={"auth_state": "state"},
         )
         public_redirect = await self._request("GET", "/health/")
 
         self.assertEqual(private_redirect.status_code, 307)
-        self.assertIn("code=secret&state=s1", private_redirect.headers["Location"])
+        self.assertEqual(private_redirect.headers["Location"], "http://localhost/codebuddy/auth/poll")
         self.assertEqual(
             private_redirect.headers["Cache-Control"],
             "private, no-store",
@@ -173,8 +242,32 @@ class PrivateNoStoreResponseTests(TempConfigMixin, unittest.IsolatedAsyncioTestC
         self.assertEqual(public_redirect.status_code, 307)
         self.assertNotIn("Cache-Control", public_redirect.headers)
 
+        no_cookie_redirect = await self._request(
+            "POST",
+            "/codebuddy/auth/poll/",
+            headers={"Cookie": "other=value; malformed"},
+            json={"auth_state": "state"},
+        )
+        invalid_cookie_redirect = await self._request(
+            "POST",
+            "/codebuddy/auth/poll/",
+            headers={"Cookie": f"{SESSION_COOKIE_NAME}=invalid"},
+            json={"auth_state": "state"},
+        )
+        self.assertNotIn("Set-Cookie", no_cookie_redirect.headers)
+        self.assertNotIn("Set-Cookie", invalid_cookie_redirect.headers)
+
 
 class PrivateNoStoreMiddlewareTests(unittest.IsolatedAsyncioTestCase):
+    def test_secure_scope_recognizes_direct_https_and_plain_http(self):
+        self.assertTrue(_is_secure_scope({"type": "http", "scheme": "https", "headers": []}))
+        self.assertFalse(_is_secure_scope({"type": "http", "scheme": "http", "headers": []}))
+        self.assertFalse(_is_secure_scope({
+            "type": "http",
+            "scheme": "http",
+            "headers": [(b"x-forwarded-proto", b"https")],
+        }))
+
     async def test_non_http_scope_passes_through_unchanged(self):
         received_scopes = []
 

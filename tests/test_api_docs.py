@@ -73,7 +73,7 @@ class ApiDocumentationTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
 
         session_operations = (
             ("/auth/session", "get"),
-            ("/codebuddy/auth/start", "get"),
+            ("/codebuddy/auth/start", "post"),
             ("/codebuddy/auth/poll", "post"),
             ("/codebuddy/auth/cancel", "post"),
             ("/api/admin/status", "get"),

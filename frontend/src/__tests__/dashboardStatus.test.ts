@@ -19,12 +19,16 @@ describe('describeServiceStatus', () => {
 
   it('非 healthy + 无错误 时返回"异常"', () => {
     expect(describeServiceStatus('degraded', false)).toBe('异常');
-    expect(describeServiceStatus(undefined, false)).toBe('异常');
+    expect(describeServiceStatus(undefined, false, false)).toBe('异常');
+  });
+
+  it('查询尚未取得数据时显示加载中', () => {
+    expect(describeServiceStatus(undefined, false, true)).toBe('加载中');
   });
 
   it('非 healthy + 有错误 时返回"加载失败"', () => {
     expect(describeServiceStatus('degraded', true)).toBe('加载失败');
-    expect(describeServiceStatus(undefined, true)).toBe('加载失败');
+    expect(describeServiceStatus(undefined, true, true)).toBe('加载失败');
   });
 });
 

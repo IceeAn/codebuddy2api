@@ -18,15 +18,19 @@ from src.codebuddy_auth_router import router as codebuddy_auth_router
 from src.frontend_router import router as frontend_router
 from src.openai_router import external_openai_router, playground_openai_router
 from src.private_response import PrivateNoStoreFastAPI, PrivateNoStoreRoute
+from src.request_limits import RequestBodyLimitMiddleware
 from src.stats_router import router as stats_router
 from src.stream_service import UpstreamAPIError, lifecycle_manager
 from src.usage_stats_store import usage_stats_retention_manager
 from src.users_store import validate_configured_users_file
+from src.uvicorn_limits import to_uvicorn_limit_concurrency
 
 from config import (
     get_allowed_hosts,
     get_allowed_origins,
     get_log_level,
+    get_max_concurrent_requests,
+    get_max_request_body_bytes,
     get_server_host,
     get_server_port,
     initialize_database,
@@ -68,6 +72,11 @@ app = PrivateNoStoreFastAPI(
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
+)
+app.add_middleware(
+    RequestBodyLimitMiddleware,
+    max_body_bytes=get_max_request_body_bytes(),
+    login_max_body_bytes=8 * 1024,
 )
 docs_router = APIRouter(route_class=PrivateNoStoreRoute)
 
@@ -185,30 +194,16 @@ async def health_check():
     return {"status": "healthy", "service": "codebuddy2api"}
 
 
-@app.get("/", include_in_schema=False)
-async def root():
-    """根路径信息"""
-    return {
-        "service": "CodeBuddy2API",
-        "version": APP_VERSION,
-        "description": "CodeBuddy API proxy with OpenAI-compatible interface",
-        "endpoints": {
-            "models": "/openai/v1/models",
-            "chat": "/openai/v1/chat/completions",
-            "auth_start": "/codebuddy/auth/start",
-            "auth_poll": "/codebuddy/auth/poll",
-            "auth_cancel": "/codebuddy/auth/cancel",
-            "auth_callback": "/codebuddy/auth/callback",
-            "admin": "/api/admin"
-        }
-    }
-
-
 def run_server():
     import uvicorn
 
     port = get_server_port()
     host = get_server_host()
+    log_level = get_log_level().lower()
+    max_concurrent_requests = get_max_concurrent_requests()
+    uvicorn_limit_concurrency = to_uvicorn_limit_concurrency(
+        max_concurrent_requests
+    )
 
     logger.info("=" * 60)
     logger.info("Starting CodeBuddy2API")
@@ -233,9 +228,11 @@ def run_server():
         app,
         host=host,
         port=port,
-        log_level="info",
+        log_level=log_level,
         access_log=False,
-        use_colors=True,
+        use_colors=None,
+        server_header=False,
+        limit_concurrency=uvicorn_limit_concurrency,
     )
 
 

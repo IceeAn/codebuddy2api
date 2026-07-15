@@ -7,8 +7,15 @@ from src.auth_types import AuthenticatedUser
 from fastapi import HTTPException
 
 import src.codebuddy_oauth as oauth
-from src.codebuddy_auth_router import cancel_auth, oauth_callback, poll_for_token, start_device_auth
-from src.codebuddy_oauth import AuthStateStore, CodeBuddyAuthClient, CodeBuddyTokenSaver, TokenParser
+from src.codebuddy_auth_router import cancel_auth, poll_for_token, start_device_auth
+from src.codebuddy_oauth import (
+    AuthStateStore,
+    AuthStartLimitError,
+    CodeBuddyAuthClient,
+    CodeBuddyTokenSaver,
+    TokenParser,
+    is_safe_external_auth_url,
+)
 
 
 def jwt_with_payload(payload):
@@ -36,12 +43,72 @@ class FakeTokenResponse:
 
 
 class AuthStateStoreTests(unittest.TestCase):
+    def register_state(self, store, state, user):
+        reservation = store.begin_start(user)
+        self.assertTrue(store.finish_start(reservation, state, user))
+
+    def test_auth_state_ttl_is_ten_minutes(self):
+        self.assertEqual(oauth.AUTH_STATE_TTL_SECONDS, 600)
+
+    def test_start_reservations_limit_each_user_to_three_active_flows(self):
+        store = AuthStateStore(max_active_per_user=3, max_start_attempts=100)
+        user = AuthenticatedUser(username="alice", source="session_cookie")
+
+        with mock.patch("src.codebuddy_oauth.time.time", return_value=100):
+            reservations = [store.begin_start(user) for _ in range(3)]
+            with self.assertRaises(AuthStartLimitError) as raised:
+                store.begin_start(user)
+
+        self.assertEqual(raised.exception.retry_after, 600)
+        store.cancel_start(reservations[0])
+        with mock.patch("src.codebuddy_oauth.time.time", return_value=101):
+            self.assertTrue(store.begin_start(user))
+
+    def test_start_rate_limit_counts_all_attempts_and_returns_retry_after(self):
+        store = AuthStateStore(max_active_per_user=100, max_start_attempts=5, start_window_seconds=60)
+        user = AuthenticatedUser(username="alice", source="session_cookie")
+
+        with mock.patch("src.codebuddy_oauth.time.time", return_value=100):
+            for _ in range(5):
+                reservation = store.begin_start(user)
+                store.cancel_start(reservation)
+            with self.assertRaises(AuthStartLimitError) as raised:
+                store.begin_start(user)
+
+        self.assertEqual(raised.exception.retry_after, 60)
+        with mock.patch("src.codebuddy_oauth.time.time", return_value=160):
+            reservation = store.begin_start(user)
+        self.assertTrue(reservation)
+
+    def test_start_reservation_commits_state_atomically_and_rejects_duplicates(self):
+        store = AuthStateStore()
+        user = AuthenticatedUser(username="alice", source="session_cookie")
+        other = AuthenticatedUser(username="bob", source="session_cookie")
+        reservation = store.begin_start(user)
+
+        self.assertTrue(store.finish_start(reservation, "state", user))
+        duplicate = store.begin_start(other)
+        self.assertFalse(store.finish_start(duplicate, "state", other))
+        self.assertTrue(store.validate_owner("state", user))
+        self.assertFalse(store.validate_owner("state", other))
+        self.assertFalse(store.finish_start("missing", "other-state", user))
+
+    def test_cleanup_removes_expired_start_reservations(self):
+        store = AuthStateStore(ttl_seconds=10)
+        user = AuthenticatedUser(username="alice", source="session_cookie")
+        with mock.patch("src.codebuddy_oauth.time.time", return_value=100):
+            reservation = store.begin_start(user)
+
+        store.cleanup_expired(111)
+
+        self.assertNotIn(reservation, store._starting)
+
     def test_auth_state_store_validates_same_owner_and_rejects_other_user(self):
         store = AuthStateStore(ttl_seconds=60)
         owner = AuthenticatedUser(username="alice", source="session_cookie")
         other = AuthenticatedUser(username="bob", source="session_cookie")
 
-        store.remember("state", owner)
+        self.register_state(store, "state", owner)
 
         self.assertTrue(store.validate_owner("state", owner))
         self.assertFalse(store.validate_owner("state", other))
@@ -52,7 +119,7 @@ class AuthStateStoreTests(unittest.TestCase):
         user = AuthenticatedUser(username="alice", source="session_cookie")
 
         with mock.patch("src.codebuddy_oauth.time.time", return_value=100):
-            store.remember("state", user)
+            self.register_state(store, "state", user)
 
         with mock.patch("src.codebuddy_oauth.time.time", return_value=160):
             self.assertTrue(store.validate_owner("state", user))
@@ -64,19 +131,20 @@ class AuthStateStoreTests(unittest.TestCase):
         store = AuthStateStore()
         owner = AuthenticatedUser(username="alice", source="session_cookie")
         other = AuthenticatedUser(username="bob", source="session_cookie")
-        store.remember("state", owner)
+        self.register_state(store, "state", owner)
 
         self.assertTrue(store.consume("state", owner))
 
         self.assertFalse(store.validate_owner("state", owner))
-        self.assertFalse(store.remember("state", other))
+        duplicate = store.begin_start(other)
+        self.assertFalse(store.finish_start(duplicate, "state", other))
         self.assertFalse(store.consume("state", owner))
 
     def test_auth_state_can_only_be_consumed_by_its_owner(self):
         store = AuthStateStore()
         owner = AuthenticatedUser(username="alice", source="session_cookie")
         other = AuthenticatedUser(username="bob", source="session_cookie")
-        store.remember("state", owner)
+        self.register_state(store, "state", owner)
 
         self.assertFalse(store.consume("state", other))
         self.assertTrue(store.validate_owner("state", owner))
@@ -93,63 +161,108 @@ class AuthStateStoreTests(unittest.TestCase):
         other = AuthenticatedUser(username="bob", source="session_cookie")
 
         with mock.patch("src.codebuddy_oauth.time.time", return_value=100):
-            store.remember("state", owner)
+            self.register_state(store, "state", owner)
         with mock.patch("src.codebuddy_oauth.time.time", return_value=120):
             self.assertTrue(store.consume("state", owner))
         with mock.patch("src.codebuddy_oauth.time.time", return_value=180):
-            self.assertFalse(store.remember("state", other))
+            duplicate = store.begin_start(other)
+            self.assertFalse(store.finish_start(duplicate, "state", other))
         with mock.patch("src.codebuddy_oauth.time.time", return_value=181):
-            self.assertTrue(store.remember("state", other))
+            self.register_state(store, "state", other)
 
     def test_auth_state_store_rejects_duplicate_without_overwriting_owner(self):
         store = AuthStateStore()
         first_owner = AuthenticatedUser(username="alice", source="session_cookie")
         second_owner = AuthenticatedUser(username="bob", source="session_cookie")
 
-        self.assertTrue(store.remember("state", first_owner))
-        self.assertFalse(store.remember("state", second_owner))
+        self.register_state(store, "state", first_owner)
+        duplicate = store.begin_start(second_owner)
+        self.assertFalse(store.finish_start(duplicate, "state", second_owner))
 
         self.assertTrue(store.validate_owner("state", first_owner))
         self.assertFalse(store.validate_owner("state", second_owner))
 
+    def test_legacy_remember_api_is_removed(self):
+        self.assertFalse(hasattr(AuthStateStore(), "remember"))
+        self.assertFalse(hasattr(oauth, "remember_auth_state"))
+
 
 class CodeBuddyAuthClientTests(unittest.IsolatedAsyncioTestCase):
-    async def test_oauth_http_clients_ignore_environment_proxy_settings(self):
-        created_kwargs = []
+    async def test_oauth_client_accepts_async_shared_client_factory(self):
+        shared_client = mock.Mock()
+        factory = mock.AsyncMock(return_value=shared_client)
 
+        client = await CodeBuddyAuthClient(http_client_factory=factory)._get_http_client()
+
+        self.assertIs(client, shared_client)
+        factory.assert_awaited_once_with()
+    def test_auth_url_allowlist_accepts_only_absolute_http_and_https_without_userinfo(self):
+        self.assertTrue(is_safe_external_auth_url("https://codebuddy.example/auth?state=1"))
+        self.assertTrue(is_safe_external_auth_url("http://127.0.0.1:8080/auth"))
+
+        for value in (
+            "javascript:alert(1)",
+            "data:text/html,unsafe",
+            "/relative/auth",
+            "//codebuddy.example/auth",
+            "https://user:password@codebuddy.example/auth",
+            "https://codebuddy.example/\nunsafe",
+            "https://codebuddy.example:invalid/auth",
+            " https://codebuddy.example/auth",
+            "",
+            None,
+        ):
+            with self.subTest(value=value):
+                self.assertFalse(is_safe_external_auth_url(value))
+
+    async def test_request_state_rejects_unsafe_auth_url_before_returning_state(self):
+        for auth_url in (
+            "javascript:alert(document.domain)",
+            "data:text/html,unsafe",
+            "/relative/auth",
+            "https://user:password@codebuddy.example/auth",
+        ):
+            with self.subTest(auth_url=auth_url):
+                fake_client = mock.Mock()
+                fake_client.post = mock.AsyncMock(return_value=FakeAuthStateResponse({
+                    "code": 0,
+                    "data": {"state": "must-not-register", "authUrl": auth_url},
+                }))
+
+                result = await CodeBuddyAuthClient()._request_state(fake_client, {"X-Test": "1"})
+
+                self.assertEqual(result, {"auth_state": None, "auth_url": None})
+
+    async def test_oauth_reuses_injected_shared_client_without_connection_close(self):
         class FakeAsyncClient:
-            responses = [
+            def __init__(self):
+                self.responses = [
                 FakeAuthStateResponse({
                     "code": 0,
                     "data": {"state": "state-1", "authUrl": "https://codebuddy.example/auth"},
                 }),
                 FakeTokenResponse({"code": 11217, "msg": "login ing..."}),
-            ]
+                ]
+                self.requests = []
 
-            def __init__(self, **kwargs):
-                created_kwargs.append(kwargs)
-
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, _exc_type, _exc, _tb):
-                return False
-
-            async def post(self, *_args, **_kwargs):
+            async def post(self, *_args, **kwargs):
+                self.requests.append(kwargs)
                 return self.responses.pop(0)
 
-            async def get(self, *_args, **_kwargs):
+            async def get(self, *_args, **kwargs):
+                self.requests.append(kwargs)
                 return self.responses.pop(0)
 
-        client = CodeBuddyAuthClient()
+        shared_client = FakeAsyncClient()
+        client = CodeBuddyAuthClient(http_client_factory=lambda: shared_client)
 
-        with mock.patch("src.codebuddy_oauth.httpx.AsyncClient", FakeAsyncClient):
-            await client.start_auth()
-            await client.poll_status("state-1")
+        start_result = await client.start_auth()
+        await client.poll_status("state-1")
 
-        self.assertEqual(len(created_kwargs), 2)
-        for kwargs in created_kwargs:
-            self.assertIs(kwargs.get("trust_env"), False)
+        self.assertEqual(start_result["expires_in"], 600)
+        self.assertEqual(len(shared_client.requests), 2)
+        for request in shared_client.requests:
+            self.assertNotIn("Connection", request["headers"])
 
     async def test_each_start_auth_call_requests_state_only_once(self):
         post_count = 0
@@ -175,11 +288,10 @@ class CodeBuddyAuthClientTests(unittest.IsolatedAsyncioTestCase):
                     },
                 })
 
-        client = CodeBuddyAuthClient()
-
-        with mock.patch("src.codebuddy_oauth.httpx.AsyncClient", FakeAsyncClient):
-            first_result = await client.start_auth()
-            second_result = await client.start_auth()
+        shared_client = FakeAsyncClient()
+        client = CodeBuddyAuthClient(http_client_factory=lambda: shared_client)
+        first_result = await client.start_auth()
+        second_result = await client.start_auth()
 
         self.assertTrue(first_result["success"])
         self.assertTrue(second_result["success"])
@@ -188,7 +300,7 @@ class CodeBuddyAuthClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(post_count, 2)
 
     async def test_start_auth_reports_incomplete_upstream_response(self):
-        client = CodeBuddyAuthClient()
+        client = CodeBuddyAuthClient(http_client_factory=lambda: mock.Mock())
 
         with mock.patch.object(
             client,
@@ -204,16 +316,16 @@ class CodeBuddyAuthClientTests(unittest.IsolatedAsyncioTestCase):
         })
 
     async def test_start_auth_maps_client_exception(self):
-        class BrokenAsyncClient:
-            def __init__(self, **_kwargs):
-                raise RuntimeError("敏感的认证客户端异常详情")
+        def broken_factory():
+            raise RuntimeError("敏感的认证客户端异常详情")
 
-        with mock.patch("src.codebuddy_oauth.httpx.AsyncClient", BrokenAsyncClient):
-            result = await CodeBuddyAuthClient().start_auth()
+        with self.assertLogs("src.codebuddy_oauth", level="ERROR") as captured:
+            result = await CodeBuddyAuthClient(http_client_factory=broken_factory).start_auth()
 
         self.assertFalse(result["success"])
         self.assertEqual(result["message"], "认证启动失败，请稍后重试")
         self.assertNotIn("敏感的认证客户端异常详情", result["message"])
+        self.assertIsNotNone(captured.records[0].exc_info)
 
     async def test_request_state_rejects_invalid_responses(self):
         responses = [
@@ -279,9 +391,10 @@ class CodeBuddyAuthClientTests(unittest.IsolatedAsyncioTestCase):
 
         for response, expected_status in responses:
             with self.subTest(expected_status=expected_status):
-                factory = lambda **kwargs: FakeAsyncClient(response, **kwargs)
-                with mock.patch("src.codebuddy_oauth.httpx.AsyncClient", factory):
-                    result = await CodeBuddyAuthClient().poll_status("state")
+                client = FakeAsyncClient(response)
+                result = await CodeBuddyAuthClient(
+                    http_client_factory=lambda: client,
+                ).poll_status("state")
 
                 self.assertEqual(result["status"], expected_status)
                 if expected_status == "success":
@@ -290,18 +403,29 @@ class CodeBuddyAuthClientTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(result["token_data"]["enterprise_id"], "enterprise-1")
 
     async def test_poll_status_maps_client_exception(self):
-        class BrokenAsyncClient:
-            def __init__(self, **_kwargs):
-                raise RuntimeError("network unavailable")
+        def broken_factory():
+            raise RuntimeError("network unavailable")
 
-        with mock.patch("src.codebuddy_oauth.httpx.AsyncClient", BrokenAsyncClient):
-            result = await CodeBuddyAuthClient().poll_status("state")
+        result = await CodeBuddyAuthClient(http_client_factory=broken_factory).poll_status("state")
 
         self.assertEqual(result["status"], "error")
-        self.assertIn("network unavailable", result["message"])
+        self.assertEqual(result["message"], "认证状态查询失败")
 
 
 class CodeBuddyAuthRouterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_start_device_auth_returns_429_with_retry_after_when_limited(self):
+        user = AuthenticatedUser(username="alice", source="session_cookie")
+        with mock.patch.object(
+            oauth.auth_state_store,
+            "begin_start",
+            side_effect=AuthStartLimitError(retry_after=17),
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                await start_device_auth(user)
+
+        self.assertEqual(raised.exception.status_code, 429)
+        self.assertEqual(raised.exception.headers, {"Retry-After": "17"})
+
     async def test_start_device_auth_registers_new_state(self):
         user = AuthenticatedUser(username="alice", source="session_cookie")
         upstream_result = {
@@ -315,12 +439,15 @@ class CodeBuddyAuthRouterTests(unittest.IsolatedAsyncioTestCase):
                 "src.codebuddy_auth_router.start_codebuddy_auth",
                 new=mock.AsyncMock(return_value=upstream_result),
             ),
-            mock.patch("src.codebuddy_auth_router.remember_auth_state", return_value=True) as remember,
+            mock.patch.object(oauth.auth_state_store, "begin_start", return_value="reservation"),
+            mock.patch.object(oauth.auth_state_store, "finish_start", return_value=True) as finish,
+            mock.patch.object(oauth.auth_state_store, "cancel_start") as cancel_start,
         ):
             result = await start_device_auth(user)
 
         self.assertEqual(result, upstream_result)
-        remember.assert_called_once_with("new-state", user)
+        finish.assert_called_once_with("reservation", "new-state", user)
+        cancel_start.assert_called_once_with("reservation")
 
     async def test_start_device_auth_rejects_already_reserved_state(self):
         user = AuthenticatedUser(username="alice", source="session_cookie")
@@ -335,7 +462,9 @@ class CodeBuddyAuthRouterTests(unittest.IsolatedAsyncioTestCase):
                 "src.codebuddy_auth_router.start_codebuddy_auth",
                 new=mock.AsyncMock(return_value=upstream_result),
             ),
-            mock.patch("src.codebuddy_auth_router.remember_auth_state", return_value=False),
+            mock.patch.object(oauth.auth_state_store, "begin_start", return_value="reservation"),
+            mock.patch.object(oauth.auth_state_store, "finish_start", return_value=False),
+            mock.patch.object(oauth.auth_state_store, "cancel_start"),
         ):
             result = await start_device_auth(user)
 
@@ -351,19 +480,25 @@ class CodeBuddyAuthRouterTests(unittest.IsolatedAsyncioTestCase):
                 "src.codebuddy_auth_router.start_codebuddy_auth",
                 new=mock.AsyncMock(return_value={"success": True}),
             ),
-            mock.patch("src.codebuddy_auth_router.remember_auth_state") as remember,
+            mock.patch.object(oauth.auth_state_store, "begin_start", return_value="reservation"),
+            mock.patch.object(oauth.auth_state_store, "finish_start") as finish,
+            mock.patch.object(oauth.auth_state_store, "cancel_start"),
         ):
             result = await start_device_auth(user)
 
         self.assertFalse(result["success"])
         self.assertEqual(result["error"], "invalid_auth_state")
-        remember.assert_not_called()
+        finish.assert_not_called()
 
     async def test_start_device_auth_returns_upstream_failure(self):
         upstream_result = {"success": False, "error": "unavailable"}
-        with mock.patch(
-            "src.codebuddy_auth_router.start_codebuddy_auth",
-            new=mock.AsyncMock(return_value=upstream_result),
+        with (
+            mock.patch(
+                "src.codebuddy_auth_router.start_codebuddy_auth",
+                new=mock.AsyncMock(return_value=upstream_result),
+            ),
+            mock.patch.object(oauth.auth_state_store, "begin_start", return_value="reservation"),
+            mock.patch.object(oauth.auth_state_store, "cancel_start"),
         ):
             result = await start_device_auth(
                 AuthenticatedUser(username="alice", source="session_cookie")
@@ -372,9 +507,13 @@ class CodeBuddyAuthRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(result, upstream_result)
 
     async def test_start_device_auth_maps_unexpected_exception(self):
-        with mock.patch(
-            "src.codebuddy_auth_router.start_codebuddy_auth",
-            new=mock.AsyncMock(side_effect=RuntimeError("敏感的认证路由异常详情")),
+        with (
+            mock.patch(
+                "src.codebuddy_auth_router.start_codebuddy_auth",
+                new=mock.AsyncMock(side_effect=RuntimeError("敏感的认证路由异常详情")),
+            ),
+            mock.patch.object(oauth.auth_state_store, "begin_start", return_value="reservation"),
+            mock.patch.object(oauth.auth_state_store, "cancel_start"),
         ):
             result = await start_device_auth(
                 AuthenticatedUser(username="alice", source="session_cookie")
@@ -527,7 +666,14 @@ class CodeBuddyAuthRouterTests(unittest.IsolatedAsyncioTestCase):
             ({"status": "success", "token_data": {"scope": "openid"}}, "invalid_token_response"),
             ({"status": "success", "token_data": {}}, "auth_error"),
             ({"status": "pending", "code": 11217}, "authorization_pending"),
-            ({"status": "error"}, "auth_error"),
+            (
+                {
+                    "status": "error",
+                    "message": "sensitive-upstream-message",
+                    "response_text": "sensitive-upstream-body",
+                },
+                "auth_error",
+            ),
         ]
 
         for poll_result, expected_error in results:
@@ -547,18 +693,29 @@ class CodeBuddyAuthRouterTests(unittest.IsolatedAsyncioTestCase):
                     )
 
                 self.assertEqual(response.status_code, 400)
-                self.assertEqual(json.loads(response.body)["error"], expected_error)
-
-    async def test_oauth_callback_reports_success_or_error(self):
-        error_response = await oauth_callback(error="access_denied")
-        success_response = await oauth_callback(code="code", state="state")
-
-        self.assertEqual(error_response.status_code, 400)
-        self.assertEqual(json.loads(error_response.body)["error"], "access_denied")
-        self.assertEqual(json.loads(success_response.body)["code"], "code")
-
+                body = json.loads(response.body)
+                self.assertEqual(body["error"], expected_error)
+                self.assertNotIn("sensitive-upstream", json.dumps(body))
 
 class TokenParserTests(unittest.TestCase):
+    def test_successful_jwt_parse_does_not_log_personal_information(self):
+        token = jwt_with_payload({
+            "sub": "private-user-id",
+            "email": "private@example.com",
+            "name": "Private Name",
+        })
+
+        with self.assertLogs("src.codebuddy_oauth", level="INFO") as captured:
+            user_id, user_info = TokenParser._extract_user_info(token, {})
+
+        self.assertEqual(user_id, "private-user-id")
+        self.assertEqual(user_info["email"], "private@example.com")
+        logs = "\n".join(captured.output)
+        self.assertIn("成功解析JWT", logs)
+        self.assertNotIn("private-user-id", logs)
+        self.assertNotIn("private@example.com", logs)
+        self.assertNotIn("Private Name", logs)
+
     def test_build_credential_data_uses_jwt_sub_for_user_id_and_keeps_display_fields(self):
         token = jwt_with_payload({
             "sub": "sub-id",
@@ -738,7 +895,6 @@ class OAuthWrapperTests(unittest.IsolatedAsyncioTestCase):
     async def test_wrappers_delegate_to_global_services(self):
         user = AuthenticatedUser(username="alice", source="session_cookie")
         with (
-            mock.patch.object(oauth.auth_state_store, "remember", return_value=True) as remember,
             mock.patch.object(oauth.auth_state_store, "validate_owner", return_value=True) as validate,
             mock.patch.object(oauth.auth_state_store, "consume", return_value=True) as consume,
             mock.patch.object(
@@ -757,14 +913,12 @@ class OAuthWrapperTests(unittest.IsolatedAsyncioTestCase):
                 new=mock.AsyncMock(return_value=True),
             ) as save,
         ):
-            self.assertTrue(oauth.remember_auth_state("state", user))
             self.assertTrue(oauth.validate_auth_state_owner("state", user))
             self.assertTrue(oauth.consume_auth_state("state", user))
             self.assertEqual(await oauth.start_codebuddy_auth(), {"started": True})
             self.assertEqual(await oauth.poll_codebuddy_auth_status("state"), {"status": "pending"})
             self.assertTrue(await oauth.save_codebuddy_token({"token": "value"}, user))
 
-        remember.assert_called_once_with("state", user)
         validate.assert_called_once_with("state", user)
         consume.assert_called_once_with("state", user)
         start.assert_awaited_once_with()

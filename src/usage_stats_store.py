@@ -395,11 +395,12 @@ class UsageStatsStore:
 
     def _record_event(self, event: UsageEvent, username: str) -> int:
         detail = asdict(event)
+        event_columns = tuple(detail)
         detail["username"] = username
         detail["client_stream"] = (
             None if event.client_stream is None else int(event.client_stream)
         )
-        columns = ("username",) + tuple(asdict(event))
+        columns = ("username",) + event_columns
         placeholders = ", ".join(f":{name}" for name in columns)
         with self._database().connect(create=False) as connection:
             cursor = connection.execute(
@@ -1650,20 +1651,12 @@ class UsageStatsStore:
         offset = (page - 1) * page_size
         if offset > SQLITE_MAX_INTEGER:
             raise ValueError("page offset is too large")
-        if (snapshot_id is None) != (snapshot_time is None):
-            raise ValueError("snapshot_id and snapshot_time must be provided together")
-        if snapshot_id is not None:
-            normalized_snapshot_id = _nonnegative_int(snapshot_id)
-            normalized_snapshot_time = _nonnegative_int(snapshot_time)
-            if (
-                    normalized_snapshot_id is None
-                    or normalized_snapshot_id > SQLITE_MAX_INTEGER
-                    or normalized_snapshot_time is None
-                    or normalized_snapshot_time > MAX_STATS_TIMESTAMP
-            ):
-                raise ValueError("invalid request pagination snapshot")
-            snapshot_id = normalized_snapshot_id
-            snapshot_time = normalized_snapshot_time
+        normalized_snapshot = self._normalize_request_snapshot(
+            snapshot_id,
+            snapshot_time,
+        )
+        if normalized_snapshot is not None:
+            snapshot_id, snapshot_time = normalized_snapshot
         database = self._database()
         where, parameters = self._where_clause(
             username, normalized_filters, hourly=False
@@ -1678,21 +1671,12 @@ class UsageStatsStore:
                 snapshot_time = int(time.time())
                 snapshot_id = current_event_id
             else:
-                cleanup_row = connection.execute(
-                    "SELECT detail_cutoff FROM usage_retention_state WHERE id = 1"
-                ).fetchone()
-                snapshot_cutoff = snapshot_time - DETAIL_RETENTION_DAYS * 86400
-                if (
-                        snapshot_id > current_event_id
-                        or (
-                            cleanup_row is not None
-                            and int(cleanup_row[0]) > snapshot_cutoff
-                        )
-                ):
-                    raise ValueError(
-                        "request pagination snapshot is no longer valid; "
-                        "fetch page 1 again"
-                    )
+                self._validate_request_snapshot_availability(
+                    connection,
+                    snapshot_id,
+                    snapshot_time,
+                    current_event_id,
+                )
             where += " AND id <= :snapshot_id AND occurred_at >= :retention_cutoff"
             parameters["snapshot_id"] = snapshot_id
             parameters["retention_cutoff"] = snapshot_time - DETAIL_RETENTION_DAYS * 86400
@@ -1719,19 +1703,99 @@ class UsageStatsStore:
             "snapshot_time": snapshot_time,
         }
 
-    def get_event(self, username: str, event_id: int) -> Optional[Dict[str, Any]]:
+    @staticmethod
+    def _normalize_request_snapshot(
+            snapshot_id: Optional[int],
+            snapshot_time: Optional[int],
+    ) -> Optional[Tuple[int, int]]:
+        if snapshot_id is None and snapshot_time is None:
+            return None
+        if snapshot_id is None or snapshot_time is None:
+            raise ValueError("invalid request pagination snapshot")
+        normalized_id = _nonnegative_int(snapshot_id)
+        normalized_time = _nonnegative_int(snapshot_time)
+        if (
+                normalized_id is None
+                or normalized_id > SQLITE_MAX_INTEGER
+                or normalized_time is None
+                or normalized_time > MAX_STATS_TIMESTAMP
+        ):
+            raise ValueError("invalid request pagination snapshot")
+        return normalized_id, normalized_time
+
+    @staticmethod
+    def _validate_request_snapshot_availability(
+            connection,
+            snapshot_id: int,
+            snapshot_time: int,
+            current_event_id: int,
+    ) -> None:
+        cleanup_row = connection.execute(
+            "SELECT detail_cutoff FROM usage_retention_state WHERE id = 1"
+        ).fetchone()
+        snapshot_cutoff = snapshot_time - DETAIL_RETENTION_DAYS * 86400
+        if (
+                snapshot_id > current_event_id
+                or (
+                    cleanup_row is not None
+                    and int(cleanup_row[0]) > snapshot_cutoff
+                )
+        ):
+            raise ValueError(
+                "request pagination snapshot is no longer valid; fetch page 1 again"
+            )
+
+    def get_event(
+            self,
+            username: str,
+            event_id: int,
+            *,
+            snapshot_id: Optional[int] = None,
+            snapshot_time: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
         """按用户名读取单条明细，用户不匹配与不存在均返回 ``None``。"""
         username = _validate_username(username)
         normalized_id = _nonnegative_int(event_id)
         if normalized_id is None or normalized_id > SQLITE_MAX_INTEGER:
             raise ValueError("event_id must be a non-negative integer")
+        normalized_snapshot = self._normalize_request_snapshot(
+            snapshot_id,
+            snapshot_time,
+        )
         database = self._database()
-        retention_cutoff = int(time.time()) - DETAIL_RETENTION_DAYS * 86400
         with database.connect(create=False) as connection:
+            connection.execute("BEGIN")
+            if normalized_snapshot is None:
+                retention_cutoff = int(time.time()) - DETAIL_RETENTION_DAYS * 86400
+                snapshot_clause = ""
+                parameters = (username, normalized_id, retention_cutoff)
+            else:
+                normalized_snapshot_id, normalized_snapshot_time = normalized_snapshot
+                sequence_row = connection.execute(
+                    "SELECT seq FROM sqlite_sequence WHERE name = 'usage_events'"
+                ).fetchone()
+                current_event_id = int(sequence_row[0]) if sequence_row is not None else 0
+                self._validate_request_snapshot_availability(
+                    connection,
+                    normalized_snapshot_id,
+                    normalized_snapshot_time,
+                    current_event_id,
+                )
+                retention_cutoff = (
+                    normalized_snapshot_time - DETAIL_RETENTION_DAYS * 86400
+                )
+                snapshot_clause = " AND id <= ?"
+                parameters = (
+                    username,
+                    normalized_id,
+                    retention_cutoff,
+                    normalized_snapshot_id,
+                )
             row = connection.execute(
                 "SELECT * FROM usage_events "
-                "WHERE username = ? AND id = ? AND occurred_at >= ?",
-                (username, normalized_id, retention_cutoff),
+                "WHERE username = ? AND id = ? AND occurred_at >= ?"
+                + snapshot_clause,
+                parameters,
             ).fetchone()
         return None if row is None else self._event_dict(row)
 

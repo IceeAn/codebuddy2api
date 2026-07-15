@@ -8,7 +8,7 @@ from src.api_key_store import api_key_store
 from src.auth_types import SESSION_COOKIE_NAME
 from src.session_store import session_store
 from src.stream_service import StreamObservation
-from src.usage_stats_middleware import dropped_usage_events
+from src.usage_stats_middleware import dropped_completion_events
 from src.usage_stats_store import usage_stats_store
 from tests.helpers import TempConfigMixin, configure_users_file
 from web import app
@@ -68,11 +68,11 @@ class UsageStatsIntegrationTests(TempConfigMixin, unittest.IsolatedAsyncioTestCa
         self.api_key_record = api_key_store.create_key("admin", "production")
         self.session_id = session_store.create("admin")
         usage_stats_store.reset_dropped_events_for_tests()
-        dropped_usage_events.reset_for_tests()
+        dropped_completion_events.reset_for_tests()
 
     def tearDown(self):
         usage_stats_store.reset_dropped_events_for_tests()
-        dropped_usage_events.reset_for_tests()
+        dropped_completion_events.reset_for_tests()
         super().tearDown()
 
     async def _request(

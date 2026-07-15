@@ -4,6 +4,9 @@ import { defineComponent, reactive } from 'vue';
 import CForm from '../components/ui/CForm.vue';
 import CFormItem from '../components/ui/CFormItem.vue';
 import CInput from '../components/ui/CInput.vue';
+import CInputNumber from '../components/ui/CInputNumber.vue';
+import CSelect from '../components/ui/CSelect.vue';
+import CSwitch from '../components/ui/CSwitch.vue';
 
 function mountForm(options: {
   model: Record<string, unknown>;
@@ -787,5 +790,116 @@ describe('CFormItem', () => {
     (wrapper.vm as any).rules = { name: { required: true, message: '必填' } };
     await flushPromises();
     await expect(formRef.validate()).rejects.toEqual([{ field: 'name', message: '必填' }]);
+  });
+
+  it('label、真实控件与错误说明使用稳定 ID 关联', async () => {
+    const wrapper = mount(
+      {
+        components: { CForm, CFormItem, CInput },
+        data() {
+          return {
+            model: { name: '' },
+            rules: { name: { required: true, message: '名称必填', trigger: 'input' } },
+          };
+        },
+        template: `
+          <CForm ref="formRef" :model="model" :rules="rules">
+            <CFormItem label="名称" path="name"><CInput v-model="model.name" /></CFormItem>
+          </CForm>
+        `,
+      },
+      { attachTo: document.body },
+    );
+    const label = wrapper.get('label');
+    const input = wrapper.get('input');
+    expect(label.attributes('for')).toBe(input.attributes('id'));
+    expect(input.attributes('id')).toMatch(/^c-form-control-/);
+
+    await expect((wrapper.vm.$refs as any).formRef.validate()).rejects.toBeDefined();
+    await flushPromises();
+    const error = wrapper.get('.c-form-item-error');
+    expect(error.attributes('role')).toBe('alert');
+    expect(input.attributes('aria-invalid')).toBe('true');
+    expect(input.attributes('aria-describedby')).toBe(error.attributes('id'));
+
+    await input.setValue('已修正');
+    await flushPromises();
+    expect(wrapper.find('.c-form-item-error').exists()).toBe(false);
+    expect(input.attributes('aria-invalid')).toBeUndefined();
+    expect(input.attributes('aria-describedby')).toBeUndefined();
+  });
+
+  it('input 与 blur trigger 在对应事件校验，已有错误会在纠正输入后清除', async () => {
+    const wrapper = mount(
+      {
+        components: { CForm, CFormItem, CInput },
+        data() {
+          return {
+            model: { live: '', deferred: '' },
+            rules: {
+              live: { required: true, message: '实时必填', trigger: 'input' },
+              deferred: { required: true, message: '失焦必填', trigger: 'blur' },
+            },
+          };
+        },
+        template: `
+          <CForm :model="model" :rules="rules">
+            <CFormItem label="实时" path="live"><CInput v-model="model.live" /></CFormItem>
+            <CFormItem label="失焦" path="deferred"><CInput v-model="model.deferred" /></CFormItem>
+          </CForm>
+        `,
+      },
+      { attachTo: document.body },
+    );
+    const inputs = wrapper.findAll('input');
+    await inputs[0].trigger('input');
+    await inputs[1].trigger('input');
+    await flushPromises();
+    expect(wrapper.text()).toContain('实时必填');
+    expect(wrapper.text()).not.toContain('失焦必填');
+
+    await inputs[1].trigger('blur');
+    await flushPromises();
+    expect(wrapper.text()).toContain('失焦必填');
+    await inputs[1].setValue('已修正');
+    await flushPromises();
+    expect(wrapper.text()).not.toContain('失焦必填');
+  });
+
+  it('Switch、Spinbutton 与 Select 自动获得表单标签名称', async () => {
+    const wrapper = mount(
+      {
+        components: { CForm, CFormItem, CInputNumber, CSelect, CSwitch },
+        data() {
+          return {
+            model: { enabled: false, count: 1, modelName: '' },
+            options: [{ label: 'GLM', value: 'glm' }],
+          };
+        },
+        template: `
+          <CForm :model="model">
+            <CFormItem label="启用" path="enabled"><CSwitch v-model="model.enabled" /></CFormItem>
+            <CFormItem label="次数" path="count"><CInputNumber v-model="model.count" /></CFormItem>
+            <CFormItem label="模型" path="modelName"><CSelect v-model="model.modelName" :options="options" /></CFormItem>
+          </CForm>
+        `,
+      },
+      { attachTo: document.body },
+    );
+    const labels = wrapper.findAll('label');
+    const controls = [
+      wrapper.get('[role="switch"]'),
+      wrapper.get('input[type="number"]'),
+      wrapper.get('.c-select-trigger'),
+    ];
+    expect(controls.map((control) => control.attributes('id'))).toEqual(
+      labels.map((label) => label.attributes('for')),
+    );
+    expect(controls.map((control) => control.attributes('aria-labelledby'))).toEqual(
+      labels.map((label) => label.attributes('id')),
+    );
+    await controls[0].trigger('blur');
+    await controls[1].trigger('blur');
+    await controls[2].trigger('focusout', { relatedTarget: document.body });
   });
 });

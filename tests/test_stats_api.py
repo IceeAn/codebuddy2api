@@ -7,7 +7,7 @@ import httpx
 from src.api_key_store import api_key_store
 from src.auth_types import SESSION_COOKIE_NAME
 from src.session_store import session_store
-from src.usage_stats_middleware import dropped_usage_events
+from src.usage_stats_middleware import dropped_completion_events
 from src.usage_stats_store import UsageStatsStore
 from tests.helpers import TempConfigMixin, configure_users_file
 from web import app
@@ -19,10 +19,10 @@ class StatsApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         configure_users_file(self.temp_path)
         self.session_id = session_store.create("admin")
         self.api_key = api_key_store.create_key("admin", "stats-test")["api_key"]
-        dropped_usage_events.reset_for_tests()
+        dropped_completion_events.reset_for_tests()
 
     def tearDown(self):
-        dropped_usage_events.reset_for_tests()
+        dropped_completion_events.reset_for_tests()
         super().tearDown()
 
     async def _get(self, path, *, session=False, api_key=False):
@@ -56,9 +56,9 @@ class StatsApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
             "breakdowns": {},
             "data_quality": {"dropped_events": 5},
         }
-        dropped_usage_events.record("admin")
-        dropped_usage_events.record("admin")
-        dropped_usage_events.record("other")
+        dropped_completion_events.record("admin")
+        dropped_completion_events.record("admin")
+        dropped_completion_events.record("other")
 
         with mock.patch(
             "src.stats_router.usage_stats_store.get_overview",
@@ -211,7 +211,10 @@ class StatsApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
             "src.stats_router.usage_stats_store.get_event",
             side_effect=[detail, None],
         ) as get:
-            found = await self._get("/api/admin/stats/requests/12", session=True)
+            found = await self._get(
+                "/api/admin/stats/requests/12?snapshot_id=20&snapshot_time=7",
+                session=True,
+            )
             missing = await self._get("/api/admin/stats/requests/13", session=True)
 
         self.assertEqual(found.status_code, 200)
@@ -221,7 +224,10 @@ class StatsApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(missing.headers["Cache-Control"], "private, no-store")
         self.assertEqual(
             get.call_args_list,
-            [mock.call("admin", 12), mock.call("admin", 13)],
+            [
+                mock.call("admin", 12, snapshot_id=20, snapshot_time=7),
+                mock.call("admin", 13, snapshot_id=None, snapshot_time=None),
+            ],
         )
 
     async def test_store_value_errors_are_validation_responses(self):
@@ -252,6 +258,8 @@ class StatsApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
             "/api/admin/stats/overview?start_at=253370764800",
             "/api/admin/stats/requests?end_at=253370764800",
             "/api/admin/stats/requests?snapshot_id=9223372036854775808",
+            "/api/admin/stats/requests/1?snapshot_id=-1&snapshot_time=1",
+            "/api/admin/stats/requests/1?snapshot_id=1&snapshot_time=253370764800",
             "/api/admin/stats/requests/9223372036854775808",
             "/api/admin/stats/dimensions/outcomes",
             "/api/admin/stats/dimensions/models?limit=0",

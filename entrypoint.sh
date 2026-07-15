@@ -51,6 +51,20 @@ find /app/data -type d -exec chown "${APP_USER}:${APP_USER}" {} +
 find /app/data -type f -exec chown "${APP_USER}:${APP_USER}" {} +
 echo "Ownership fixed."
 
+# 容器 Uvicorn 与应用使用同一日志级别，并关闭默认 Server 响应头。
+if [ "${1:-}" = "uvicorn" ]; then
+    log_level="$(printf '%s' "${CODEBUDDY_LOG_LEVEL:-INFO}" | tr '[:upper:]' '[:lower:]')"
+    set -- "$@" --log-level "${log_level}" --no-server-header
+    max_concurrent_requests="${CODEBUDDY_MAX_CONCURRENT_REQUESTS:-}"
+    if [ -n "${max_concurrent_requests}" ]; then
+        # 复用应用的 Uvicorn 0.49.0 边界补偿，确保配置 N 实际放行 N 个连接。
+        uvicorn_limit_concurrency="$(python3 -c \
+            'import sys; from src.uvicorn_limits import to_uvicorn_limit_concurrency; print(to_uvicorn_limit_concurrency(int(sys.argv[1])))' \
+            "${max_concurrent_requests}")"
+        set -- "$@" --limit-concurrency "${uvicorn_limit_concurrency}"
+    fi
+fi
+
 # 切换到应用用户并执行 Dockerfile 中的 CMD。
 # exec 会替换当前进程，确保应用能正确接收停止信号。
 echo "Executing command as user ${APP_USER}: $@"

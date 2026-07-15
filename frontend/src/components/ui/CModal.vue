@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { onBeforeUnmount, watch } from 'vue';
+import { onBeforeUnmount, onMounted, ref, useId, watch } from 'vue';
 import { X } from '@lucide/vue';
+import { registerOverlay } from './overlayStack';
 
 interface Props {
   open: boolean;
   title?: string;
+  ariaLabel?: string;
   closable?: boolean;
   width?: string;
 }
@@ -12,6 +14,7 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   open: false,
   title: undefined,
+  ariaLabel: undefined,
   closable: true,
   width: 'min(30rem, 90vw)',
 });
@@ -20,37 +23,47 @@ const emit = defineEmits<{
   'update:open': [value: boolean];
 }>();
 
+const maskRef = ref<HTMLElement | null>(null);
+const panelRef = ref<HTMLElement | null>(null);
+const titleId = `c-modal-title-${useId().replace(/[^A-Za-z0-9_-]/g, '')}`;
+let unregisterOverlay: (() => void) | null = null;
+
 function close(): void {
+  if (!props.closable) return;
   emit('update:open', false);
 }
 
-/** ESC 键处理（仅在 open 时通过 listener 注册，故无需再判 open）。 */
-function handleKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape') {
-    close();
-  }
+function deactivateOverlay(): void {
+  unregisterOverlay?.();
+  unregisterOverlay = null;
 }
 
-function setBodyLock(locked: boolean): void {
-  document.body.style.overflow = locked ? 'hidden' : '';
+function activateOverlay(): void {
+  const mask = maskRef.value!;
+  const panel = panelRef.value!;
+  unregisterOverlay = registerOverlay({
+    elements: [mask],
+    focusRoot: panel,
+    modal: true,
+    onEscape: props.closable ? close : undefined,
+  });
 }
 
 watch(
   () => props.open,
   (open) => {
-    setBodyLock(open);
-    if (open) {
-      document.addEventListener('keydown', handleKeydown);
-    } else {
-      document.removeEventListener('keydown', handleKeydown);
-    }
+    if (open) activateOverlay();
+    else deactivateOverlay();
   },
-  { immediate: true },
+  { flush: 'post' },
 );
 
+onMounted(() => {
+  if (props.open) activateOverlay();
+});
+
 onBeforeUnmount(() => {
-  document.removeEventListener('keydown', handleKeydown);
-  setBodyLock(false);
+  deactivateOverlay();
 });
 </script>
 
@@ -59,20 +72,31 @@ onBeforeUnmount(() => {
     <Transition name="c-modal-mask">
       <div
         v-if="open"
+        ref="maskRef"
         class="c-modal-mask fixed inset-0 z-40 flex items-center justify-center bg-[var(--color-overlay)] p-4 backdrop-blur-[2px]"
         @click="close"
       >
         <Transition name="c-modal-panel">
           <div
+            ref="panelRef"
             class="c-modal-panel flex max-h-[85vh] flex-col overflow-hidden rounded-2xl bg-surface shadow-[var(--shadow-card-lg)]"
             :style="{ width: width }"
+            role="dialog"
+            aria-modal="true"
+            :aria-labelledby="title ? titleId : undefined"
+            :aria-label="title ? undefined : ariaLabel || '对话框'"
+            tabindex="-1"
             @click.stop
           >
             <div
               v-if="title || closable"
               class="c-modal-header flex h-14 items-center border-b border-border px-5"
             >
-              <div v-if="title" class="c-modal-title flex-1 font-display text-md font-semibold">
+              <div
+                v-if="title"
+                :id="titleId"
+                class="c-modal-title flex-1 font-display text-md font-semibold"
+              >
                 {{ title }}
               </div>
               <div v-else class="flex-1" />

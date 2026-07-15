@@ -2,103 +2,81 @@ import { describe, expect, it } from 'vitest';
 import { parseSsePayload, SseStreamDecoder } from '../utils/sse';
 
 describe('parseSsePayload', () => {
-  it('解析 data-only SSE 并忽略 DONE 与坏 JSON', () => {
-    const events = parseSsePayload(
-      'data: {"choices":[{"delta":{"content":"A"}}]}\n\n' +
-        'data: not-json\n\n' +
-        'data: [DONE]\n\n',
-    );
-
-    expect(events).toEqual([{ choices: [{ delta: { content: 'A' } }] }]);
+  it('区分消息、DONE 和坏 JSON 协议错误', () => {
+    expect(
+      parseSsePayload(
+        'data: {"choices":[{"delta":{"content":"A"}}]}\n\n' +
+          'data: not-json\n\n' +
+          'data: [DONE]\n\n',
+      ),
+    ).toEqual([
+      {
+        type: 'message',
+        data: { choices: [{ delta: { content: 'A' } }] },
+      },
+      { type: 'error', message: 'SSE data 不是有效 JSON' },
+      { type: 'done' },
+    ]);
   });
 
-  it('处理完整字符串中的多事件', () => {
-    const events = parseSsePayload('data: {"a":1}\n\ndata: {"b":2}\n\n');
-    expect(events).toEqual([{ a: 1 }, { b: 2 }]);
-  });
-
-  it('data 字段跨多行时用换行拼接为完整 JSON', () => {
-    // SSE 规范：连续多个 data: 行用 \n 拼接成完整 payload。
-    // JSON 允许键值之间的空白包含换行，故拼接后仍为合法 JSON。
-    const events = parseSsePayload('data: {"a":\ndata: 1}\n\n');
-    expect(events).toEqual([{ a: 1 }]);
-  });
-
-  it('过滤 [DONE]', () => {
-    const events = parseSsePayload('data: [DONE]\n\n');
-    expect(events).toEqual([]);
-  });
-
-  it('忽略坏 JSON 不抛错', () => {
-    const events = parseSsePayload('data: {bad\n\n');
-    expect(events).toEqual([]);
+  it('识别上游错误信封而不是把它当成成功消息', () => {
+    expect(
+      parseSsePayload(
+        'data: {"error":{"message":"额度不足"}}\n\n' +
+          'data: {"error":"服务不可用"}\n\n' +
+          'data: {"error":{"code":"upstream_error"}}\n\n',
+      ),
+    ).toEqual([
+      { type: 'error', message: '额度不足' },
+      { type: 'error', message: '服务不可用' },
+      { type: 'error', message: '上游返回流式错误' },
+    ]);
   });
 });
 
 describe('SseStreamDecoder', () => {
-  it('跨 chunk 的事件不丢失', () => {
+  it('跨 chunk 保留半个事件并支持多个完整事件', () => {
     const decoder = new SseStreamDecoder();
     expect(decoder.feed('data: {"cho')).toEqual([]);
-    expect(decoder.feed('ices":[]}\n\n')).toEqual([{ choices: [] }]);
+    expect(decoder.feed('ices":[]}\n\ndata: {"b":2}\n\n')).toEqual([
+      { type: 'message', data: { choices: [] } },
+      { type: 'message', data: { b: 2 } },
+    ]);
   });
 
-  it('多事件分块传输', () => {
+  it('支持 CRLF、混合空行和跨 chunk 的 CRLF', () => {
     const decoder = new SseStreamDecoder();
-    expect(decoder.feed('data: {"a":1}\n\nda')).toEqual([{ a: 1 }]);
-    expect(decoder.feed('ta: {"b":2}\n\n')).toEqual([{ b: 2 }]);
+    expect(decoder.feed('data: {"a":1}\r')).toEqual([]);
+    expect(decoder.feed('\n\r\ndata: {"b":2}\r\n\n')).toEqual([
+      { type: 'message', data: { a: 1 } },
+      { type: 'message', data: { b: 2 } },
+    ]);
   });
 
-  it('空行分隔多事件', () => {
+  it('多行 data 用换行拼接并允许没有首空格', () => {
     const decoder = new SseStreamDecoder();
-    const events = decoder.feed('data: {"x":1}\n\ndata: {"y":2}\n\n');
-    expect(events).toEqual([{ x: 1 }, { y: 2 }]);
+    expect(decoder.feed('data:{"a":\ndata: 1}\n\n')).toEqual([{ type: 'message', data: { a: 1 } }]);
   });
 
-  it('data 字段跨多行用换行拼接为完整 JSON', () => {
+  it('保留合法 JSON 标量消息并忽略没有 data 的事件', () => {
     const decoder = new SseStreamDecoder();
-    const events = decoder.feed('data: {"a":\ndata: 1}\n\n');
-    expect(events).toEqual([{ a: 1 }]);
+    expect(decoder.feed('event: ping\n\ndata: "hello"\n\ndata: 42\n\n')).toEqual([
+      { type: 'message', data: 'hello' },
+      { type: 'message', data: 42 },
+    ]);
   });
 
-  it('过滤 [DONE]', () => {
+  it('finish 报告被截断的事件且清空缓冲', () => {
     const decoder = new SseStreamDecoder();
-    const events = decoder.feed('data: [DONE]\n\n');
-    expect(events).toEqual([]);
+    decoder.feed('data: {"partial":');
+
+    expect(decoder.finish()).toEqual([{ type: 'error', message: 'SSE 流在事件结束前中断' }]);
+    expect(decoder.finish()).toEqual([]);
   });
 
-  it('忽略坏 JSON 不抛错', () => {
+  it('finish 忽略仅含空白或注释的尾部内容', () => {
     const decoder = new SseStreamDecoder();
-    const events = decoder.feed('data: {bad\n\n');
-    expect(events).toEqual([]);
-  });
-
-  it('单个 chunk 内可包含多个完整事件', () => {
-    const decoder = new SseStreamDecoder();
-    const events = decoder.feed('data: {"a":1}\n\ndata: {"b":2}\n\ndata: {"c":3}\n\n');
-    expect(events).toEqual([{ a: 1 }, { b: 2 }, { c: 3 }]);
-  });
-
-  it('不完整事件保留在 buffer 等待后续 chunk', () => {
-    const decoder = new SseStreamDecoder();
-    expect(decoder.feed('data: {"a":1}\n\ndata: {"b":')).toEqual([{ a: 1 }]);
-    expect(decoder.feed('2}\n\n')).toEqual([{ b: 2 }]);
-  });
-
-  it('解析后 JSON 字符串 payload 返回原始字符串', () => {
-    const decoder = new SseStreamDecoder();
-    const events = decoder.feed('data: "hello"\n\n');
-    expect(events).toEqual(['hello']);
-  });
-
-  it('解析数字 payload 返回数字', () => {
-    const decoder = new SseStreamDecoder();
-    const events = decoder.feed('data: 42\n\n');
-    expect(events).toEqual([42]);
-  });
-
-  it('忽略没有 data 字段的 SSE 事件并支持无空格 data 前缀', () => {
-    const decoder = new SseStreamDecoder();
-    expect(decoder.feed('event: ping\n\n')).toEqual([]);
-    expect(decoder.feed('data:{"ok":true}\n\n')).toEqual([{ ok: true }]);
+    decoder.feed(': keep-alive\r\n  ');
+    expect(decoder.finish()).toEqual([]);
   });
 });

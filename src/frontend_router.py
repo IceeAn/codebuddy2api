@@ -1,4 +1,5 @@
 """管理页前端静态资源路由。"""
+import re
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -17,6 +18,15 @@ NO_CACHE_HEADERS = {
     "Pragma": "no-cache",
     "Expires": "0",
 }
+IMMUTABLE_ASSET_HEADERS = {
+    "Cache-Control": "public, max-age=31536000, immutable",
+}
+REVALIDATE_ASSET_HEADERS = {
+    "Cache-Control": "public, max-age=0, must-revalidate",
+}
+_HASHED_VITE_ASSET = re.compile(
+    r"^assets/.+-[A-Za-z0-9_-]{8,}\.(?:css|js|mjs|woff|woff2|ttf|otf)$"
+)
 
 
 def _safe_static_file(relative_path: str) -> Path:
@@ -64,7 +74,17 @@ async def get_legacy_admin_response() -> FileResponse:
 async def get_frontend_static_response(asset_path: str) -> FileResponse:
     """优先返回 Vite 构建产物，未构建时回退到公共静态资源。"""
     file_path = _safe_static_file(asset_path)
-    return FileResponse(file_path)
+    try:
+        file_path.relative_to(DIST_DIR.resolve())
+    except ValueError:
+        headers = REVALIDATE_ASSET_HEADERS
+    else:
+        headers = (
+            IMMUTABLE_ASSET_HEADERS
+            if _HASHED_VITE_ASSET.fullmatch(asset_path)
+            else REVALIDATE_ASSET_HEADERS
+        )
+    return FileResponse(file_path, headers=headers)
 
 
 @router.get("/", response_class=FileResponse, include_in_schema=False)

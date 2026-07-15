@@ -331,4 +331,122 @@ describe('CModal', () => {
     document.dispatchEvent(event);
     await flushPromises();
   });
+
+  it('提供 dialog 语义并用标题建立可访问名称', async () => {
+    mount(
+      {
+        components: { CModal },
+        template: '<CModal :open="true" title="安全设置" />',
+      },
+      { attachTo: attach() },
+    );
+    await flushPromises();
+    const panel = document.body.querySelector('.c-modal-panel') as HTMLElement;
+    const title = document.body.querySelector('.c-modal-title') as HTMLElement;
+    expect(panel.getAttribute('role')).toBe('dialog');
+    expect(panel.getAttribute('aria-modal')).toBe('true');
+    expect(panel.getAttribute('aria-labelledby')).toBe(title.id);
+  });
+
+  it('无标题时可通过 aria-label 命名', async () => {
+    mount(CModal, { props: { open: true, ariaLabel: '编辑凭证' }, attachTo: attach() });
+    await flushPromises();
+    expect(document.body.querySelector('.c-modal-panel')?.getAttribute('aria-label')).toBe(
+      '编辑凭证',
+    );
+  });
+
+  it('closable=false 时遮罩和 Escape 均不能关闭', async () => {
+    const wrapper = mount(
+      {
+        components: { CModal },
+        data: () => ({ open: true }),
+        template: '<CModal v-model:open="open" :closable="false" aria-label="处理中" />',
+      },
+      { attachTo: attach() },
+    );
+    (document.body.querySelector('.c-modal-mask') as HTMLElement).click();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    await flushPromises();
+    expect((wrapper.vm as any).open).toBe(true);
+  });
+
+  it('打开时聚焦并捕获 Tab，关闭后恢复原焦点', async () => {
+    const opener = document.createElement('button');
+    document.body.appendChild(opener);
+    opener.focus();
+    const wrapper = mount(
+      {
+        components: { CModal },
+        data: () => ({ open: true }),
+        template:
+          '<CModal v-model:open="open" title="焦点测试"><button class="first">一</button><button class="last">二</button></CModal>',
+      },
+      { attachTo: attach() },
+    );
+    await flushPromises();
+    const panel = document.body.querySelector('.c-modal-panel') as HTMLElement;
+    expect(panel.contains(document.activeElement)).toBe(true);
+    const focusables = Array.from(panel.querySelectorAll<HTMLElement>('button'));
+    focusables.at(-1)!.focus();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    expect(document.activeElement).toBe(focusables[0]);
+    focusables[0].focus();
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }),
+    );
+    expect(document.activeElement).toBe(focusables.at(-1));
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await flushPromises();
+    expect((wrapper.vm as any).open).toBe(false);
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it('使背景 inert，并在嵌套浮层关闭时恢复原 overflow 与下层状态', async () => {
+    document.body.style.overflow = 'clip';
+    const wrapper = mount(
+      {
+        components: { CModal },
+        data: () => ({ outer: true, inner: true }),
+        template: `
+          <div class="background">背景</div>
+          <CModal v-model:open="outer" title="外层" />
+          <CModal v-model:open="inner" title="内层" />
+        `,
+      },
+      { attachTo: attach() },
+    );
+    await flushPromises();
+    const masks = Array.from(document.body.querySelectorAll<HTMLElement>('.c-modal-mask'));
+    const layerFor = (mask: HTMLElement) =>
+      mask.parentElement?.tagName === 'TRANSITION-STUB' ? mask.parentElement : mask;
+    const inertMask = masks.find((mask) => layerFor(mask)!.inert)!;
+    const activeMask = masks.find((mask) => !layerFor(mask)!.inert)!;
+    expect(document.body.style.overflow).toBe('hidden');
+    expect(inertMask).toBeTruthy();
+    expect(activeMask).toBeTruthy();
+
+    if (activeMask.textContent?.includes('内层')) (wrapper.vm as any).inner = false;
+    else (wrapper.vm as any).outer = false;
+    await flushPromises();
+    expect(document.body.style.overflow).toBe('hidden');
+    const remainingMask = document.body.querySelector<HTMLElement>('.c-modal-mask')!;
+    expect(layerFor(remainingMask)!.inert).toBe(false);
+    (wrapper.vm as any).inner = false;
+    (wrapper.vm as any).outer = false;
+    await flushPromises();
+    expect(document.body.style.overflow).toBe('clip');
+  });
+
+  it('支持从关闭状态动态打开并注册浮层', async () => {
+    const wrapper = mount(CModal, {
+      props: { open: false, title: '动态对话框' },
+      attachTo: attach(),
+    });
+    await wrapper.setProps({ open: true });
+    await flushPromises();
+    expect(document.body.querySelector('.c-modal-panel')).toBeTruthy();
+    expect(document.body.style.overflow).toBe('hidden');
+  });
 });

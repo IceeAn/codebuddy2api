@@ -3,15 +3,18 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, Security, status
 from fastapi.security import APIKeyCookie, HTTPAuthorizationCredentials, HTTPBearer
+from starlette.concurrency import run_in_threadpool
 
 from .api_key_store import api_key_store
 from .auth_types import (
     SESSION_COOKIE_NAME,
+    SESSION_REFRESH_STATE_KEY,
     SESSION_TTL_SECONDS,
     AuthenticatedUser,
     LoginRequest,
 )
 from .private_response import PrivateNoStoreRoute
+from .login_security import LoginLimitError, login_attempt_guard
 from .session_store import session_store
 from .users_store import users_store
 
@@ -37,8 +40,7 @@ def _auth_error() -> HTTPException:
 
 
 def _is_secure_request(request: Request) -> bool:
-    forwarded_proto = request.headers.get("X-Forwarded-Proto", "").split(",", 1)[0].strip().lower()
-    return request.url.scheme == "https" or forwarded_proto == "https"
+    return request.url.scheme == "https"
 
 
 def _require_users_file() -> None:
@@ -47,6 +49,20 @@ def _require_users_file() -> None:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="No authentication users configured. Mount secrets/users.txt.",
         )
+
+
+def _verify_login_credentials(username: str, password: str) -> bool:
+    """在线程中完成用户文件检查和昂贵密码校验。"""
+    _require_users_file()
+    return users_store.verify(username, password)
+
+
+def _login_limit_error(retry_after: int) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail="登录尝试过于频繁，请稍后重试",
+        headers={"Retry-After": str(max(1, int(retry_after)))},
+    )
 
 
 def require_api_key_user(
@@ -77,8 +93,13 @@ def require_session_user(
     """仅允许管理页会话用户访问。"""
     _require_users_file()
 
-    session_user = session_store.get_user(request.cookies.get(SESSION_COOKIE_NAME))
+    session_id = request.cookies.get(SESSION_COOKIE_NAME)
+    session_user = session_store.get_user(session_id)
     if session_user:
+        request.scope.setdefault("state", {})[SESSION_REFRESH_STATE_KEY] = {
+            "session_id": session_id,
+            "secure": _is_secure_request(request),
+        }
         return session_user
     raise _auth_error()
 
@@ -86,13 +107,28 @@ def require_session_user(
 @router.post("/auth/login")
 async def login(request: Request, response: Response, credentials: LoginRequest):
     """登录管理页并写入 HttpOnly 会话 cookie。"""
-    _require_users_file()
-
     username = credentials.username.strip()
+    client_ip = request.client.host if request.client is not None else None
+    try:
+        login_attempt_guard.record_attempt(client_ip, username)
+    except LoginLimitError as error:
+        raise _login_limit_error(error.retry_after) from error
+
     if not username or not credentials.password:
         raise _auth_error()
 
-    if not users_store.verify(username, credentials.password):
+    if not login_attempt_guard.try_acquire():
+        raise _login_limit_error(1)
+    try:
+        verified = await run_in_threadpool(
+            _verify_login_credentials,
+            username,
+            credentials.password,
+        )
+    finally:
+        login_attempt_guard.release()
+
+    if not verified:
         raise _auth_error()
 
     session_id = session_store.create(username)

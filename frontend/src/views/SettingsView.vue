@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
+import { onBeforeRouteLeave } from 'vue-router';
 import { CircleHelp, Save } from '@lucide/vue';
 import { adminApi } from '../api/admin';
 import type { SettingField, SettingsResponse } from '../types';
@@ -19,8 +20,12 @@ import CInput from '../components/ui/CInput.vue';
 import CButton from '../components/ui/CButton.vue';
 import CTooltip from '../components/ui/CTooltip.vue';
 import RefreshButton from '../components/RefreshButton.vue';
+import { useSessionStore } from '../stores/session';
+import { adminQueryKeys } from '../utils/adminQueryKeys';
 
 const queryClient = useQueryClient();
+const session = useSessionStore();
+const queryKeys = adminQueryKeys(session.username);
 const toast = useToast();
 const form = reactive<Record<string, string | number | boolean | null>>({});
 const tagValues = reactive<Record<string, string[]>>({});
@@ -28,7 +33,7 @@ const AUTO_ROTATION_KEY = 'CODEBUDDY_AUTO_ROTATION_ENABLED';
 const ROTATION_COUNT_KEY = 'CODEBUDDY_ROTATION_COUNT';
 
 const settingsQuery = useQuery({
-  queryKey: ['admin-settings'],
+  queryKey: queryKeys.settings,
   queryFn: adminApi.settings,
 });
 
@@ -40,30 +45,80 @@ const visibleFields = computed(() =>
 );
 
 const settingsForm = createSettingsFormController(form, tagValues);
+const baselineRevision = ref(0);
+const isDirty = computed(
+  () => ({ revision: baselineRevision.value, dirty: settingsForm.isDirty() }).dirty,
+);
 let submittedEditVersion = settingsForm.getEditVersion();
 watch(
   () => settingsQuery.data.value,
   (data) => {
-    settingsForm.applySettings(data);
-    if (data && ROTATION_COUNT_KEY in form) {
-      form[ROTATION_COUNT_KEY] = normalizeRotationCount(form[ROTATION_COUNT_KEY]);
-    }
+    if (data) applyServerSettings(data, false);
   },
   { immediate: true },
 );
 
+function parseRotationCount(value: string | number | boolean | null): number | null {
+  if (typeof value === 'number') {
+    return Number.isInteger(value) && value >= 1 ? value : null;
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value.trim());
+    return Number.isInteger(parsed) && parsed >= 1 ? parsed : null;
+  }
+  return null;
+}
+
+function validateNumberField(field: SettingField): string | null {
+  const value = form[field.key];
+  if (field.key === ROTATION_COUNT_KEY) {
+    return parseRotationCount(value) === null ? '轮换次数必须是大于或等于 1 的整数' : null;
+  }
+  if (value === null || value === '') {
+    return field.nullable ? null : `${field.label}不能为空`;
+  }
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return `${field.label}必须是有效数字`;
+  }
+  if (field.min !== undefined && value < field.min) {
+    return `${field.label}不能小于 ${field.min}`;
+  }
+  if (field.max !== undefined && value > field.max) {
+    return `${field.label}不能大于 ${field.max}`;
+  }
+  return null;
+}
+
+const numberFieldErrors = computed<Record<string, string>>(() => {
+  const errors: Record<string, string> = {};
+  for (const field of fields.value) {
+    if (field.type !== 'number') continue;
+    const error = validateNumberField(field);
+    if (error) errors[field.key] = error;
+  }
+  return errors;
+});
+const rotationCountError = computed(() => numberFieldErrors.value[ROTATION_COUNT_KEY] ?? null);
+const formError = computed(() => Object.values(numberFieldErrors.value)[0] ?? null);
+const formInvalid = computed(() => formError.value !== null);
+const settingsLoaded = computed(() => Boolean(settingsQuery.data.value) && fields.value.length > 0);
+
 const saveMutation = useMutation({
   mutationFn: () => {
+    if (formError.value) throw new Error(formError.value);
     submittedEditVersion = settingsForm.getEditVersion();
     return adminApi.saveSettings(buildPayload());
   },
   onSuccess: async (data: SettingsResponse) => {
     if (settingsForm.getEditVersion() === submittedEditVersion) {
       applyServerSettings(data, true);
+    } else {
+      settingsForm.updateBaseline(data);
+      baselineRevision.value += 1;
     }
     toast.success('设置已保存');
-    await queryClient.invalidateQueries({ queryKey: ['admin-settings'] });
-    await queryClient.invalidateQueries({ queryKey: ['admin-status'] });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.settings });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.status });
   },
 });
 
@@ -77,6 +132,18 @@ function handleRefreshSuccess(result: unknown): void {
   }
 }
 
+async function refetchSettings(): Promise<unknown> {
+  if (isDirty.value && !window.confirm('当前有未保存的设置，确定放弃修改并刷新吗？')) {
+    return { isError: true, cancelled: true };
+  }
+  return settingsQuery.refetch();
+}
+
+const settingsRefreshQuery = {
+  isFetching: settingsQuery.isFetching,
+  refetch: refetchSettings,
+};
+
 /**
  * 从 refetch 结果中提取服务端设置；无数据时保持当前表单。
  */
@@ -89,10 +156,15 @@ function extractRefetchData(result: unknown): SettingsResponse | undefined {
  * 应用服务端设置并维护需要在前端展示为正整数的字段。
  */
 function applyServerSettings(data: SettingsResponse, force: boolean): void {
-  settingsForm.applySettings(data, { force });
-  if (ROTATION_COUNT_KEY in form) {
-    form[ROTATION_COUNT_KEY] = normalizeRotationCount(form[ROTATION_COUNT_KEY]);
+  const applied = settingsForm.applySettings(data, { force });
+  if (!applied) return;
+  const rotationCount = form[ROTATION_COUNT_KEY];
+  const parsedRotationCount = parseRotationCount(rotationCount);
+  if (typeof rotationCount === 'string' && parsedRotationCount !== null) {
+    form[ROTATION_COUNT_KEY] = parsedRotationCount;
+    settingsForm.resetBaseline();
   }
+  baselineRevision.value += 1;
 }
 
 const savedFlash = ref(false);
@@ -119,7 +191,7 @@ function buildPayload() {
       continue;
     }
     if (field.key === ROTATION_COUNT_KEY) {
-      payload[field.key] = normalizeRotationCount(form[field.key]);
+      payload[field.key] = parseRotationCount(form[field.key]) ?? form[field.key];
       continue;
     }
     payload[field.key] = form[field.key];
@@ -131,31 +203,13 @@ function selectOptions(field: SettingField) {
   return (field.options || []).map((item) => ({ label: item, value: item }));
 }
 
-function normalizeRotationCount(value: string | number | boolean | null): number {
-  if (typeof value === 'number') {
-    return Number.isInteger(value) && value >= 1 ? value : 1;
-  }
-  if (typeof value === 'string') {
-    const parsed = Number(value.trim());
-    return Number.isInteger(parsed) && parsed >= 1 ? parsed : 1;
-  }
-  return 1;
-}
-
 function updateBooleanField(field: SettingField, value: boolean) {
   settingsForm.markDirty();
   form[field.key] = value;
-  if (field.key === AUTO_ROTATION_KEY && value) {
-    form[ROTATION_COUNT_KEY] = normalizeRotationCount(form[ROTATION_COUNT_KEY]);
-  }
 }
 
 function updateNumberField(field: SettingField, value: number | null) {
   settingsForm.markDirty();
-  if (field.key === ROTATION_COUNT_KEY) {
-    form[field.key] = normalizeRotationCount(value);
-    return;
-  }
   form[field.key] = value;
 }
 
@@ -174,18 +228,42 @@ function updateTags(field: SettingField, value: string[]) {
   settingsForm.markDirty();
   tagValues[field.key] = value;
 }
+
+function saveSettings(): void {
+  if (formError.value) {
+    toast.error(formError.value);
+    return;
+  }
+  if (!settingsLoaded.value || !isDirty.value || saveMutation.isPending.value) return;
+  saveMutation.mutate();
+}
+
+function confirmLeave(): boolean {
+  return !isDirty.value || window.confirm('当前有未保存的设置，确定放弃修改并离开吗？');
+}
+
+function handleBeforeUnload(event: BeforeUnloadEvent): void {
+  if (!isDirty.value) return;
+  event.preventDefault();
+  event.returnValue = '';
+}
+
+onBeforeRouteLeave(confirmLeave);
+onMounted(() => window.addEventListener('beforeunload', handleBeforeUnload));
+onBeforeUnmount(() => window.removeEventListener('beforeunload', handleBeforeUnload));
 </script>
 
 <template>
   <CCard title="服务配置">
     <template #header-extra>
       <div class="toolbar-actions flex items-center gap-2">
-        <RefreshButton :query="settingsQuery" @success="handleRefreshSuccess" />
+        <RefreshButton :query="settingsRefreshQuery" @success="handleRefreshSuccess" />
         <CButton
           variant="primary"
           :loading="saveMutation.isPending.value"
+          :disabled="!settingsLoaded || !isDirty || formInvalid || saveMutation.isPending.value"
           :class="{ 'animate-success': savedFlash }"
-          @click="saveMutation.mutate()"
+          @click="saveSettings"
         >
           <template #icon>
             <Save :size="16" />
@@ -254,16 +332,25 @@ function updateTags(field: SettingField, value: string[]) {
             :model-value="form[field.key] as boolean"
             @update:model-value="updateBooleanField(field, $event)"
           />
-          <CInputNumber
-            v-else-if="field.type === 'number'"
-            class="settings-number-input md:max-w-64"
-            :model-value="form[field.key] as number | null"
-            :min="field.min"
-            :max="field.max"
-            :step="field.step || 1"
-            :clearable="field.key !== ROTATION_COUNT_KEY"
-            @update:model-value="updateNumberField(field, $event)"
-          />
+          <div v-else-if="field.type === 'number'" class="w-full">
+            <CInputNumber
+              class="settings-number-input md:max-w-64"
+              :model-value="form[field.key] as number | null"
+              :min="field.min"
+              :max="field.max"
+              :step="field.step || 1"
+              :clearable="field.key !== ROTATION_COUNT_KEY"
+              :aria-invalid="Boolean(numberFieldErrors[field.key])"
+              @update:model-value="updateNumberField(field, $event)"
+            />
+            <p
+              v-if="numberFieldErrors[field.key]"
+              class="mt-1 text-xs text-tone-error"
+              role="alert"
+            >
+              {{ numberFieldErrors[field.key] }}
+            </p>
+          </div>
           <CDynamicTags
             v-else-if="field.type === 'tags'"
             :model-value="tagValues[field.key]"

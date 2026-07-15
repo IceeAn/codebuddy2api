@@ -215,4 +215,31 @@ describe('CProgress', () => {
     expect(dashoffset).toBeCloseTo(circumference, 1);
     expect(wrapper.find('text').text()).toBe('0%');
   });
+
+  it('提供 progressbar ARIA 语义并把非有限值归一化为 0', () => {
+    const wrapper = mount(CProgress, { props: { percentage: Number.NaN } });
+    const svg = wrapper.get('svg');
+    expect(svg.attributes('role')).toBe('progressbar');
+    expect(svg.attributes('aria-valuemin')).toBe('0');
+    expect(svg.attributes('aria-valuemax')).toBe('100');
+    expect(svg.attributes('aria-valuenow')).toBe('0');
+    expect(wrapper.get('text').text()).toBe('0%');
+  });
+
+  it('不同实例使用唯一渐变 id', () => {
+    const wrapper = mount({
+      components: { CProgress },
+      template:
+        '<div><CProgress :threshold-colors="false" /><CProgress :threshold-colors="false" /></div>',
+    });
+    const gradients = wrapper.findAll('linearGradient');
+    const ids = gradients.map((gradient) => gradient.attributes('id'));
+    expect(new Set(ids).size).toBe(2);
+    const strokes = wrapper
+      .findAll('circle')
+      .filter((circle) => circle.attributes('stroke')?.startsWith('url('));
+    expect(strokes.map((circle) => circle.attributes('stroke'))).toEqual(
+      ids.map((id) => `url(#${id})`),
+    );
+  });
 });

@@ -14,11 +14,16 @@ const {
     ready: false,
     authenticated: false,
     username: '',
+    restoreError: '',
+    restoring: false,
     restore: vi.fn<() => Promise<void>>(),
     logout: vi.fn<() => Promise<void>>(),
+    endLocalSession: vi.fn<() => void>(),
   },
   routeMock: { name: 'dashboard' as string | undefined },
-  routerMock: { push: vi.fn<(to: string | Record<string, unknown>) => Promise<void>>() },
+  routerMock: {
+    push: vi.fn<(to: string | Record<string, unknown>) => Promise<{ type: number } | undefined>>(),
+  },
   queryClientMock: { clear: vi.fn<() => void>() },
   setUnauthorizedHandlerMock: vi.fn<(handler: (() => void) | null) => void>(),
   themeMock: {
@@ -39,6 +44,12 @@ vi.mock('../stores/theme', () => ({
 }));
 
 vi.mock('vue-router', () => ({
+  NavigationFailureType: { duplicated: 16 },
+  isNavigationFailure: (failure: unknown, type?: number) =>
+    typeof failure === 'object' &&
+    failure !== null &&
+    'type' in failure &&
+    (type === undefined || (failure as { type: number }).type === type),
   useRoute: () => routeMock,
   useRouter: () => routerMock,
   RouterView: { template: '<div class="router-view" />' },
@@ -149,10 +160,13 @@ describe('App', () => {
     sessionMock.ready = false;
     sessionMock.authenticated = false;
     sessionMock.username = '';
+    sessionMock.restoreError = '';
+    sessionMock.restoring = false;
     sessionMock.restore.mockReset();
     sessionMock.restore.mockResolvedValue(undefined);
     sessionMock.logout.mockReset();
     sessionMock.logout.mockResolvedValue(undefined);
+    sessionMock.endLocalSession.mockReset();
     routeMock.name = 'dashboard';
     routerMock.push.mockReset();
     routerMock.push.mockResolvedValue(undefined);
@@ -195,6 +209,30 @@ describe('App', () => {
     const { wrapper } = mountApp();
 
     expect(wrapper.find('.login-view').exists()).toBe(true);
+  });
+
+  it('恢复失败时显示错误和重试入口，不误导为登录页', async () => {
+    sessionMock.ready = true;
+    sessionMock.authenticated = false;
+    sessionMock.restoreError = '无法确认登录状态，请检查网络后重试';
+    const { wrapper } = mountApp();
+    await vi.waitFor(() => expect(sessionMock.restore).toHaveBeenCalledOnce());
+    sessionMock.restore.mockClear();
+
+    expect(wrapper.text()).toContain('无法确认登录状态');
+    expect(wrapper.text()).toContain('请检查网络后重试');
+    expect(wrapper.find('.login-view').exists()).toBe(false);
+    const retry = wrapper.findAll('button').find((button) => button.text().includes('重试'))!;
+    await retry.trigger('click');
+    expect(sessionMock.restore).toHaveBeenCalledOnce();
+
+    wrapper.unmount();
+    sessionMock.restoring = true;
+    const { wrapper: restoringWrapper } = mountApp();
+    const restoringRetry = restoringWrapper
+      .findAll('button')
+      .find((button) => button.text().includes('重试'))!;
+    expect(restoringRetry.attributes('disabled')).toBeDefined();
   });
 
   it('认证后显示桌面导航、用户名和当前标题', () => {
@@ -347,6 +385,25 @@ describe('App', () => {
 
     expect(state.mobileNavOpen).toBe(false);
     expect(routerMock.push).toHaveBeenCalledWith({ name: 'credentials' });
+  });
+
+  it('移动抽屉打开时切换到桌面断点会自动关闭', async () => {
+    sessionMock.ready = true;
+    sessionMock.authenticated = true;
+    const { wrapper, addEventListener } = mountApp(false);
+    const state = (wrapper.vm.$ as any).setupState;
+    await vi.waitFor(() => expect(state.isMobile).toBe(true));
+    await wrapper.get('.hamburger').trigger('click');
+    expect(state.mobileNavOpen).toBe(true);
+
+    const changeHandler = addEventListener.mock.calls[0]![1] as (
+      event: MediaQueryListEvent,
+    ) => void;
+    changeHandler({ matches: true } as MediaQueryListEvent);
+    await wrapper.vm.$nextTick();
+
+    expect(state.isMobile).toBe(false);
+    expect(state.mobileNavOpen).toBe(false);
   });
 
   it('桌面导航点击跳转且未知路由回退为总览标题', async () => {
@@ -514,18 +571,19 @@ describe('App', () => {
     expect(logoutButton?.props('size')).toBeUndefined();
   });
 
-  it('全局 401 handler 登出并清理查询缓存', async () => {
+  it('全局 401 handler 只终止本地会话并清理查询缓存', async () => {
     mountApp();
     await vi.waitFor(() => expect(setUnauthorizedHandlerMock).toHaveBeenCalled());
     const handler = setUnauthorizedHandlerMock.mock.calls[0][0];
 
     expect(handler).not.toBeNull();
     handler!();
-    expect(sessionMock.logout).toHaveBeenCalledOnce();
+    expect(sessionMock.endLocalSession).toHaveBeenCalledOnce();
+    expect(sessionMock.logout).not.toHaveBeenCalled();
     expect(queryClientMock.clear).toHaveBeenCalledOnce();
   });
 
-  it('主动退出后清缓存并返回根路径', async () => {
+  it('主动退出在请求前后都清缓存并返回根路径', async () => {
     sessionMock.ready = true;
     sessionMock.authenticated = true;
     const { wrapper } = mountApp();
@@ -533,7 +591,50 @@ describe('App', () => {
 
     await state.logout();
     expect(sessionMock.logout).toHaveBeenCalledOnce();
-    expect(queryClientMock.clear).toHaveBeenCalledOnce();
+    expect(queryClientMock.clear).toHaveBeenCalledTimes(2);
+    expect(routerMock.push).toHaveBeenCalledWith('/');
+    expect(routerMock.push.mock.invocationCallOrder[0]).toBeLessThan(
+      sessionMock.logout.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('受保护路由拒绝离开时保留会话与查询缓存', async () => {
+    sessionMock.ready = true;
+    sessionMock.authenticated = true;
+    routerMock.push.mockResolvedValue({ type: 4 });
+    const { wrapper } = mountApp();
+    const state = (wrapper.vm.$ as any).setupState;
+
+    await state.logout();
+
+    expect(routerMock.push).toHaveBeenCalledWith('/');
+    expect(sessionMock.logout).not.toHaveBeenCalled();
+    expect(queryClientMock.clear).not.toHaveBeenCalled();
+  });
+
+  it('根路径重复导航不会阻止退出', async () => {
+    sessionMock.ready = true;
+    sessionMock.authenticated = true;
+    routerMock.push.mockResolvedValue({ type: 16 });
+    const { wrapper } = mountApp();
+    const state = (wrapper.vm.$ as any).setupState;
+
+    await state.logout();
+
+    expect(sessionMock.logout).toHaveBeenCalledOnce();
+    expect(queryClientMock.clear).toHaveBeenCalledTimes(2);
+  });
+
+  it('主动退出请求失败时仍再次清缓存并返回登录页', async () => {
+    sessionMock.ready = true;
+    sessionMock.authenticated = true;
+    sessionMock.logout.mockRejectedValue(new Error('network'));
+    const { wrapper } = mountApp();
+    const state = (wrapper.vm.$ as any).setupState;
+
+    await expect(state.logout()).rejects.toThrow('network');
+
+    expect(queryClientMock.clear).toHaveBeenCalledTimes(2);
     expect(routerMock.push).toHaveBeenCalledWith('/');
   });
 

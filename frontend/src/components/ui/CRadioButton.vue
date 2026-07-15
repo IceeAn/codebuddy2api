@@ -6,6 +6,7 @@ interface RadioGroupContext {
   select: (value: string) => void;
   registerButton: (value: string, element: HTMLButtonElement) => void;
   unregisterButton: (value: string, element: HTMLButtonElement) => void;
+  tabIndex: (value: string) => 0 | -1;
 }
 
 interface Props {
@@ -47,6 +48,7 @@ onBeforeUnmount(() => {
     type="button"
     role="radio"
     :aria-checked="isSelected"
+    :tabindex="groupCtx.tabIndex(value)"
     :class="[
       'c-radio-button relative z-10 h-7 rounded-sm px-3 text-xs font-medium transition-colors',
       isSelected ? 'text-text-strong' : 'text-muted',

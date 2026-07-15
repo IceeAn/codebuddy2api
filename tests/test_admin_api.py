@@ -12,6 +12,7 @@ from src.admin_router import (
     ApiKeyCreateRequest,
     CredentialCreateRequest,
     CredentialTestRequest,
+    _request_base_url,
     _safe_credential,
     _safe_credentials,
     _time_remaining_text,
@@ -77,6 +78,14 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["credentials"]["valid"], 1)
         self.assertEqual(result["credentials"]["current"]["credential_id"], manager.get_credentials_info()[0]["credential_id"])
 
+    def test_admin_base_url_ignores_untrusted_forwarded_proto(self):
+        request = make_request(extra_headers={
+            "Host": "admin.example",
+            "X-Forwarded-Proto": "https",
+        })
+
+        self.assertEqual(_request_base_url(request), "http://admin.example")
+
     async def test_admin_api_keys_are_session_scoped(self):
         created = await create_admin_api_key(ApiKeyCreateRequest(name="opencode"), self.user)
 
@@ -88,6 +97,11 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         deleted = await delete_admin_api_key(created["id"], self.user)
         self.assertTrue(deleted["deleted"])
         self.assertEqual((await list_admin_api_keys(self.user))["api_keys"], [])
+
+    def test_api_key_name_rejects_more_than_80_characters(self):
+        self.assertEqual(ApiKeyCreateRequest(name="x" * 80).name, "x" * 80)
+        with self.assertRaises(ValidationError):
+            ApiKeyCreateRequest(name="x" * 81)
 
     async def test_delete_missing_admin_api_key_returns_404(self):
         with self.assertRaises(HTTPException) as context:
@@ -233,10 +247,10 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
                 self.user,
                 stream_service_factory=FakeService,
                 stats_context=stats_context,
-                request_bytes=42,
             )
 
         self.assertTrue(result["ok"])
+        self.assertEqual(result["model_source"], "actual")
         first_model_for_credential.assert_awaited_once()
         called_user, called_credential_id, called_credential = first_model_for_credential.await_args.args
         self.assertEqual(called_user, self.user)
@@ -254,7 +268,7 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
             mock.call(credential_id, credential_id),
             mock.call(credential_id, "target.json"),
         ])
-        stats_context.capture_request_bytes.assert_called_once_with(42)
+        stats_context.capture_request_bytes.assert_not_called()
         stats_context.capture_request_shape.assert_called_once()
         self.assertEqual(
             stats_context.capture_request_shape.call_args.args[0]["model"],
@@ -268,6 +282,7 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self._add_credential(manager, "target-token", "target-user", "target"))
         credential_id = manager.get_credentials_info()[0]["credential_id"]
         stats_context = mock.Mock()
+        config.update_settings({"CODEBUDDY_MODELS": ""}, username=self.user.username)
 
         class FakeService:
             async def handle_non_stream_response(self, _payload, _headers, *, response_model):
@@ -298,6 +313,44 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         ])
         stats_context.mark_failure.assert_called_once_with("model_lookup", 502)
 
+    async def test_admin_credential_test_uses_configured_model_when_actual_lookup_fails(self):
+        manager = self._manager()
+        self.assertTrue(self._add_credential(manager, "target-token", "target-user", "target"))
+        credential_id = manager.get_credentials_info()[0]["credential_id"]
+        config.update_settings(
+            {"CODEBUDDY_MODELS": "fallback-model,second"},
+            username=self.user.username,
+        )
+        captured = {}
+
+        class FakeService:
+            async def handle_non_stream_response(self, payload, _headers, *, response_model):
+                captured["payload"] = payload
+                captured["response_model"] = response_model
+                return {}
+
+        with (
+            mock.patch("src.admin_router.get_token_manager_for_user", return_value=manager),
+            mock.patch(
+                "src.admin_router.models_manager.get_first_actual_model_for_credential",
+                new=mock.AsyncMock(side_effect=RuntimeError("unavailable")),
+            ),
+        ):
+            result = await test_admin_credential(
+                credential_id,
+                CredentialTestRequest(),
+                self.user,
+                stream_service_factory=FakeService,
+            )
+
+        self.assertEqual(result, {
+            "ok": True,
+            "status_code": 200,
+            "model_source": "configured_fallback",
+        })
+        self.assertEqual(captured["payload"]["model"], "fallback-model")
+        self.assertEqual(captured["response_model"], "fallback-model")
+
     async def test_missing_admin_credential_returns_404(self):
         with self.assertRaises(HTTPException) as context:
             await delete_admin_credential("missing", self.user)
@@ -327,7 +380,7 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
                 stats_context=stats_context,
             )
         self.assertEqual(stats_test_context.exception.status_code, 404)
-        stats_context.capture_request_bytes.assert_called_once_with(0)
+        stats_context.capture_request_bytes.assert_not_called()
         stats_context.capture_credential.assert_called_once_with("missing", "missing")
         stats_context.mark_failure.assert_called_once_with("credential_not_found", 404)
 
@@ -406,8 +459,9 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
                 stream_service_factory=SuccessfulService,
             )
 
-        self.assertEqual(result, {"ok": True, "status_code": 200})
+        self.assertEqual(result, {"ok": True, "status_code": 200, "model_source": "actual"})
 
+        config.update_settings({"CODEBUDDY_MODELS": ""}, username=self.user.username)
         with (
             mock.patch("src.admin_router.get_token_manager_for_user", return_value=manager),
             mock.patch(
@@ -472,7 +526,6 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
             result = await test_admin_credential_route(
                 "credential-1",
                 request_body,
-                request,
                 self.user,
                 factory,
                 stats_context,
@@ -485,8 +538,8 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
             self.user,
             factory,
             stats_context,
-            len(b'{"message":"test"}'),
         )
+        request.body.assert_not_awaited()
 
     async def test_credential_test_stats_dependency_attaches_after_authentication(self):
         request = mock.Mock()

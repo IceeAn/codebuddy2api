@@ -285,8 +285,18 @@ describe('StatsView', () => {
     expect(state.queryParams.end_at - state.queryParams.start_at).toBe(7 * 86_400);
     const overviewOptions = useQueryMock.mock.calls[0]![0] as any;
     const requestsOptions = useQueryMock.mock.calls[1]![0] as any;
-    expect(overviewOptions.queryKey.value[0]).toBe('admin-stats-overview');
-    expect(requestsOptions.queryKey.value[0]).toBe('admin-stats-requests');
+    expect(overviewOptions.queryKey.value.slice(0, 4)).toEqual([
+      'admin',
+      'test-user',
+      'stats',
+      'overview',
+    ]);
+    expect(requestsOptions.queryKey.value.slice(0, 4)).toEqual([
+      'admin',
+      'test-user',
+      'stats',
+      'requests',
+    ]);
     const previousOverview = { marker: 'overview' };
     const previousRequests = { marker: 'requests' };
     expect(overviewOptions.placeholderData(previousOverview)).toBe(previousOverview);
@@ -873,6 +883,11 @@ describe('StatsView', () => {
     await nextTick();
     expect(state.requestPageData).toBeNull();
     expect(state.requestSnapshot).toBeNull();
+    expect(state.requestItems.map((item: typeof firstRequest) => item.id)).toEqual([10]);
+
+    statsDetailMock.mockResolvedValueOnce(firstRequest);
+    await wrapper.get('tbody tr').trigger('click');
+    expect(statsDetailMock).toHaveBeenLastCalledWith(10, { id: 10, time: 30 });
 
     vi.setSystemTime(new Date('2026-01-08T01:00:00Z'));
     queries[1].isFetching.value = false;
@@ -970,13 +985,26 @@ describe('StatsView', () => {
   });
 
   it('打开请求详情抽屉，展示脱敏字段并处理失败和关闭', async () => {
-    queries[1].data.value = { items: [firstRequest], next_cursor: null };
+    queries[1].data.value = {
+      items: [firstRequest],
+      page: 1,
+      page_size: 20,
+      total: 1,
+      total_pages: 1,
+      snapshot_id: 100,
+      snapshot_time: 1_767_225_700,
+    };
     statsDetailMock.mockResolvedValueOnce(firstRequest);
     const wrapper = mountView();
     const row = wrapper.get('tbody tr');
 
     await row.trigger('click');
-    await vi.waitFor(() => expect(statsDetailMock).toHaveBeenCalledWith(10));
+    await vi.waitFor(() =>
+      expect(statsDetailMock).toHaveBeenCalledWith(10, {
+        id: 100,
+        time: 1_767_225_700,
+      }),
+    );
     expect(wrapper.text()).toContain('请求详情');
     expect(wrapper.text()).toContain('输入 Token');
     expect(wrapper.text()).toContain('积分');
@@ -994,7 +1022,7 @@ describe('StatsView', () => {
     state.closeDetail();
     expect(state.detailOpen).toBe(false);
     statsDetailMock.mockRejectedValueOnce('broken');
-    await state.openDetail(firstRequest);
+    await state.openDetail(firstRequest, { id: 100, time: 1_767_225_700 });
     expect(state.detailError).toBe('加载请求详情失败');
   });
 
@@ -1031,8 +1059,9 @@ describe('StatsView', () => {
       .mockImplementationOnce(() => new Promise((resolve) => (resolveFirst = resolve)))
       .mockImplementationOnce(() => new Promise((resolve) => (resolveSecond = resolve)));
 
-    const first = state.openDetail(firstRequest);
-    const second = state.openDetail({ ...firstRequest, id: 11 });
+    const snapshot = { id: 100, time: 1_767_225_700 };
+    const first = state.openDetail(firstRequest, snapshot);
+    const second = state.openDetail({ ...firstRequest, id: 11 }, snapshot);
     resolveFirst({ ...firstRequest, id: 10 });
     await first;
     expect(state.detailLoading).toBe(true);
@@ -1317,8 +1346,9 @@ describe('StatsView', () => {
       .mockImplementationOnce(() => new Promise((_resolve, reject) => (rejectFirst = reject)))
       .mockResolvedValueOnce({ ...firstRequest, id: 11 });
 
-    const first = state.openDetail(firstRequest);
-    await state.openDetail({ ...firstRequest, id: 11 });
+    const snapshot = { id: 100, time: 1_767_225_700 };
+    const first = state.openDetail(firstRequest, snapshot);
+    await state.openDetail({ ...firstRequest, id: 11 }, snapshot);
     rejectFirst(new Error('old failure'));
     await first;
 

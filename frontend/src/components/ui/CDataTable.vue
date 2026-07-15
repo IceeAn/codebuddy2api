@@ -25,7 +25,7 @@ interface Props {
   error?: boolean;
   bordered?: boolean;
   size?: 'small' | 'default';
-  rowKey?: string;
+  rowKey: string | ((row: Record<string, unknown>) => PropertyKey);
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -33,7 +33,6 @@ const props = withDefaults(defineProps<Props>(), {
   error: false,
   bordered: false,
   size: 'default',
-  rowKey: undefined,
 });
 
 const rowHeight = computed(() => (props.size === 'small' ? 'h-9' : 'h-11'));
@@ -137,6 +136,21 @@ function renderVNode(content: CellRender, ellipsis = false): VNode {
   }
   return content;
 }
+
+function resolveRowKey(row: Record<string, unknown>): PropertyKey {
+  if (!props.rowKey) throw new Error('CDataTable.rowKey 为必填属性');
+  const value = typeof props.rowKey === 'function' ? props.rowKey(row) : row[props.rowKey];
+  if (
+    value === undefined ||
+    value === null ||
+    value === '' ||
+    !['string', 'number', 'symbol'].includes(typeof value)
+  ) {
+    const keyName = typeof props.rowKey === 'string' ? props.rowKey : 'rowKey 函数返回值';
+    throw new Error(`CDataTable 行缺少稳定键 ${keyName}`);
+  }
+  return value as PropertyKey;
+}
 </script>
 
 <template>
@@ -162,7 +176,7 @@ function renderVNode(content: CellRender, ellipsis = false): VNode {
         <tbody>
           <tr
             v-for="(row, index) in data"
-            :key="rowKey ? (row[rowKey] as PropertyKey) : index"
+            :key="resolveRowKey(row)"
             :class="[
               rowHeight,
               'border-b border-border/60 text-sm text-text transition-colors duration-[var(--duration-fast)] hover:bg-surface-2',

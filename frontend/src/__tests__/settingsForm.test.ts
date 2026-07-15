@@ -102,6 +102,72 @@ describe('createSettingsFormController', () => {
     expect(controller.getEditVersion()).toBe(2);
   });
 
+  it('按服务端基线计算真实 dirty，改回原值后恢复干净', () => {
+    const form: FormMap = {};
+    const tagValues: Record<string, string[]> = {};
+    const controller = createSettingsFormController(form, tagValues);
+    controller.applySettings(
+      makeData({ model: 'glm', tags: 'a,b' }, [
+        { key: 'model', label: '模型', type: 'text' },
+        { key: 'tags', label: '标签', type: 'tags' },
+      ]),
+    );
+
+    expect(controller.isDirty()).toBe(false);
+    form.model = 'deepseek';
+    controller.markDirty();
+    expect(controller.isDirty()).toBe(true);
+    form.model = 'glm';
+    expect(controller.isDirty()).toBe(false);
+    tagValues.tags = ['b', 'a'];
+    expect(controller.isDirty()).toBe(true);
+  });
+
+  it('resetBaseline 接受前端规范化后的当前值', () => {
+    const form: FormMap = {};
+    const controller = createSettingsFormController(form, {});
+    controller.applySettings(
+      makeData({ count: '5' }, [{ key: 'count', label: '次数', type: 'number' }]),
+    );
+    form.count = 5;
+    expect(controller.isDirty()).toBe(true);
+
+    controller.resetBaseline();
+    expect(controller.isDirty()).toBe(false);
+  });
+
+  it('updateBaseline 推进服务端基线但保留当前编辑', () => {
+    const form: FormMap = {};
+    const tagValues: Record<string, string[]> = {};
+    const controller = createSettingsFormController(form, tagValues);
+    const fields = [
+      { key: 'text', label: '文本', type: 'text' as const },
+      { key: 'tags', label: '标签', type: 'tags' as const, separator: ';' },
+      { key: 'defaultTags', label: '默认分隔符', type: 'tags' as const },
+      { key: 'nullable', label: '可空', type: 'text' as const, nullable: true },
+      { key: 'missing', label: '缺失', type: 'text' as const },
+    ];
+    controller.applySettings(
+      makeData({ text: 'A', tags: 'a;b', defaultTags: 'm,n', nullable: null }, fields),
+    );
+    form.text = 'local';
+    tagValues.tags = ['local'];
+    controller.markDirty();
+
+    controller.updateBaseline(
+      makeData({ text: 'B', tags: 'x; y', defaultTags: 'p,q', nullable: null }, fields),
+    );
+
+    expect(form.text).toBe('local');
+    expect(tagValues.tags).toEqual(['local']);
+    expect(controller.isDirty()).toBe(true);
+
+    form.text = 'B';
+    tagValues.tags = ['x', 'y'];
+    tagValues.defaultTags = ['p', 'q'];
+    expect(controller.isDirty()).toBe(false);
+  });
+
   it('data 为 null/undefined 时不填充', () => {
     const form: FormMap = {};
     const tagValues: Record<string, string[]> = {};

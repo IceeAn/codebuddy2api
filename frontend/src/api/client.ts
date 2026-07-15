@@ -1,12 +1,14 @@
 export class ApiError extends Error {
   readonly status: number;
   readonly detail: unknown;
+  readonly isUnauthorized: boolean;
 
-  constructor(status: number, message: string, detail?: unknown) {
+  constructor(status: number, message: string, detail?: unknown, isUnauthorized = false) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.detail = detail;
+    this.isUnauthorized = isUnauthorized;
   }
 }
 
@@ -33,7 +35,7 @@ export function handleUnauthorizedResponse(response: Response): boolean {
 }
 
 export function isUnauthorizedError(err: unknown): boolean {
-  return err instanceof ApiError && err.status === 401;
+  return err instanceof ApiError && err.isUnauthorized;
 }
 
 interface ApiRequestOptions extends RequestInit {
@@ -41,12 +43,12 @@ interface ApiRequestOptions extends RequestInit {
   timeoutMs?: number;
 }
 
-function throwApiError(status: number, body: unknown): never {
+function throwApiError(status: number, body: unknown, isUnauthorized: boolean): never {
   const message =
     typeof body === 'object' && body !== null && 'detail' in body
       ? String((body as { detail: unknown }).detail)
       : `请求失败：HTTP ${status}`;
-  throw new ApiError(status, message, body);
+  throw new ApiError(status, message, body, isUnauthorized);
 }
 
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -59,13 +61,24 @@ function buildSignal(callerSignal: AbortSignal | null | undefined, timeoutMs: nu
   if (!callerSignal) {
     return timeoutSignal;
   }
-  // AbortSignal.any 在 ES2022 lib 可用；若类型缺失则做类型断言
+
   const anyOf = (
     AbortSignal as unknown as {
-      any: (signals: AbortSignal[]) => AbortSignal;
+      any?: (signals: AbortSignal[]) => AbortSignal;
     }
   ).any;
-  return anyOf([callerSignal, timeoutSignal]);
+  const signals = [callerSignal, timeoutSignal];
+  if (typeof anyOf === 'function') {
+    return anyOf(signals);
+  }
+
+  const controller = new AbortController();
+  for (const signal of signals) {
+    signal.addEventListener('abort', () => controller.abort(signal.reason), { once: true });
+  }
+  const alreadyAborted = signals.find((signal) => signal.aborted);
+  if (alreadyAborted) controller.abort(alreadyAborted.reason);
+  return controller.signal;
 }
 
 /**
@@ -89,12 +102,12 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     body: options.json !== undefined ? JSON.stringify(options.json) : options.body,
   });
 
-  handleUnauthorizedResponse(response);
+  const isUnauthorized = handleUnauthorizedResponse(response);
 
   const contentType = response.headers.get('content-type') || '';
   const body = contentType.includes('application/json')
     ? await response.json()
     : await response.text();
 
-  return response.ok ? (body as T) : throwApiError(response.status, body);
+  return response.ok ? (body as T) : throwApiError(response.status, body, isUnauthorized);
 }

@@ -53,7 +53,10 @@ class ApiKeyStore:
 
     @staticmethod
     def _safe_key_name(name: str) -> str:
-        return str(name or "").strip()[:80] or "API Key"
+        safe_name = str(name or "").strip()
+        if len(safe_name) > 80:
+            raise ValueError("API Key name must not exceed 80 characters")
+        return safe_name or "API Key"
 
     @staticmethod
     def _preview(api_key: str) -> str:

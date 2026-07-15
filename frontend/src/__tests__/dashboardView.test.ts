@@ -95,10 +95,11 @@ describe('DashboardView', () => {
     statsOverviewMock.mockResolvedValue({});
   });
 
-  it('无数据时显示默认状态且复制按钮不执行', async () => {
+  it('无数据时显示加载中而不是异常，且复制按钮不执行', async () => {
     const wrapper = mountView();
 
-    expect(wrapper.text()).toContain('异常');
+    expect(wrapper.text()).toContain('服务状态|加载中|brand');
+    expect(wrapper.text()).not.toContain('服务状态|异常');
     expect(wrapper.text()).toContain('0/0');
     expect(wrapper.text()).toContain('今日请求|0');
     expect(wrapper.text()).toContain('-');
@@ -128,6 +129,7 @@ describe('DashboardView', () => {
     expect(state.todayRequestCount).toBe(7);
     expect(state.validityPercent).toBe(66);
     expect(wrapper.text()).toContain('运行中');
+    expect(wrapper.text()).toContain('服务状态|运行中|success');
     expect(wrapper.text()).toContain('2/3');
     expect(wrapper.text()).toContain('自动轮换已启用');
     expect(wrapper.text()).not.toContain('auto_rotation');
@@ -153,7 +155,7 @@ describe('DashboardView', () => {
 
     expect(useQueryMock.mock.calls[0]![0]).toEqual(
       expect.objectContaining({
-        queryKey: ['admin-status'],
+        queryKey: ['admin', 'test-user', 'status'],
         refetchInterval: 600_000,
         refetchOnMount: 'always',
         refetchOnWindowFocus: true,
@@ -162,7 +164,7 @@ describe('DashboardView', () => {
     );
     expect(useQueryMock.mock.calls[1]![0]).toEqual(
       expect.objectContaining({
-        queryKey: ['admin-stats-overview', 'dashboard-today'],
+        queryKey: ['admin', 'test-user', 'stats', 'overview', 'dashboard-today'],
         refetchOnMount: 'always',
         refetchOnWindowFocus: 'always',
       }),
@@ -229,15 +231,41 @@ describe('DashboardView', () => {
   });
 
   it('加载失败时显示错误状态并支持重试', async () => {
+    queries[0].data.value = {
+      service: 'stale-service',
+      status: 'healthy',
+      uptime_seconds: 99,
+      api_base_url: 'https://stale.example',
+      credentials: { valid: 4, total: 5, current: { status: 'auto_rotation' } },
+    };
     queries[0].isError.value = true;
     const wrapper = mountView();
 
     expect(wrapper.text()).toContain('加载状态失败');
-    expect(wrapper.text()).toContain('加载失败');
+    expect(wrapper.text()).toContain('服务状态|加载失败|error');
+    expect(wrapper.text()).toContain('有效凭证|0/0');
+    expect(wrapper.text()).not.toContain('stale-service');
+    expect(wrapper.text()).not.toContain('https://stale.example');
+    expect(wrapper.text()).not.toContain('00:01:39');
     const retry = wrapper.findAll('button').find((button) => button.text().includes('重试'))!;
     await retry.trigger('click');
     expect(queries[0].refetch).toHaveBeenCalledOnce();
     expect(queries[1].refetch).toHaveBeenCalledOnce();
+  });
+
+  it('运行时间即使计时基准倒退也不会显示负数', async () => {
+    queries[0].data.value = {
+      status: 'healthy',
+      uptime_seconds: 2,
+      credentials: { valid: 1, total: 1, current: {} },
+    };
+    const wrapper = mountView();
+    const state = (wrapper.vm.$ as any).setupState;
+
+    state.nowMs = state.uptimeSnapshotMs - 10_000;
+    await wrapper.vm.$nextTick();
+    expect(state.runningUptimeSeconds).toBe(2);
+    expect(wrapper.text()).toContain('00:00:02');
   });
 
   it('今日统计失败时显示占位符和独立重试入口', async () => {

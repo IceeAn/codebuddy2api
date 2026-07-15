@@ -228,4 +228,23 @@ describe('CDynamicTags', () => {
     const input = wrapper.find('input');
     expect(input.classes()).toContain('placeholder:text-muted/60');
   });
+
+  it('trim 后的重复标签不会再次加入', async () => {
+    const wrapper = mount(CDynamicTags, { props: { modelValue: ['alpha'] } });
+    const input = wrapper.get('input');
+    await input.setValue('  alpha  ');
+    await input.trigger('keyup', { key: 'Enter' });
+    expect(wrapper.emitted('update:modelValue')).toBeFalsy();
+    expect((input.element as HTMLInputElement).value).toBe('');
+
+    await input.setValue('alpha,beta,beta,');
+    expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual([['alpha', 'beta']]);
+  });
+
+  it('每个删除按钮都能进入 Tab 顺序', () => {
+    const wrapper = mount(CDynamicTags, { props: { modelValue: ['a', 'b'] } });
+    wrapper.findAll('.c-dynamic-tags-remove').forEach((button) => {
+      expect(button.attributes('tabindex')).toBeUndefined();
+    });
+  });
 });

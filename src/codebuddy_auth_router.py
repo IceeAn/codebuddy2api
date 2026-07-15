@@ -9,9 +9,10 @@ from .auth_router import require_session_user
 from .auth_types import AuthenticatedUser
 from .codebuddy_oauth import (
     AUTH_START_FAILED_MESSAGE,
+    AuthStartLimitError,
+    auth_state_store,
     consume_auth_state,
     poll_codebuddy_auth_status,
-    remember_auth_state,
     save_codebuddy_token,
     start_codebuddy_auth,
     validate_auth_state_owner,
@@ -22,9 +23,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(route_class=PrivateNoStoreRoute)
 
 
-@router.get("/auth/start", summary="Start CodeBuddy Authentication")
+@router.post("/auth/start", summary="Start CodeBuddy Authentication")
 async def start_device_auth(_user: AuthenticatedUser = Depends(require_session_user)):
     """启动 CodeBuddy 认证流程。"""
+    try:
+        reservation = auth_state_store.begin_start(_user)
+    except AuthStartLimitError as error:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many active or recent authentication starts",
+            headers={"Retry-After": str(error.retry_after)},
+        ) from error
+
     try:
         logger.info("开始启动CodeBuddy认证流程...")
         real_auth_result = await start_codebuddy_auth()
@@ -38,7 +48,7 @@ async def start_device_auth(_user: AuthenticatedUser = Depends(require_session_u
                     "error": "invalid_auth_state",
                     "message": "认证服务返回了无效的 auth_state",
                 }
-            if not remember_auth_state(auth_state, _user):
+            if not auth_state_store.finish_start(reservation, auth_state, _user):
                 logger.error("CodeBuddy认证API返回了仍被占用的auth_state")
                 return {
                     "success": False,
@@ -48,7 +58,7 @@ async def start_device_auth(_user: AuthenticatedUser = Depends(require_session_u
             logger.info("CodeBuddy认证API启动成功!")
             return real_auth_result
 
-        logger.warning(f"真实认证API失败: {real_auth_result}")
+        logger.warning("真实认证API启动失败")
         return real_auth_result
 
     except Exception:
@@ -58,6 +68,8 @@ async def start_device_auth(_user: AuthenticatedUser = Depends(require_session_u
             "error": "Unexpected error",
             "message": AUTH_START_FAILED_MESSAGE,
         }
+    finally:
+        auth_state_store.cancel_start(reservation)
 
 
 @router.post("/auth/poll", summary="Poll for OAuth token")
@@ -83,7 +95,7 @@ async def poll_for_token(
     if not validate_auth_state_owner(auth_state, _user):
         raise HTTPException(status_code=403, detail="Invalid or expired auth_state")
 
-    logger.info(f"轮询CodeBuddy认证状态: {auth_state}")
+    logger.info("轮询 CodeBuddy 认证状态")
     poll_result = await poll_codebuddy_auth_status(auth_state)
 
     if poll_result.get("status") == "success":
@@ -122,8 +134,7 @@ async def poll_for_token(
     return JSONResponse(
         content={
             "error": "auth_error",
-            "error_description": poll_result.get("message", "认证过程发生错误"),
-            "details": poll_result,
+            "error_description": "认证过程发生错误",
         },
         status_code=400,
     )
@@ -140,24 +151,3 @@ async def cancel_auth(
     if not consume_auth_state(auth_state, _user):
         raise HTTPException(status_code=403, detail="Invalid or expired auth_state")
     return {"cancelled": True}
-
-
-@router.get(
-    "/auth/callback",
-    summary="OAuth2 callback endpoint",
-)
-async def oauth_callback(code: str = None, state: str = None, error: str = None):
-    """OAuth2 回调端点。"""
-    if error:
-        return JSONResponse(
-            content={"error": error, "error_description": "授权被拒绝或出现错误"},
-            status_code=400,
-        )
-
-    return JSONResponse(
-        content={
-            "message": "授权成功！请返回应用程序。",
-            "code": code,
-            "state": state,
-        }
-    )

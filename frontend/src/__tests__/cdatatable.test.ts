@@ -3,17 +3,28 @@ import { mount } from '@vue/test-utils';
 import { h } from 'vue';
 import CDataTable, { type Column } from '../components/ui/CDataTable.vue';
 
+const rowKeys = new WeakMap<Record<string, unknown>, number>();
+let nextRowKey = 0;
+
+function stableTestRowKey(row: Record<string, unknown>): number {
+  const existing = rowKeys.get(row);
+  if (existing !== undefined) return existing;
+  const created = nextRowKey++;
+  rowKeys.set(row, created);
+  return created;
+}
+
 describe('CDataTable', () => {
   it('渲染 table 元素', () => {
     const wrapper = mount(CDataTable, {
-      props: { columns: [{ title: '名称', key: 'name' }], data: [] },
+      props: { rowKey: stableTestRowKey, columns: [{ title: '名称', key: 'name' }], data: [] },
     });
     expect(wrapper.find('table').exists()).toBe(true);
   });
 
   it('定位容器与横向滚动容器分离', () => {
     const wrapper = mount(CDataTable, {
-      props: { columns: [{ title: '名称', key: 'name' }], data: [] },
+      props: { rowKey: stableTestRowKey, columns: [{ title: '名称', key: 'name' }], data: [] },
     });
     const container = wrapper.find('.c-data-table');
     expect(container.classes()).toContain('rounded-lg');
@@ -26,6 +37,7 @@ describe('CDataTable', () => {
   it('渲染表头 thead 与 th 文本', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [
           { title: '名称', key: 'name' },
           { title: '年龄', key: 'age' },
@@ -41,7 +53,7 @@ describe('CDataTable', () => {
 
   it('表头含 h-10 与 uppercase class', () => {
     const wrapper = mount(CDataTable, {
-      props: { columns: [{ title: '名称', key: 'name' }], data: [] },
+      props: { rowKey: stableTestRowKey, columns: [{ title: '名称', key: 'name' }], data: [] },
     });
     const th = wrapper.find('thead th');
     expect(th.classes()).toContain('h-10');
@@ -53,6 +65,7 @@ describe('CDataTable', () => {
   it('渲染数据行（row[key]）', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'name' }],
         data: [
           { name: 'Alice', age: 30 },
@@ -69,6 +82,7 @@ describe('CDataTable', () => {
   it('render 函数渲染自定义内容', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [
           {
             title: '操作',
@@ -87,6 +101,7 @@ describe('CDataTable', () => {
   it('render 返回字符串直接显示', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [
           {
             title: '时间',
@@ -103,6 +118,7 @@ describe('CDataTable', () => {
   it('width 透传到 th style', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'name', width: 120 }],
         data: [],
       },
@@ -115,6 +131,7 @@ describe('CDataTable', () => {
   it('minWidth 透传到 th style（兼容现有用法）', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'name', minWidth: 160 }],
         data: [],
       },
@@ -127,6 +144,7 @@ describe('CDataTable', () => {
   it('align=right 时 th/td 含 text-right', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '数量', key: 'count', align: 'right' }],
         data: [{ count: 5 }],
       },
@@ -138,6 +156,7 @@ describe('CDataTable', () => {
   it('headerClassName 只应用到 th，不影响 td', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '操作', key: 'actions', headerClassName: 'table-action-header' }],
         data: [{ actions: '删除' }],
       },
@@ -149,6 +168,7 @@ describe('CDataTable', () => {
   it('align=left（默认）时 th/td 含 text-left', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'name' }],
         data: [{ name: 'A' }],
       },
@@ -160,6 +180,7 @@ describe('CDataTable', () => {
   it('align=center 时 th/td 含 text-center', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'name', align: 'center' }],
         data: [{ name: 'A' }],
       },
@@ -171,6 +192,7 @@ describe('CDataTable', () => {
   it('ellipsis=true 时 td 含 truncate 与 max-w-0', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'name', ellipsis: true }],
         data: [{ name: 'A' }],
       },
@@ -184,6 +206,7 @@ describe('CDataTable', () => {
   it('ellipsis={tooltip:true} 时用 CTooltip 包裹', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'name', ellipsis: { tooltip: true } }],
         data: [{ name: 'A' }],
       },
@@ -194,6 +217,7 @@ describe('CDataTable', () => {
   it('ellipsis={tooltip:true} 时文本节点自身可收缩并显示省略号', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '文件', key: 'filename', ellipsis: { tooltip: true } }],
         data: [{ filename: 'codebuddy_token_extremely_long_filename_without_breaks.json' }],
       },
@@ -213,6 +237,7 @@ describe('CDataTable', () => {
   it('ellipsis={tooltip:false} 时不包裹 CTooltip 但仍 truncate', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'name', ellipsis: { tooltip: false } }],
         data: [{ name: 'A' }],
       },
@@ -225,6 +250,7 @@ describe('CDataTable', () => {
   it('行 hover 含 hover:bg-surface-2', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'name' }],
         data: [{ name: 'A' }],
       },
@@ -236,7 +262,7 @@ describe('CDataTable', () => {
 
   it('空数据渲染默认空状态', () => {
     const wrapper = mount(CDataTable, {
-      props: { columns: [{ title: '名称', key: 'name' }], data: [] },
+      props: { rowKey: stableTestRowKey, columns: [{ title: '名称', key: 'name' }], data: [] },
     });
     const empty = wrapper.find('.c-data-table-empty');
     expect(empty.exists()).toBe(true);
@@ -248,7 +274,7 @@ describe('CDataTable', () => {
 
   it('empty slot 覆盖默认空状态', () => {
     const wrapper = mount(CDataTable, {
-      props: { columns: [{ title: '名称', key: 'name' }], data: [] },
+      props: { rowKey: stableTestRowKey, columns: [{ title: '名称', key: 'name' }], data: [] },
       slots: { empty: '自定义空状态' },
     });
     expect(wrapper.text()).toContain('自定义空状态');
@@ -257,6 +283,7 @@ describe('CDataTable', () => {
   it('loading=true 时遮罩正文、保留数据行与无障碍说明', async () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'name' }],
         data: [{ name: 'A' }],
         loading: true,
@@ -277,6 +304,7 @@ describe('CDataTable', () => {
   it('loading=false 时不渲染覆盖层', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'name' }],
         data: [{ name: 'A' }],
         loading: false,
@@ -291,6 +319,7 @@ describe('CDataTable', () => {
     try {
       const wrapper = mount(CDataTable, {
         props: {
+          rowKey: stableTestRowKey,
           columns: [{ title: '名称', key: 'name' }],
           data: [],
           loading: false,
@@ -319,6 +348,7 @@ describe('CDataTable', () => {
     try {
       const wrapper = mount(CDataTable, {
         props: {
+          rowKey: stableTestRowKey,
           columns: [{ title: '名称', key: 'name' }],
           data: [],
           loading: true,
@@ -340,6 +370,7 @@ describe('CDataTable', () => {
     try {
       const wrapper = mount(CDataTable, {
         props: {
+          rowKey: stableTestRowKey,
           columns: [{ title: '名称', key: 'name' }],
           data: [],
           loading: true,
@@ -367,6 +398,7 @@ describe('CDataTable', () => {
   it('loading 遮罩使用透明度过渡', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'name' }],
         data: [],
         loading: true,
@@ -379,6 +411,7 @@ describe('CDataTable', () => {
   it('loading 遮罩从表头下方开始并覆盖表格正文', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'name' }],
         data: [{ name: 'A' }],
         loading: true,
@@ -395,6 +428,7 @@ describe('CDataTable', () => {
   it('loading 指示器的长短列表定位交由容器响应式样式处理', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'name' }],
         data: Array.from({ length: 100 }, (_, index) => ({ name: `row-${index}` })),
         loading: true,
@@ -411,6 +445,7 @@ describe('CDataTable', () => {
   it('loading 且无数据时预留最小正文高度', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'name' }],
         data: [],
         loading: true,
@@ -425,6 +460,7 @@ describe('CDataTable', () => {
     vi.setSystemTime(0);
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'name' }],
         data: [],
         loading: true,
@@ -443,6 +479,7 @@ describe('CDataTable', () => {
   it('error=true 且无数据时不显示空状态', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'name' }],
         data: [],
         error: true,
@@ -456,6 +493,7 @@ describe('CDataTable', () => {
   it('size=small 时行高 h-9', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'name' }],
         data: [{ name: 'A' }],
         size: 'small',
@@ -468,6 +506,7 @@ describe('CDataTable', () => {
   it('size=default（默认）时行高 h-11', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'name' }],
         data: [{ name: 'A' }],
       },
@@ -478,6 +517,7 @@ describe('CDataTable', () => {
   it('className 透传到 td', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'name', className: 'mono' }],
         data: [{ name: 'A' }],
       },
@@ -488,6 +528,7 @@ describe('CDataTable', () => {
   it('row 缺少 key 时显示空', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'missing' }],
         data: [{ other: 'A' }],
       },
@@ -503,6 +544,7 @@ describe('CDataTable', () => {
   it('bordered prop 兼容（始终有 border）', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'name' }],
         data: [],
         bordered: false,
@@ -514,6 +556,7 @@ describe('CDataTable', () => {
   it('多列渲染顺序正确', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [
           { title: 'A', key: 'a' },
           { title: 'B', key: 'b' },
@@ -532,6 +575,7 @@ describe('CDataTable', () => {
   it('width 为字符串时直接作为 CSS 值', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'name', width: '10rem' }],
         data: [],
       },
@@ -543,6 +587,7 @@ describe('CDataTable', () => {
   it('minWidth 为字符串时直接作为 CSS 值', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'name', minWidth: '12rem' }],
         data: [],
       },
@@ -554,6 +599,7 @@ describe('CDataTable', () => {
   it('ellipsis tooltip 配 render 返回 VNode 时不包裹 CTooltip（只 truncate）', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [
           {
             title: '操作',
@@ -572,6 +618,7 @@ describe('CDataTable', () => {
   it('title 为 undefined 时 th 渲染空', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ key: 'name' }],
         data: [{ name: 'A' }],
       },
@@ -582,6 +629,7 @@ describe('CDataTable', () => {
   it('render 返回数字时显示数字字符串', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [
           {
             title: '数量',
@@ -598,6 +646,7 @@ describe('CDataTable', () => {
   it('ellipsis 默认（true）含 tooltip', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'name', ellipsis: true }],
         data: [{ name: 'A' }],
       },
@@ -608,6 +657,7 @@ describe('CDataTable', () => {
   it('无 ellipsis 时不包裹 CTooltip', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'name' }],
         data: [{ name: 'A' }],
       },
@@ -618,6 +668,7 @@ describe('CDataTable', () => {
   it('loading 且 data 为空时不显示空状态', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'name' }],
         data: [],
         loading: true,
@@ -630,6 +681,7 @@ describe('CDataTable', () => {
   it('bordered=true 时也有 border（兼容）', () => {
     const wrapper = mount(CDataTable, {
       props: {
+        rowKey: stableTestRowKey,
         columns: [{ title: '名称', key: 'name' }],
         data: [],
         bordered: true,
@@ -655,14 +707,34 @@ describe('CDataTable', () => {
     expect(rows[1].text()).toContain('B');
   });
 
-  it('未传 rowKey 时回退用 index 作为 key', () => {
-    const wrapper = mount(CDataTable, {
-      props: {
-        columns: [{ title: '名称', key: 'name' }],
-        data: [{ name: 'A' }, { name: 'B' }],
-      },
-    });
-    const rows = wrapper.findAll('tbody tr');
-    expect(rows.length).toBe(2);
+  it('缺少 rowKey 或行中缺少对应键时快速失败', () => {
+    expect(() =>
+      mount(CDataTable, {
+        props: {
+          columns: [{ title: '名称', key: 'name' }],
+          data: [{ name: 'A' }],
+        } as never,
+      }),
+    ).toThrow('CDataTable.rowKey');
+
+    expect(() =>
+      mount(CDataTable, {
+        props: {
+          columns: [{ title: '名称', key: 'name' }],
+          data: [{ name: 'A' }],
+          rowKey: 'id',
+        },
+      }),
+    ).toThrow('缺少稳定键 id');
+
+    expect(() =>
+      mount(CDataTable, {
+        props: {
+          columns: [{ title: '名称', key: 'name' }],
+          data: [{ name: 'A' }],
+          rowKey: () => null as never,
+        },
+      }),
+    ).toThrow('rowKey 函数返回值');
   });
 });

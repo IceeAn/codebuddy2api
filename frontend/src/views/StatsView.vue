@@ -57,11 +57,15 @@ import {
   sourceLabel,
   toLocalInputValue,
 } from '../utils/stats';
+import { useSessionStore } from '../stores/session';
+import { adminQueryKeys } from '../utils/adminQueryKeys';
 
 const REQUEST_PAGE_SIZES = [10, 20, 50, 100] as const;
 const DIMENSION_PAGE_SIZE = 50;
 const timezone = resolveBrowserTimeZone();
 const initialRange = buildPresetRange('7d');
+const session = useSessionStore();
+const queryKeys = adminQueryKeys(session.username);
 
 const rangePreset = ref<StatsRangePreset>('7d');
 const range = reactive({ startAt: initialRange.startAt, endAt: initialRange.endAt });
@@ -144,7 +148,7 @@ async function fetchRequestsFirstPage(): Promise<StatsRequestsFirstPage> {
 }
 
 const overviewQuery = useQuery({
-  queryKey: computed(() => ['admin-stats-overview', queryParams.value]),
+  queryKey: computed(() => queryKeys.statsOverview(queryParams.value)),
   queryFn: () => adminApi.statsOverview(queryParamsForFetch()),
   placeholderData: (previousData) => previousData,
   refetchOnMount: 'always',
@@ -152,7 +156,7 @@ const overviewQuery = useQuery({
 });
 
 const requestsQuery = useQuery({
-  queryKey: computed(() => ['admin-stats-requests', queryParams.value, requestPageSize.value]),
+  queryKey: computed(() => [...queryKeys.statsRequests(queryParams.value), requestPageSize.value]),
   queryFn: fetchRequestsFirstPage,
   placeholderData: (previousData) => previousData,
   refetchOnMount: 'always',
@@ -186,6 +190,15 @@ watch(requestPageSize, resetPagination, { flush: 'sync' });
 
 const activeRequestPage = computed(() => requestPageData.value ?? requestsQuery.data.value);
 const requestItems = computed(() => activeRequestPage.value?.items ?? []);
+const requestRows = computed(() => {
+  const page = activeRequestPage.value;
+  if (!page) return [];
+  const snapshot: RequestPaginationSnapshot = {
+    id: page.snapshot_id,
+    time: page.snapshot_time,
+  };
+  return page.items.map((request) => ({ request, snapshot }));
+});
 const currentRequestPage = computed(() => activeRequestPage.value?.page ?? 1);
 const requestTotal = computed(() => activeRequestPage.value?.total ?? 0);
 const requestTotalPages = computed(() => activeRequestPage.value?.total_pages ?? 0);
@@ -441,14 +454,17 @@ const detailError = ref('');
 const detail = ref<StatsRequestRecord | null>(null);
 let detailRequestGeneration = 0;
 
-async function openDetail(request: StatsRequestRecord): Promise<void> {
+async function openDetail(
+  request: StatsRequestRecord,
+  snapshot: RequestPaginationSnapshot,
+): Promise<void> {
   const generation = ++detailRequestGeneration;
   detailOpen.value = true;
   detailLoading.value = true;
   detailError.value = '';
   detail.value = null;
   try {
-    const result = await adminApi.statsRequestDetail(request.id);
+    const result = await adminApi.statsRequestDetail(request.id, snapshot);
     if (generation === detailRequestGeneration) detail.value = result;
   } catch (error) {
     if (generation === detailRequestGeneration) {
@@ -935,12 +951,12 @@ function breakdownRows(kind: 'models' | 'api_keys' | 'credentials'): RankingRow[
             </thead>
             <tbody>
               <tr
-                v-for="request in requestItems"
+                v-for="{ request, snapshot } in requestRows"
                 :key="request.id"
                 class="cursor-pointer border-t border-border/60 transition-colors hover:bg-surface-2"
                 tabindex="0"
-                @click="openDetail(request)"
-                @keyup.enter="openDetail(request)"
+                @click="openDetail(request, snapshot)"
+                @keyup.enter="openDetail(request, snapshot)"
               >
                 <td class="px-4 py-3 whitespace-nowrap">
                   {{ formatTimestamp(request.started_at, timezone) }}

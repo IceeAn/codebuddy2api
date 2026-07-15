@@ -70,6 +70,10 @@ class FrontendRouterTests(unittest.IsolatedAsyncioTestCase):
             with mock.patch("src.frontend_router.DIST_DIR", dist_dir):
                 response = await get_frontend_static_response("assets/app.js")
                 self.assertTrue(str(response.path).endswith("assets/app.js"))
+                self.assertEqual(
+                    response.headers["Cache-Control"],
+                    "public, max-age=0, must-revalidate",
+                )
 
                 with self.assertRaises(HTTPException) as context:
                     await get_frontend_static_response("../secret.txt")
@@ -92,6 +96,34 @@ class FrontendRouterTests(unittest.IsolatedAsyncioTestCase):
                 response = await get_frontend_static_response("assets/codebuddy2api.svg")
 
         self.assertEqual(Path(response.path).resolve(), icon_file.resolve())
+        self.assertEqual(
+            response.headers["Cache-Control"],
+            "public, max-age=0, must-revalidate",
+        )
+
+    async def test_hashed_vite_assets_receive_long_lived_immutable_cache(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            dist_dir = Path(tmp_dir)
+            (dist_dir / "assets").mkdir()
+            for filename in (
+                "index-D9AGu9yF.js",
+                "index-D9AGu9yF.css",
+                "font-DjKNqYRj.woff2",
+            ):
+                (dist_dir / "assets" / filename).write_bytes(b"asset")
+
+            with mock.patch("src.frontend_router.DIST_DIR", dist_dir):
+                for filename in (
+                    "index-D9AGu9yF.js",
+                    "index-D9AGu9yF.css",
+                    "font-DjKNqYRj.woff2",
+                ):
+                    with self.subTest(filename=filename):
+                        response = await get_frontend_static_response(f"assets/{filename}")
+                        self.assertEqual(
+                            response.headers["Cache-Control"],
+                            "public, max-age=31536000, immutable",
+                        )
 
     async def test_missing_static_asset_inside_dist_returns_404(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

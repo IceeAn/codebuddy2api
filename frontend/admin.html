@@ -1301,7 +1301,13 @@
             <div class="login-subtitle">
                 请输入用户名和密码以访问控制面板
             </div>
-            <form class="login-form" onsubmit="handleLogin(event)">
+            <div id="sessionRestoreError" class="login-error hidden">
+                <div id="sessionRestoreErrorText"></div>
+                <button id="sessionRestoreRetryButton" type="button" class="login-button" style="margin-top: 0.75rem;" onclick="initializeAuthSession()">
+                    重试
+                </button>
+            </div>
+            <form id="loginForm" class="login-form" onsubmit="handleLogin(event)">
                 <input
                     type="text"
                     id="loginUsername"
@@ -1392,14 +1398,14 @@
                     <!-- 服务状态卡片 -->
                     <div class="stat-card">
                         <div class="stat-card-header">
-                            <div class="stat-card-icon success" id="serviceStatusIcon">
+                            <div class="stat-card-icon warning" id="serviceStatusIcon">
                                 <i class="fas fa-server"></i>
                             </div>
                             <div class="status-indicator" id="serviceStatus">
-                                <span class="status-dot online" id="statusDot"></span>
+                                <span class="status-dot warning" id="statusDot"></span>
                             </div>
                         </div>
-                        <div class="stat-value" id="statusText">运行中</div>
+                        <div class="stat-value" id="statusText">加载中</div>
                         <div class="stat-label">服务运行状态</div>
                         <div class="stat-trend" id="uptimeTrend">
                             <i class="fas fa-clock"></i> <span id="uptime">运行时长加载中...</span>
@@ -1631,7 +1637,11 @@
                             type="text"
                             id="apiKeyName"
                             class="form-input"
+                            maxlength="80"
+                            aria-describedby="apiKeyNameLength"
+                            oninput="updateApiKeyNameLength()"
                             placeholder="例如 opencode、本地测试、CI">
+                        <div id="apiKeyNameLength" style="margin-top: 0.35rem; text-align: right; color: var(--text-secondary); font-size: 0.8rem;">0/80</div>
                     </div>
                     <button class="btn btn-success" onclick="createApiKey()">
                         <i class="fas fa-plus"></i> 生成 API Key
@@ -1741,7 +1751,7 @@
                         </div>
                     </div>
                     <div style="margin-top: 1.5rem;">
-                        <button class="btn btn-primary" onclick="saveSettings()">
+                        <button id="saveSettingsButton" class="btn btn-primary" onclick="saveSettings()" disabled>
                             <i class="fas fa-save"></i> 保存设置
                         </button>
                         <small style="display: block; margin-top: 1rem; color: var(--secondary-color);">
@@ -1788,6 +1798,10 @@
         let authPollingInterval = null;
         let authPollingAttempts = 0;
         let authFlowGeneration = 0;
+        let sessionBoundaryGeneration = 0;
+        let sessionAbortController = new AbortController();
+        let sessionRestoreGeneration = 0;
+        let sessionRestoreController = null;
         let isAuthenticated = false;
         let credentialsCache = [];
         let apiKeysCache = [];
@@ -1812,6 +1826,9 @@
         let statsDimensionCursor = null;
         let statsDimensionNextCursor = null;
         let statsDimensionCursorHistory = [];
+        let settingsBaseline = null;
+        let settingsSaving = false;
+        const legacyServiceStartedAt = performance.now();
 
         const TAB_IDS = ['dashboard', 'stats', 'credentials', 'api-keys', 'api-test', 'settings'];
         const TAB_LOADERS = {
@@ -1824,7 +1841,8 @@
         };
         const TAB_REFRESH_LOADERS = {
             ...TAB_LOADERS,
-            'api-test': () => loadModelOptions(true)
+            'api-test': () => loadModelOptions(true),
+            settings: () => loadSettings()
         };
         const fallbackApiModels = ['glm-5.2', 'deepseek-v4-pro'];
         const pendingApiKeysLeaveWarning = '仍有未保存的 API Key，离开后将无法再次查看。确定要离开吗？';
@@ -1832,11 +1850,6 @@
         // 初始化
         document.addEventListener('DOMContentLoaded', function() {
             initializeTheme();
-            
-            // 设置服务启动时间
-            if (!sessionStorage.getItem('serviceStartTime')) {
-                sessionStorage.setItem('serviceStartTime', Date.now().toString());
-            }
             
             const savedUsername = sessionStorage.getItem('serviceUsername') || '';
             if (savedUsername) {
@@ -1858,6 +1871,217 @@
 
         function elementById(id) {
             return document.getElementById(id);
+        }
+
+        class SessionBoundaryCancelledError extends Error {
+            constructor() {
+                super('会话已切换');
+                this.name = 'SessionBoundaryCancelledError';
+            }
+        }
+
+        function isSessionBoundaryCancellation(error) {
+            return error instanceof SessionBoundaryCancelledError;
+        }
+
+        function assertCurrentSessionBoundary(generation) {
+            if (generation !== sessionBoundaryGeneration) {
+                throw new SessionBoundaryCancelledError();
+            }
+        }
+
+        async function consumeSessionResponse(generation, operation) {
+            try {
+                const result = await operation();
+                assertCurrentSessionBoundary(generation);
+                return result;
+            } catch (error) {
+                assertCurrentSessionBoundary(generation);
+                throw error;
+            }
+        }
+
+        function boundMember(target, property) {
+            const value = Reflect.get(target, property, target);
+            return typeof value === 'function' ? value.bind(target) : value;
+        }
+
+        function wrapSessionReader(reader, generation) {
+            return new Proxy(reader, {
+                get(target, property) {
+                    if (property === 'read') {
+                        return (...args) => consumeSessionResponse(
+                            generation,
+                            () => target.read(...args)
+                        );
+                    }
+                    return boundMember(target, property);
+                }
+            });
+        }
+
+        function wrapSessionBody(body, generation) {
+            return new Proxy(body, {
+                get(target, property) {
+                    if (property === 'getReader') {
+                        return (...args) => wrapSessionReader(target.getReader(...args), generation);
+                    }
+                    return boundMember(target, property);
+                }
+            });
+        }
+
+        const sessionResponseBodyMethods = new Set([
+            'arrayBuffer',
+            'blob',
+            'bytes',
+            'formData',
+            'json',
+            'text'
+        ]);
+
+        function wrapSessionResponse(response, generation) {
+            const body = response.body ? wrapSessionBody(response.body, generation) : null;
+            return new Proxy(response, {
+                get(target, property) {
+                    if (property === 'body') return body;
+                    if (property === 'clone') {
+                        return () => wrapSessionResponse(target.clone(), generation);
+                    }
+                    const member = boundMember(target, property);
+                    if (sessionResponseBodyMethods.has(property) && typeof member === 'function') {
+                        return (...args) => consumeSessionResponse(
+                            generation,
+                            () => member(...args)
+                        );
+                    }
+                    return member;
+                }
+            });
+        }
+
+        async function sessionFetch(input, init = {}) {
+            const generation = sessionBoundaryGeneration;
+            const requestInit = {...init, signal: sessionAbortController.signal};
+            try {
+                const response = await fetch(input, requestInit);
+                assertCurrentSessionBoundary(generation);
+                return wrapSessionResponse(response, generation);
+            } catch (error) {
+                assertCurrentSessionBoundary(generation);
+                throw error;
+            }
+        }
+
+        function clearUserDataDom() {
+            const emptyHtmlIds = [
+                'credentialsList',
+                'currentCredentialStatus',
+                'apiKeysList',
+                'pendingApiKeysList',
+                'settingsForm',
+                'statsDataQuality',
+                'statsChart',
+                'statsModelRanking',
+                'statsApiKeyRanking',
+                'statsCredentialRanking',
+                'statsRequestsBody',
+                'statsDetailContent',
+                'statsDimensionContent'
+            ];
+            emptyHtmlIds.forEach(id => {
+                const element = elementById(id);
+                if (element) element.innerHTML = '';
+            });
+
+            const placeholderIds = [
+                'totalCredentials',
+                'apiEndpoint',
+                'statsRequestCount',
+                'statsSuccessRate',
+                'statsTotalTokens',
+                'statsTotalCredit',
+                'statsFirstOutput',
+                'statsTotalDuration'
+            ];
+            placeholderIds.forEach(id => {
+                const element = elementById(id);
+                if (element) element.textContent = '-';
+            });
+
+            const validCredentials = elementById('validCredentials');
+            if (validCredentials) validCredentials.textContent = '0';
+            const totalApiCalls = elementById('totalApiCalls');
+            if (totalApiCalls) totalApiCalls.textContent = '0';
+            const credentialUsagePercent = elementById('credentialUsagePercent');
+            if (credentialUsagePercent) credentialUsagePercent.textContent = '0%';
+            const testResult = elementById('testResult');
+            if (testResult) testResult.textContent = '点击"发送测试"查看API响应...';
+            const testModel = elementById('testModel');
+            if (testModel) {
+                testModel.disabled = false;
+                testModel.innerHTML = '<option value="">加载模型列表中...</option>';
+            }
+            const testStream = elementById('testStream');
+            if (testStream) {
+                testStream.checked = false;
+                testStream.disabled = false;
+            }
+            ['bearerToken', 'testMessage', 'statsDimensionSearch'].forEach(id => {
+                const element = elementById(id);
+                if (element) element.value = '';
+            });
+            updateRotationToggleButton({});
+            const newApiKeysSection = elementById('newApiKeysSection');
+            if (newApiKeysSection) newApiKeysSection.classList.add('hidden');
+            const statsLoadMore = elementById('statsLoadMore');
+            if (statsLoadMore) statsLoadMore.style.display = 'none';
+            const apiKeyName = elementById('apiKeyName');
+            if (apiKeyName) apiKeyName.value = '';
+            const apiKeyNameLength = elementById('apiKeyNameLength');
+            if (apiKeyNameLength) apiKeyNameLength.textContent = '0/80';
+            settingsBaseline = null;
+            settingsSaving = false;
+            const saveSettingsButton = elementById('saveSettingsButton');
+            if (saveSettingsButton) saveSettingsButton.disabled = true;
+            closeStatsDetail();
+            closeStatsDimension();
+        }
+
+        function resetSessionBoundary() {
+            sessionBoundaryGeneration += 1;
+            sessionAbortController.abort();
+            sessionAbortController = new AbortController();
+            authFlowGeneration += 1;
+            stopPolling();
+            currentAuthData = null;
+            authPollingAttempts = 0;
+            credentialsCache = [];
+            apiKeysCache = [];
+            pendingApiKeys = [];
+            apiModelsCache = [];
+            lastCredentialStatus = null;
+            statsRequestsCache = [];
+            statsNextCursor = null;
+            statsRequestsParamsSnapshot = null;
+            statsLoadGeneration += 1;
+            statsDetailGeneration += 1;
+            statsDimensionGeneration += 1;
+            statsDimensionParamsSnapshot = null;
+            statsDimensionAppliedSearch = '';
+            statsDimensionCursor = null;
+            statsDimensionNextCursor = null;
+            statsDimensionCursorHistory = [];
+            hideAuthSection();
+            resetAuthButton();
+            clearUserDataDom();
+        }
+
+        function establishAuthenticatedSession(username) {
+            resetSessionBoundary();
+            serviceUsername = username;
+            isAuthenticated = true;
+            sessionStorage.setItem('serviceUsername', serviceUsername);
         }
 
         function loadingMarkup(message = '加载中...') {
@@ -1902,6 +2126,10 @@
         function refreshCurrentTab() {
             const activeTab = document.querySelector('.tab-panel.active');
             if (!activeTab) return;
+            if (activeTab.id === 'settings' && isLegacySettingsDirty()
+                && !confirm('当前有未保存的设置，确定放弃修改并刷新吗？')) {
+                return;
+            }
             
             runTabLoader(activeTab.id, TAB_REFRESH_LOADERS);
             showNotification('数据已刷新', 'success', 2000);
@@ -1988,6 +2216,15 @@
 
         // 标签页切换
         function showTab(tabId) {
+            const activeTab = document.querySelector('.tab-panel.active');
+            if (activeTab?.id === 'settings' && tabId !== 'settings' && isLegacySettingsDirty()
+                && !confirm('当前有未保存的设置，确定放弃修改并离开吗？')) {
+                return;
+            }
+            if (activeTab?.id === 'settings' && tabId === 'settings' && isLegacySettingsDirty()
+                && !confirm('当前有未保存的设置，确定放弃修改并刷新吗？')) {
+                return;
+            }
             // 隐藏所有面板
             document.querySelectorAll('.tab-panel').forEach(panel => {
                 panel.classList.remove('active');
@@ -2041,33 +2278,66 @@
 
         // 登录与页面切换
         async function initializeAuthSession() {
+            const generation = ++sessionRestoreGeneration;
+            if (sessionRestoreController) sessionRestoreController.abort();
+            const controller = new AbortController();
+            sessionRestoreController = controller;
+            const retryButton = document.getElementById('sessionRestoreRetryButton');
+            if (retryButton) retryButton.disabled = true;
+            let timedOut = false;
+            const timeoutId = setTimeout(() => {
+                timedOut = true;
+                controller.abort();
+            }, 10000);
             try {
                 const response = await fetch('/auth/session', {
-                    credentials: 'same-origin'
+                    credentials: 'same-origin',
+                    signal: controller.signal
                 });
+                if (generation !== sessionRestoreGeneration) return;
                 if (response.ok) {
                     const data = await response.json();
-                    serviceUsername = data.username || serviceUsername;
-                    isAuthenticated = true;
-                    if (serviceUsername) {
-                        sessionStorage.setItem('serviceUsername', serviceUsername);
-                    }
+                    if (generation !== sessionRestoreGeneration) return;
+                    establishAuthenticatedSession(data.username || serviceUsername);
                     showDashboardPage();
                     loadDashboard();
                     return;
                 }
+                const challenge = (response.headers.get('WWW-Authenticate') || '').trim().toLowerCase();
+                if (response.status === 401 && challenge === 'bearer') {
+                    showLoginPage();
+                    return;
+                }
+                throw new Error(`HTTP ${response.status}`);
             } catch (error) {
-                // 没有可恢复会话时展示登录页。
+                if (generation !== sessionRestoreGeneration) return;
+                showSessionRestoreError(timedOut
+                    ? '登录状态确认超时，请重试'
+                    : '无法确认登录状态，请检查网络或稍后重试');
+            } finally {
+                clearTimeout(timeoutId);
+                if (generation === sessionRestoreGeneration) {
+                    sessionRestoreController = null;
+                    if (retryButton) retryButton.disabled = false;
+                }
             }
-
-            showLoginPage();
         }
 
         function showLoginPage() {
             document.getElementById('loginPage').classList.remove('hidden');
             document.getElementById('dashboardPage').classList.add('hidden');
+            document.getElementById('sessionRestoreError').classList.add('hidden');
+            document.getElementById('loginForm').classList.remove('hidden');
             document.getElementById('loginUsername').value = serviceUsername;
             document.getElementById('loginUsername').focus();
+        }
+
+        function showSessionRestoreError(message) {
+            document.getElementById('loginPage').classList.remove('hidden');
+            document.getElementById('dashboardPage').classList.add('hidden');
+            document.getElementById('loginForm').classList.add('hidden');
+            document.getElementById('sessionRestoreErrorText').textContent = message;
+            document.getElementById('sessionRestoreError').classList.remove('hidden');
         }
 
         function showDashboardPage() {
@@ -2106,9 +2376,7 @@
 
                 if (testResponse.ok) {
                     const data = await testResponse.json();
-                    serviceUsername = data.username || username;
-                    isAuthenticated = true;
-                    sessionStorage.setItem('serviceUsername', serviceUsername);
+                    establishAuthenticatedSession(data.username || username);
                     document.getElementById('loginPassword').value = '';
                     
                     showDashboardPage();
@@ -2137,7 +2405,26 @@
             loginError.classList.remove('hidden');
         }
         
+        function confirmLegacyLogout() {
+            const warnings = [];
+            if (pendingApiKeys.length > 0) {
+                warnings.push('仍有未保存的 API Key，退出后将无法再次查看。');
+            }
+            if (isLegacySettingsDirty()) {
+                warnings.push('当前有未保存的设置，退出后将放弃修改。');
+            }
+            return warnings.length === 0
+                || confirm(`${warnings.join('\n')}\n确定要退出登录吗？`);
+        }
+
         async function logout() {
+            if (!confirmLegacyLogout()) return;
+            resetSessionBoundary();
+            serviceUsername = '';
+            isAuthenticated = false;
+            sessionStorage.removeItem('serviceUsername');
+            document.getElementById('loginPassword').value = '';
+            showLoginPage();
             try {
                 await fetch('/auth/logout', {
                     method: 'POST',
@@ -2148,12 +2435,6 @@
                 // 即使服务端登出失败，也清理前端状态。
             }
 
-            serviceUsername = '';
-            isAuthenticated = false;
-            apiModelsCache = [];
-            sessionStorage.removeItem('serviceUsername');
-            document.getElementById('loginPassword').value = '';
-            showLoginPage();
             showNotification('已退出登录', 'info');
         }
 
@@ -2175,12 +2456,15 @@
 
         function safeExternalUrl(value) {
             try {
-                const rawValue = String(value ?? '').trim();
-                if (!rawValue) {
+                const rawValue = String(value ?? '');
+                if (!rawValue || rawValue !== rawValue.trim() || /[\u0000-\u001f\u007f]/u.test(rawValue)) {
                     return '#';
                 }
                 const url = new URL(rawValue);
-                return ['http:', 'https:'].includes(url.protocol) ? url.href : '#';
+                if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.username || url.password) {
+                    return '#';
+                }
+                return url.href;
             } catch (e) {
                 return '#';
             }
@@ -2206,7 +2490,7 @@
             apiKeysList.innerHTML = loadingMarkup();
 
             try {
-                const response = await fetch('/api/admin/api-keys', {
+                const response = await sessionFetch('/api/admin/api-keys', {
                     headers: getAuthHeaders()
                 });
 
@@ -2222,6 +2506,7 @@
                     apiKeysList.innerHTML = `<div class="status status-error">加载失败: ${escapeHtml(errorData.detail || response.status)}</div>`;
                 }
             } catch (error) {
+                if (isSessionBoundaryCancellation(error)) return;
                 apiKeysList.innerHTML = `<div class="status status-error">网络错误: ${escapeHtml(error.message)}</div>`;
             }
         }
@@ -2292,12 +2577,28 @@
             `).join('');
         }
 
+        function updateApiKeyNameLength() {
+            const nameInput = document.getElementById('apiKeyName');
+            const length = document.getElementById('apiKeyNameLength');
+            if (nameInput && length) {
+                length.textContent = `${nameInput.value.length}/80`;
+            }
+        }
+
         async function createApiKey() {
             const nameInput = document.getElementById('apiKeyName');
             const name = nameInput.value.trim();
+            if (!name) {
+                showNotification('请输入 API Key 名称', 'error');
+                return;
+            }
+            if (name.length > 80) {
+                showNotification('API Key 名称不能超过 80 个字符', 'error');
+                return;
+            }
 
             try {
-                const response = await fetch('/api/admin/api-keys', {
+                const response = await sessionFetch('/api/admin/api-keys', {
                     method: 'POST',
                     headers: getAuthHeaders(),
                     body: JSON.stringify({name})
@@ -2312,6 +2613,7 @@
                     });
                     displayPendingApiKeys();
                     nameInput.value = '';
+                    updateApiKeyNameLength();
                     showNotification('API Key 已生成', 'success');
                     loadApiKeys();
                 } else {
@@ -2319,6 +2621,7 @@
                     showNotification(`生成失败: ${errorData.detail || response.status}`, 'error');
                 }
             } catch (error) {
+                if (isSessionBoundaryCancellation(error)) return;
                 showNotification(`网络错误: ${error.message}`, 'error');
             }
         }
@@ -2346,12 +2649,13 @@
             }
 
             try {
-                const response = await fetch(`/api/admin/api-keys/${encodeURIComponent(keyId)}`, {
+                const response = await sessionFetch(`/api/admin/api-keys/${encodeURIComponent(keyId)}`, {
                     method: 'DELETE',
                     headers: getAuthHeaders()
                 });
 
                 if (response.ok) {
+                    dismissNewApiKey(keyId);
                     showNotification('API Key 已删除', 'success');
                     loadApiKeys();
                 } else {
@@ -2359,6 +2663,7 @@
                     showNotification(`删除失败: ${errorData.detail || response.status}`, 'error');
                 }
             } catch (error) {
+                if (isSessionBoundaryCancellation(error)) return;
                 showNotification(`网络错误: ${error.message}`, 'error');
             }
         }
@@ -2569,7 +2874,7 @@
 
             const overviewTask = (async () => {
                 try {
-                    const response = await fetch(`/api/admin/stats/overview?${statsQueryString(params)}`, { headers: getAuthHeaders() });
+                    const response = await sessionFetch(`/api/admin/stats/overview?${statsQueryString(params)}`, { headers: getAuthHeaders() });
                     if (generation !== statsLoadGeneration) return;
                     if (!response.ok) {
                         await handleApiError(response, '加载统计');
@@ -2589,7 +2894,7 @@
 
             const requestsTask = (async () => {
                 try {
-                    const response = await fetch(`/api/admin/stats/requests?${statsQueryString({ ...params, page: 1, page_size: statsRequestPageSize })}`, { headers: getAuthHeaders() });
+                    const response = await sessionFetch(`/api/admin/stats/requests?${statsQueryString({ ...params, page: 1, page_size: statsRequestPageSize })}`, { headers: getAuthHeaders() });
                     if (generation !== statsLoadGeneration) return;
                     if (!response.ok) {
                         await handleApiError(response, '加载请求明细');
@@ -2644,7 +2949,7 @@
             statsRequestPageLoading = true;
             renderLegacyStatsRequests();
             try {
-                const response = await fetch(`/api/admin/stats/requests?${statsQueryString(params)}`, { headers: getAuthHeaders() });
+                const response = await sessionFetch(`/api/admin/stats/requests?${statsQueryString(params)}`, { headers: getAuthHeaders() });
                 if (loadGeneration !== statsLoadGeneration || pageGeneration !== statsRequestPageGeneration) return;
                 if (!response.ok) {
                     await handleApiError(response, '加载请求分页');
@@ -2695,7 +3000,10 @@
             content.innerHTML = loadingMarkup('加载请求详情中...');
             dialog.showModal();
             try {
-                const response = await fetch(`/api/admin/stats/requests/${encodeURIComponent(eventId)}`, { headers: getAuthHeaders() });
+                const snapshotQuery = statsRequestSnapshot
+                    ? `?${statsQueryString({ snapshot_id: statsRequestSnapshot.id, snapshot_time: statsRequestSnapshot.time })}`
+                    : '';
+                const response = await sessionFetch(`/api/admin/stats/requests/${encodeURIComponent(eventId)}${snapshotQuery}`, { headers: getAuthHeaders() });
                 if (generation !== statsDetailGeneration) return;
                 if (!response.ok) {
                     await handleApiError(response, '加载请求详情');
@@ -2767,7 +3075,7 @@
                 limit: 50
             };
             try {
-                const response = await fetch(`/api/admin/stats/dimensions/${statsDimensionKind}?${statsQueryString(params)}`, { headers: getAuthHeaders() });
+                const response = await sessionFetch(`/api/admin/stats/dimensions/${statsDimensionKind}?${statsQueryString(params)}`, { headers: getAuthHeaders() });
                 if (generation !== statsDimensionGeneration) return false;
                 if (!response.ok) {
                     await handleApiError(response, '加载完整列表');
@@ -2850,7 +3158,7 @@
         async function loadDashboard() {
             // 更新服务状态
             try {
-                const response = await fetch('/health');
+                const response = await sessionFetch('/health');
                 if (response.ok) {
                     await response.json();
                     updateServiceStatus('online', '运行正常');
@@ -2860,6 +3168,7 @@
                     updateServiceStatusCard('warning');
                 }
             } catch (error) {
+                if (isSessionBoundaryCancellation(error)) return;
                 updateServiceStatus('offline', '服务离线');
                 updateServiceStatusCard('error');
                 console.error('Failed to load service status:', error);
@@ -2867,7 +3176,7 @@
 
             // 加载凭证统计
             try {
-                const credResponse = await fetch('/api/admin/status', {
+                const credResponse = await sessionFetch('/api/admin/status', {
                     headers: getAuthHeaders() 
                 });
                 if (credResponse.ok) {
@@ -2900,6 +3209,7 @@
                     document.getElementById('validCredentials').textContent = '0';
                 }
             } catch (error) {
+                if (isSessionBoundaryCancellation(error)) return;
                 console.error('Failed to load credentials count:', error);
                 document.getElementById('totalCredentials').textContent = '错误';
                 document.getElementById('validCredentials').textContent = '0';
@@ -2914,7 +3224,7 @@
                 const params = buildLegacyStatsParams();
                 params.start_at = Math.floor(new Date(new Date().setHours(0, 0, 0, 0)).getTime() / 1000);
                 params.traffic = 'all';
-                const statsResponse = await fetch(`/api/admin/stats/overview?${statsQueryString(params)}`, { headers: getAuthHeaders() });
+                const statsResponse = await sessionFetch(`/api/admin/stats/overview?${statsQueryString(params)}`, { headers: getAuthHeaders() });
                 if (statsResponse.ok) {
                     const statsData = await statsResponse.json();
                     elementById('totalApiCalls').textContent = formatStatsNumber(statsData.totals?.request_count || 0);
@@ -2923,6 +3233,7 @@
                     console.error('Failed to load usage stats:', statsResponse.status);
                 }
             } catch (error) {
+                if (isSessionBoundaryCancellation(error)) return;
                 elementById('totalApiCalls').textContent = '-';
                 console.error('Failed to load usage stats:', error);
             }
@@ -2932,10 +3243,9 @@
             const statusIcon = elementById('serviceStatusIcon');
             statusIcon.className = 'stat-card-icon ' + status;
             
-            // 更新运行时长（模拟）
+            // 使用单调时钟计算当前页面观察到的运行时长，避免系统时间回拨产生负数。
             const uptime = document.getElementById('uptime');
-            const startTime = sessionStorage.getItem('serviceStartTime') || Date.now();
-            const duration = Date.now() - startTime;
+            const duration = Math.max(0, performance.now() - legacyServiceStartedAt);
             const hours = Math.floor(duration / (1000 * 60 * 60));
             const minutes = Math.floor((duration % (1000 * 60 * 60)) / (1000 * 60));
             uptime.textContent = `${hours}h ${minutes}m`;
@@ -3005,7 +3315,7 @@
             credentialsList.innerHTML = loadingMarkup();
             
             try {
-                const response = await fetch('/api/admin/credentials', {
+                const response = await sessionFetch('/api/admin/credentials', {
                     headers: getAuthHeaders() 
                 });
                 
@@ -3027,6 +3337,7 @@
                     credentialsList.innerHTML = `<div class="status status-error">加载失败: ${escapeHtml(response.status)}</div>`;
                 }
             } catch (error) {
+                if (isSessionBoundaryCancellation(error)) return;
                 credentialsList.innerHTML = `<div class="status status-error">网络错误: ${escapeHtml(error.message)}</div>`;
             }
         }
@@ -3035,7 +3346,7 @@
             const statusDiv = elementById('currentCredentialStatus');
             
             try {
-                const response = await fetch('/api/admin/credentials', {
+                const response = await sessionFetch('/api/admin/credentials', {
                     headers: getAuthHeaders() 
                 });
                 
@@ -3046,6 +3357,7 @@
                     statusDiv.innerHTML = '<div class="status status-error">无法获取当前状态</div>';
                 }
             } catch (error) {
+                if (isSessionBoundaryCancellation(error)) return;
                 statusDiv.innerHTML = '<div class="status status-error">网络错误</div>';
             }
         }
@@ -3235,7 +3547,7 @@
             if (!confirm(`确定要删除凭证 #${index + 1} 吗？此操作不可恢复。`)) return;
             try {
                 const credential = getCredentialRecord(index);
-                const response = await fetch(`/api/admin/credentials/${encodeURIComponent(credential.credential_id)}`, {
+                const response = await sessionFetch(`/api/admin/credentials/${encodeURIComponent(credential.credential_id)}`, {
                     method: 'DELETE',
                     headers: getAuthHeaders(),
                 });
@@ -3249,6 +3561,7 @@
                     showNotification(`删除失败: ${err.detail || response.status}`, 'error');
                 }
             } catch (error) {
+                if (isSessionBoundaryCancellation(error)) return;
                 showNotification(`删除失败: ${error.message}`, 'error');
             }
         }
@@ -3262,7 +3575,7 @@
             }
 
             try {
-                const response = await fetch('/api/admin/credentials', {
+                const response = await sessionFetch('/api/admin/credentials', {
                     method: 'POST',
                     headers: getAuthHeaders(),
                     body: JSON.stringify({
@@ -3281,6 +3594,7 @@
                     showNotification(`添加失败: ${errorData.detail || '未知错误'}`, 'error');
                 }
             } catch (error) {
+                if (isSessionBoundaryCancellation(error)) return;
                 showNotification(`网络错误: ${error.message}`, 'error');
             }
         }
@@ -3290,7 +3604,7 @@
             
             try {
                 const credential = getCredentialRecord(index);
-                const response = await fetch(`/api/admin/credentials/${encodeURIComponent(credential.credential_id)}/select`, {
+                const response = await sessionFetch(`/api/admin/credentials/${encodeURIComponent(credential.credential_id)}/select`, {
                     method: 'POST',
                     headers: getAuthHeaders(),
                 });
@@ -3306,6 +3620,7 @@
                     showNotification(`选择失败: ${errorData.detail}`, 'error');
                 }
             } catch (error) {
+                if (isSessionBoundaryCancellation(error)) return;
                 showNotification(`网络错误: ${error.message}`, 'error');
             }
         }
@@ -3335,13 +3650,14 @@
         async function toggleAutoRotation() {
             const btn = document.getElementById('rotationToggleBtn');
             if (!btn || btn.disabled) return;
+            const generation = sessionBoundaryGeneration;
             const originalHtml = btn.innerHTML;
             
             btn.disabled = true;
             btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 处理中...';
             
             try {
-                const response = await fetch('/api/admin/credentials/rotation/toggle', {
+                const response = await sessionFetch('/api/admin/credentials/rotation/toggle', {
                     method: 'POST',
                     headers: getAuthHeaders()
                 });
@@ -3358,14 +3674,16 @@
                 displayCredentials();
                 
             } catch (error) {
+                if (isSessionBoundaryCancellation(error)) return;
                 showNotification(`操作失败: ${error.message}`, 'error');
                 btn.innerHTML = originalHtml;
             } finally {
-                btn.disabled = false;
+                if (generation === sessionBoundaryGeneration) btn.disabled = false;
             }
         }
         async function testCredential(index) {
             showNotification(`正在测试凭证 #${index + 1}...`, 'info');
+            const generation = sessionBoundaryGeneration;
             
             // 找到要测试的凭证的原始数据
             let originalCred;
@@ -3377,7 +3695,7 @@
             }
 
             try {
-                const response = await fetch(`/api/admin/credentials/${encodeURIComponent(originalCred.credential_id)}/test`, {
+                const response = await sessionFetch(`/api/admin/credentials/${encodeURIComponent(originalCred.credential_id)}/test`, {
                     method: 'POST',
                     headers: getAuthHeaders(),
                     body: JSON.stringify({})
@@ -3385,18 +3703,22 @@
                 const data = await response.json();
                 
                 if (response.ok && data.ok) {
-                    showNotification(`凭证 #${index + 1} 测试成功！ ✓`, 'success');
+                    const fallbackNote = data.model_source === 'configured_fallback'
+                        ? '（使用本地配置模型回退）'
+                        : '';
+                    showNotification(`凭证 #${index + 1} 测试成功！${fallbackNote} ✓`, data.model_source === 'configured_fallback' ? 'warning' : 'success');
                     credentialsCache[index].status = 'valid';
                 } else {
-                    showNotification(`凭证 #${index + 1} 无效或已过期 ✗`, 'error');
+                    showNotification(`凭证 #${index + 1} 测试失败：${data.detail || `HTTP ${response.status}`} ✗`, 'error');
                     credentialsCache[index].status = 'invalid';
                 }
             } catch (error) {
+                if (isSessionBoundaryCancellation(error)) return;
                 showNotification(`网络错误: ${error.message}`, 'error');
                 credentialsCache[index].status = 'invalid';
             } finally {
                 // 重新渲染列表以更新图标
-                displayCredentials();
+                if (generation === sessionBoundaryGeneration) displayCredentials();
             }
         }
 
@@ -3436,7 +3758,7 @@
             select.innerHTML = '<option value="">加载模型列表中...</option>';
 
             try {
-                const response = await fetch('/api/admin/playground/openai/v1/models', {
+                const response = await sessionFetch('/api/admin/playground/openai/v1/models', {
                     headers: getAuthHeaders()
                 });
                 if (!response.ok) {
@@ -3454,6 +3776,7 @@
                     throw new Error('模型列表为空');
                 }
             } catch (error) {
+                if (isSessionBoundaryCancellation(error)) return apiModelsCache;
                 apiModelsCache = [...fallbackApiModels];
                 showNotification(`模型列表加载失败，使用本地兜底: ${error.message}`, 'warning');
             }
@@ -3473,7 +3796,9 @@
         }
 
         async function testAPI() {
+            const generation = sessionBoundaryGeneration;
             const model = await getSelectedOrFallbackModel();
+            if (generation !== sessionBoundaryGeneration) return;
             const message = document.getElementById('testMessage').value;
             const streamInput = document.getElementById('testStream');
             const stream = streamInput.checked;
@@ -3488,7 +3813,7 @@
             streamInput.disabled = true;
 
             try {
-                const response = await fetch('/api/admin/playground/openai/v1/chat/completions', {
+                const response = await sessionFetch('/api/admin/playground/openai/v1/chat/completions', {
                     method: 'POST',
                     headers: getAuthHeaders(),
                     body: JSON.stringify({
@@ -3505,33 +3830,87 @@
                 }
 
                 if (stream) {
+                    if (!response.body) {
+                        throw new Error('响应体不可读');
+                    }
                     const reader = response.body.getReader();
                     const decoder = new TextDecoder();
                     resultDiv.textContent = '';
+                    let sseBuffer = '';
+                    let doneReceived = false;
 
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
+                    function consumeSseEvents(final = false) {
+                        const separatorPattern = /(?:\r\n|\r|\n)(?:\r\n|\r|\n)/;
+                        while (true) {
+                            const separator = separatorPattern.exec(sseBuffer);
+                            if (!separator) break;
+                            const rawEvent = sseBuffer.slice(0, separator.index);
+                            sseBuffer = sseBuffer.slice(separator.index + separator[0].length);
+                            const dataLines = rawEvent
+                                .split(/\r\n|\r|\n/)
+                                .filter(line => line.startsWith('data:'))
+                                .map(line => {
+                                    const value = line.slice(5);
+                                    return value.startsWith(' ') ? value.slice(1) : value;
+                                });
+                            if (dataLines.length === 0) continue;
+                            const payload = dataLines.join('\n');
+                            if (payload.trim() === '[DONE]') {
+                                doneReceived = true;
+                                return;
+                            }
+                            let parsed;
+                            try {
+                                parsed = JSON.parse(payload);
+                            } catch (_error) {
+                                throw new Error('SSE data 不是有效 JSON');
+                            }
+                            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Object.prototype.hasOwnProperty.call(parsed, 'error')) {
+                                const upstreamError = parsed.error;
+                                const detail = typeof upstreamError === 'string'
+                                    ? upstreamError
+                                    : upstreamError && typeof upstreamError.message === 'string'
+                                        ? upstreamError.message
+                                        : '上游返回流式错误';
+                                throw new Error(detail);
+                            }
+                            resultDiv.textContent += JSON.stringify(parsed, null, 2) + '\n\n';
+                        }
 
-                        const chunk = decoder.decode(value);
-                        const lines = chunk.split('\n');
-
-                        for (const line of lines) {
-                            if (line.startsWith('data: ')) {
-                                const data = line.slice(6);
-                                if (data.trim() === '[DONE]') {
-                                    resultDiv.textContent += '\n\n[流结束]';
-                                    continue;
-                                }
-                                try {
-                                    const parsed = JSON.parse(data);
-                                    resultDiv.textContent += JSON.stringify(parsed, null, 2) + '\n\n';
-                                } catch (e) {
-                                    // 忽略解析错误
-                                }
+                        if (final) {
+                            const hasTrailingData = sseBuffer
+                                .split(/\r\n|\r|\n/)
+                                .some(line => line.startsWith('data:'));
+                            sseBuffer = '';
+                            if (hasTrailingData) {
+                                throw new Error('SSE 流在事件结束前中断');
                             }
                         }
-                        resultDiv.scrollTop = resultDiv.scrollHeight;
+                    }
+
+                    try {
+                        while (!doneReceived) {
+                            const { done, value } = await reader.read();
+                            if (done) {
+                                sseBuffer += decoder.decode();
+                                consumeSseEvents(true);
+                                break;
+                            }
+                            sseBuffer += decoder.decode(value, { stream: true });
+                            consumeSseEvents();
+                            resultDiv.scrollTop = resultDiv.scrollHeight;
+                        }
+                        if (!doneReceived) {
+                            throw new Error('流式响应在 [DONE] 之前结束');
+                        }
+                        resultDiv.textContent += '\n[流结束]';
+                    } finally {
+                        try {
+                            await reader.cancel();
+                        } catch (_error) {
+                            // 连接已经关闭时 cancel 可能失败。
+                        }
+                        reader.releaseLock();
                     }
                 } else {
                     const data = await response.json();
@@ -3540,6 +3919,7 @@
 
                 showNotification('API 测试成功！', 'success');
             } catch (error) {
+                if (isSessionBoundaryCancellation(error)) return;
                 resultDiv.textContent = `错误: ${error.message}`;
                 showNotification(`测试失败: ${error.message}`, 'error');
             } finally {
@@ -3558,8 +3938,8 @@
             hideAuthSection();
             
             try {
-                const response = await fetch('/codebuddy/auth/start', {
-                    method: 'GET',
+                const response = await sessionFetch('/codebuddy/auth/start', {
+                    method: 'POST',
                     headers: getAuthHeaders()
                 });
                 const data = await response.json();
@@ -3572,6 +3952,13 @@
                 
                 // 修正：检查正确的响应字段 `verification_uri_complete`
                 if (response.ok && data.verification_uri_complete && data.auth_state) {
+                    const safeAuthUrl = safeExternalUrl(data.verification_uri_complete);
+                    if (safeAuthUrl === '#') {
+                        await cancelAuthState(data.auth_state, false);
+                        showNotification('❌ 认证服务返回了无效链接', 'error');
+                        resetAuthButton();
+                        return;
+                    }
                     // 保存所有必要信息以供轮询使用
                     currentAuthData = {
                         auth_state: data.auth_state
@@ -3579,7 +3966,7 @@
                     authPollingAttempts = 0;
 
                     // 修正：使用正确的字段来设置输入框的值，并显示该区域
-                    document.getElementById('authUrlInput').value = safeExternalUrl(data.verification_uri_complete);
+                    document.getElementById('authUrlInput').value = safeAuthUrl;
                     const section = document.getElementById('authUrlSection');
                     section.classList.remove('hidden');
                     section.style.display = 'block';
@@ -3660,7 +4047,7 @@
         async function cancelAuthState(authState, showMessage = true) {
             if (!authState) return;
             try {
-                const response = await fetch('/codebuddy/auth/cancel', {
+                const response = await sessionFetch('/codebuddy/auth/cancel', {
                     method: 'POST',
                     headers: getAuthHeaders(),
                     body: JSON.stringify({ auth_state: authState })
@@ -3668,6 +4055,7 @@
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 if (showMessage) showNotification('认证已取消', 'info');
             } catch (error) {
+                if (isSessionBoundaryCancellation(error)) return;
                 if (showMessage) showNotification(`取消认证失败: ${error.message}`, 'error');
             }
         }
@@ -3690,17 +4078,28 @@
             const authState = currentAuthData.auth_state;
             
             stopPolling(); // 清除之前的轮询
+            const startedAt = Date.now();
+            let transientFailures = 0;
+
+            const scheduleNextPoll = () => {
+                if (!isCurrentAuthFlow(flowGeneration, authState)) return;
+                const delay = Math.min(5000 * (2 ** Math.max(0, transientFailures - 1)), 30000);
+                authPollingInterval = setTimeout(() => {
+                    authPollingInterval = null;
+                    void poll();
+                }, delay);
+            };
             
             const poll = async () => {
                 if (!isCurrentAuthFlow(flowGeneration, authState)) return;
                 authPollingAttempts += 1;
-                if (authPollingAttempts > 60) {
+                if (Date.now() - startedAt >= 300000 || authPollingAttempts > 60) {
                     await cancelAuth(false);
                     showNotification('认证等待超时，请重新开始认证', 'warning');
                     return;
                 }
                 try {
-                    const response = await fetch('/codebuddy/auth/poll', {
+                    const response = await sessionFetch('/codebuddy/auth/poll', {
                         method: 'POST',
                         headers: getAuthHeaders(),
                         body: JSON.stringify({
@@ -3708,8 +4107,24 @@
                         })
                     });
 
-                    const data = await response.json();
+                    let data = {};
+                    try {
+                        data = await response.json();
+                    } catch (error) {
+                        if (response.status < 500 || isSessionBoundaryCancellation(error)) throw error;
+                    }
                     if (!isCurrentAuthFlow(flowGeneration, authState)) return;
+
+                    if (response.status >= 500) {
+                        stopPolling();
+                        authFlowGeneration += 1;
+                        currentAuthData = null;
+                        authPollingAttempts = 0;
+                        hideAuthSection();
+                        resetAuthButton();
+                        showNotification(`认证失败: ${data.error_description || data.detail || `HTTP ${response.status}`}`, 'error');
+                        return;
+                    }
 
                     if (response.ok && data.saved === true) {
                         // 认证成功
@@ -3729,6 +4144,7 @@
                         
                     } else if (data.error === 'authorization_pending' || data.error === 'slow_down') {
                         // 继续等待下一次轮询。
+                        transientFailures = 0;
                     } else if (data.error === 'expired_token') {
                         // Token过期，停止轮询
                         await cancelAuth(false);
@@ -3743,21 +4159,21 @@
                     }
                 } catch (error) {
                     if (!isCurrentAuthFlow(flowGeneration, authState)) return;
-                    await cancelAuth(false);
-                    showNotification(`认证失败: ${error.message}`, 'error');
+                    transientFailures += 1;
+                } finally {
+                    if (isCurrentAuthFlow(flowGeneration, authState)) {
+                        scheduleNextPoll();
+                    }
                 }
             };
 
             // 立即执行一次
-            poll();
-            
-            // 设置轮询间隔（每5秒一次）
-            authPollingInterval = setInterval(poll, 5000);
+            void poll();
         }
 
         function stopPolling() {
             if (authPollingInterval) {
-                clearInterval(authPollingInterval);
+                clearTimeout(authPollingInterval);
                 authPollingInterval = null;
             }
         }
@@ -3765,9 +4181,11 @@
         // 清理函数：页面卸载时停止轮询
         window.addEventListener('beforeunload', (event) => {
             stopPolling();
-            if (pendingApiKeys.length > 0) {
+            if (pendingApiKeys.length > 0 || isLegacySettingsDirty()) {
                 event.preventDefault();
-                event.returnValue = pendingApiKeysLeaveWarning;
+                event.returnValue = pendingApiKeys.length > 0
+                    ? pendingApiKeysLeaveWarning
+                    : '当前有未保存的设置。';
             }
         });
 
@@ -3780,9 +4198,66 @@
             return ['true', '1', 'yes', 'on'].includes(String(value).trim().toLowerCase());
         }
 
-        function normalizeRotationCount(value) {
-            const parsed = Number.parseInt(String(value), 10);
-            return Number.isInteger(parsed) && parsed >= 1 ? parsed : 1;
+        function parseRotationCount(value) {
+            const text = String(value ?? '').trim();
+            if (!text) return null;
+            const parsed = Number(text);
+            return Number.isInteger(parsed) && parsed >= 1 ? parsed : null;
+        }
+
+        function serializeLegacySettings() {
+            const settingsForm = document.getElementById('settingsForm');
+            if (!settingsForm) return null;
+            return JSON.stringify(Array.from(settingsForm.querySelectorAll('[data-setting-key]')).map(input => [
+                input.dataset.settingKey,
+                input.type === 'checkbox' ? input.checked : input.value
+            ]));
+        }
+
+        function isLegacySettingsDirty() {
+            return settingsBaseline !== null && serializeLegacySettings() !== settingsBaseline;
+        }
+
+        function legacyNumberFieldError(input) {
+            const label = input.dataset.settingLabel || input.dataset.settingKey;
+            const rawValue = String(input.value).trim();
+            if (input.dataset.settingKey === ROTATION_COUNT_SETTING_KEY) {
+                return parseRotationCount(rawValue) === null
+                    ? '轮换次数必须是大于或等于 1 的整数'
+                    : '';
+            }
+            if (!rawValue) {
+                return input.dataset.settingNullable === 'true' ? '' : `${label}不能为空`;
+            }
+            const value = Number(rawValue);
+            if (!Number.isFinite(value)) return `${label}必须是有效数字`;
+            if (input.min !== '' && value < Number(input.min)) return `${label}不能小于 ${input.min}`;
+            if (input.max !== '' && value > Number(input.max)) return `${label}不能大于 ${input.max}`;
+            return '';
+        }
+
+        function validateLegacyNumberSettings() {
+            let firstError = '';
+            document.querySelectorAll('#settingsForm input[type="number"]').forEach(input => {
+                const message = legacyNumberFieldError(input);
+                input.setAttribute('aria-invalid', String(Boolean(message)));
+                const error = document.getElementById(`settingError_${input.dataset.settingKey}`);
+                if (error) {
+                    error.textContent = message;
+                    error.style.display = message ? 'block' : 'none';
+                }
+                if (!firstError && message) firstError = message;
+            });
+            return firstError;
+        }
+
+        function updateLegacySettingsState() {
+            const numberError = validateLegacyNumberSettings();
+            const saveButton = document.getElementById('saveSettingsButton');
+            if (saveButton) {
+                saveButton.disabled = settingsSaving || settingsBaseline === null
+                    || !isLegacySettingsDirty() || Boolean(numberError);
+            }
         }
 
         function updateRotationCountVisibility() {
@@ -3791,9 +4266,7 @@
             const rotationInput = document.getElementById(`setting_${ROTATION_COUNT_SETTING_KEY}`);
             if (!toggle || !rotationGroup || !rotationInput) return;
             rotationGroup.style.display = toggle.checked ? '' : 'none';
-            if (toggle.checked) {
-                rotationInput.value = String(normalizeRotationCount(rotationInput.value));
-            }
+            updateLegacySettingsState();
         }
 
         function createSettingInput(field, settings) {
@@ -3809,31 +4282,38 @@
                 if (field.key === AUTO_ROTATION_SETTING_KEY) {
                     input.addEventListener('change', updateRotationCountVisibility);
                 }
+                input.addEventListener('change', updateLegacySettingsState);
                 return input;
             }
 
             if (field.type === 'number') {
                 input.type = 'number';
+                input.dataset.settingLabel = field.label || field.key;
+                input.dataset.settingNullable = String(Boolean(field.nullable));
                 if (field.min !== undefined) input.min = String(field.min);
                 if (field.max !== undefined) input.max = String(field.max);
                 input.step = String(field.step || 1);
-                input.value = field.key === ROTATION_COUNT_SETTING_KEY
-                    ? String(normalizeRotationCount(settings[field.key]))
-                    : (settings[field.key] ?? '');
+                input.value = settings[field.key] ?? '';
+                input.addEventListener('input', updateLegacySettingsState);
                 return input;
             }
 
             input.type = (field.key.toLowerCase().includes('password')) ? 'password' : 'text';
             input.value = settings[field.key] ?? '';
+            input.addEventListener('input', updateLegacySettingsState);
             return input;
         }
 
-        async function loadSettings() {
+        async function loadSettings(force = false) {
+            if (force && isLegacySettingsDirty()
+                && !confirm('当前有未保存的设置，确定放弃修改并刷新吗？')) {
+                return;
+            }
             const settingsForm = elementById('settingsForm');
             settingsForm.innerHTML = loadingMarkup('加载配置中...');
 
             try {
-                const response = await fetch('/api/admin/settings', { headers: getAuthHeaders() });
+                const response = await sessionFetch('/api/admin/settings', { headers: getAuthHeaders() });
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
@@ -3863,11 +4343,23 @@
 
                     formGroup.appendChild(label);
                     formGroup.appendChild(input);
+                    if (field.type === 'number') {
+                        const error = document.createElement('div');
+                        error.id = `settingError_${field.key}`;
+                        error.setAttribute('role', 'alert');
+                        error.style.cssText = 'display:none; margin-top:0.35rem; color:var(--danger-color); font-size:0.8rem;';
+                        formGroup.appendChild(error);
+                    }
                     settingsForm.appendChild(formGroup);
                 }
+                settingsBaseline = serializeLegacySettings();
                 updateRotationCountVisibility();
+                updateLegacySettingsState();
 
             } catch (error) {
+                if (isSessionBoundaryCancellation(error)) return;
+                settingsBaseline = null;
+                updateLegacySettingsState();
                 settingsForm.innerHTML = `<div class="status status-error">加载配置失败: ${escapeHtml(error.message)}</div>`;
             }
         }
@@ -3877,23 +4369,33 @@
             const inputs = settingsForm.querySelectorAll('[data-setting-key]');
             const newSettings = {};
 
+            const numberError = validateLegacyNumberSettings();
+            if (numberError) {
+                updateLegacySettingsState();
+                showNotification(numberError, 'error');
+                return;
+            }
+
             inputs.forEach(input => {
                 const key = input.dataset.settingKey;
                 if (input.type === 'checkbox') {
                     newSettings[key] = input.checked;
                 } else if (input.type === 'number') {
                     newSettings[key] = key === ROTATION_COUNT_SETTING_KEY
-                        ? normalizeRotationCount(input.value)
+                        ? parseRotationCount(input.value)
                         : (String(input.value).trim() === '' ? '' : Number(input.value));
                 } else {
                     newSettings[key] = input.value;
                 }
             });
 
+            const submittedSnapshot = serializeLegacySettings();
+            settingsSaving = true;
+            updateLegacySettingsState();
             showNotification('正在保存设置...', 'info');
 
             try {
-                const response = await fetch('/api/admin/settings', {
+                const response = await sessionFetch('/api/admin/settings', {
                     method: 'PUT',
                     headers: getAuthHeaders(),
                     body: JSON.stringify({ settings: newSettings })
@@ -3902,12 +4404,17 @@
                 const result = await response.json();
 
                 if (response.ok) {
+                    settingsBaseline = submittedSnapshot;
                     showNotification(result.message || '设置已保存并热加载！', 'success');
                 } else {
                     throw new Error(result.detail || '保存失败');
                 }
             } catch (error) {
+                if (isSessionBoundaryCancellation(error)) return;
                 showNotification(`保存失败: ${error.message}`, 'error');
+            } finally {
+                settingsSaving = false;
+                updateLegacySettingsState();
             }
         }
 

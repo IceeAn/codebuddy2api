@@ -58,6 +58,31 @@ class SessionStoreTests(unittest.TestCase):
 
         self.assertEqual(store.sessions, {})
 
+    def test_create_limits_each_user_to_ten_sessions_and_evicts_oldest(self):
+        store = SessionStore(max_sessions_per_user=10)
+        created = []
+
+        with mock.patch(
+            "src.session_store.time.time",
+            side_effect=range(2_000_000_000, 2_000_000_024, 2),
+        ):
+            for _ in range(11):
+                created.append(store.create("admin"))
+
+            alice = store.create("alice")
+
+        self.assertNotIn(created[0], store.sessions)
+        self.assertEqual(
+            set(created[1:]),
+            {
+                session_id
+                for session_id, data in store.sessions.items()
+                if data["username"] == "admin"
+            },
+        )
+        self.assertIn(alice, store.sessions)
+        self.assertEqual(len(store.sessions), 11)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -102,20 +102,20 @@ describe('CInputNumber', () => {
     expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual([0]);
   });
 
-  it('输入超过 max 时 clamp', async () => {
+  it('输入超过 max 时保留原值供表单校验', async () => {
     const wrapper = mount(CInputNumber, {
       props: { modelValue: null, max: 100 },
     });
     await wrapper.find('input').setValue('200');
-    expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual([100]);
+    expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual([200]);
   });
 
-  it('输入低于 min 时 clamp', async () => {
+  it('输入低于 min 时保留原值供表单校验', async () => {
     const wrapper = mount(CInputNumber, {
       props: { modelValue: null, min: 10 },
     });
     await wrapper.find('input').setValue('5');
-    expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual([10]);
+    expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual([5]);
   });
 
   it('步进按钮在 modelValue=null 时从 0 开始', async () => {
@@ -257,14 +257,14 @@ describe('CInputNumber', () => {
     expect(input.classes()).toContain('pr-16');
   });
 
-  it('min/max 均提供时 clamp 到区间', async () => {
+  it('min/max 仅提供原生约束，不改写键入值', async () => {
     const wrapper = mount(CInputNumber, {
       props: { modelValue: null, min: 0, max: 10 },
     });
     await wrapper.find('input').setValue('50');
-    expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual([10]);
+    expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual([50]);
     await wrapper.find('input').setValue('-5');
-    expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual([0]);
+    expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual([-5]);
   });
 
   it('step 为小数时也能步进', async () => {

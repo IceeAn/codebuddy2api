@@ -146,8 +146,7 @@ def get_stream_service_factory() -> Callable[[], CodeBuddyStreamService]:
 
 
 def _request_base_url(request: Request) -> str:
-    forwarded_proto = request.headers.get("X-Forwarded-Proto", "").split(",", 1)[0].strip()
-    scheme = forwarded_proto or request.url.scheme or "http"
+    scheme = request.url.scheme or "http"
     host = request.headers.get("host") or request.url.hostname or "testserver"
     return f"{scheme}://{host}".rstrip("/")
 
@@ -268,6 +267,7 @@ async def delete_admin_credential(
     token_manager = get_token_manager_for_user(_user)
     if not token_manager.delete_credential_by_id(credential_id):
         raise _credential_not_found()
+    models_manager.invalidate_credential(_user, credential_id)
     return {"deleted": True, "current": token_manager.get_current_credential_info()}
 
 
@@ -289,12 +289,10 @@ async def test_admin_credential(
         _user: AuthenticatedUser = Depends(require_session_user),
         stream_service_factory: Callable[[], CodeBuddyStreamService] = Depends(get_stream_service_factory),
         stats_context: Optional[UsageStatsContext] = None,
-        request_bytes: int = 0,
 ):
     """使用指定凭证发起最小请求，验证该凭证是否可用。"""
     token_manager = get_token_manager_for_user(_user)
     if stats_context is not None:
-        stats_context.capture_request_bytes(request_bytes)
         stats_context.capture_credential(credential_id, credential_id)
     credential = token_manager.get_credential_by_id(credential_id)
     if not credential:
@@ -319,17 +317,26 @@ async def test_admin_credential(
 
     try:
         model = await models_manager.get_first_actual_model_for_credential(_user, credential_id, credential)
-        if stats_context is not None:
-            stats_context.capture_confirmed_model(model)
-    except Exception:
-        logger.exception("Credential model lookup failed")
-        if stats_context is not None:
-            stats_context.mark_failure("model_lookup", 502)
-        return {
-            "ok": False,
-            "status_code": 502,
-            "detail": "无法获取凭证模型",
-        }
+        model_source = "actual"
+    except Exception as error:
+        logger.warning("Credential model lookup failed (%s)", type(error).__name__)
+        configured_models = [
+            model_id
+            for model_id in config.get_available_models(_user)
+            if str(model_id).strip()
+        ]
+        if not configured_models:
+            if stats_context is not None:
+                stats_context.mark_failure("model_lookup", 502)
+            return {
+                "ok": False,
+                "status_code": 502,
+                "detail": "无法获取凭证模型",
+            }
+        model = configured_models[0]
+        model_source = "configured_fallback"
+    if stats_context is not None:
+        stats_context.capture_confirmed_model(model)
 
     test_request = {
         "model": model,
@@ -362,7 +369,7 @@ async def test_admin_credential(
         )
         if stats_context is not None:
             stats_context.mark_success()
-        return {"ok": True, "status_code": 200}
+        return {"ok": True, "status_code": 200, "model_source": model_source}
     except HTTPException as e:
         if stats_context is not None:
             error = getattr(e, "error", None)
@@ -372,6 +379,7 @@ async def test_admin_credential(
             "ok": False,
             "status_code": e.status_code,
             "detail": e.detail,
+            "model_source": model_source,
         }
     except Exception:
         logger.exception("Credential test failed")
@@ -381,6 +389,7 @@ async def test_admin_credential(
             "ok": False,
             "status_code": 500,
             "detail": "凭证测试失败",
+            "model_source": model_source,
         }
 
 
@@ -400,20 +409,17 @@ async def get_credential_test_stats_context(
 async def test_admin_credential_route(
         credential_id: str,
         request_body: CredentialTestRequest,
-        request: Request,
         _user: AuthenticatedUser = Depends(require_session_user),
         stream_service_factory: Callable[[], CodeBuddyStreamService] = Depends(get_stream_service_factory),
         stats_context: UsageStatsContext = Depends(get_credential_test_stats_context),
 ):
     """创建统计上下文后执行一次管理台凭证测试。"""
-    request_bytes = len(await request.body())
     return await test_admin_credential(
         credential_id,
         request_body,
         _user,
         stream_service_factory,
         stats_context,
-        request_bytes,
     )
 
 

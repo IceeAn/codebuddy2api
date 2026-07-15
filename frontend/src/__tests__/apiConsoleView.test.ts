@@ -322,17 +322,25 @@ describe('ApiConsoleView', () => {
     expect(toastMock.error).toHaveBeenCalledWith('HTTP 400');
   });
 
-  it('流式请求解析跨 chunk SSE 并释放 reader', async () => {
+  it('流式请求跨 UTF-8 与 SSE chunk 解码，只在 DONE 后成功并批量刷新输出', async () => {
     const cancel = vi
       .fn<ReadableStreamDefaultReader<Uint8Array>['cancel']>()
       .mockResolvedValue(undefined);
     const releaseLock = vi.fn<ReadableStreamDefaultReader<Uint8Array>['releaseLock']>();
-    const chunks = [new TextEncoder().encode('data: {"a":'), new TextEncoder().encode('1}\n\n')];
+    const encoded = new TextEncoder().encode(
+      'data: {"text":"你"}\r\n\r\ndata: {"b":2}\n\ndata: [DONE]\r\n\r\n',
+    );
+    const splitAt = encoded.indexOf(0xe4) + 1;
+    const chunks = [encoded.slice(0, splitAt), encoded.slice(splitAt)];
     const read = vi
       .fn<ReadableStreamDefaultReader<Uint8Array>['read']>()
       .mockResolvedValueOnce({ done: false, value: chunks[0] })
       .mockResolvedValueOnce({ done: false, value: chunks[1] })
       .mockResolvedValueOnce({ done: true, value: undefined });
+    const animationFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 123);
+    const cancelAnimationFrame = vi
+      .spyOn(window, 'cancelAnimationFrame')
+      .mockImplementation(() => {});
     chatMock.mockResolvedValue({
       ok: true,
       body: { getReader: () => ({ read, cancel, releaseLock }) },
@@ -343,10 +351,84 @@ describe('ApiConsoleView', () => {
 
     await state.send();
 
-    expect(state.output).toContain('"a": 1');
+    expect(state.output).toContain('"text": "你"');
+    expect(state.output).toContain('"b": 2');
     expect(toastMock.success).toHaveBeenCalledWith('流式请求完成');
+    expect(animationFrame).toHaveBeenCalledOnce();
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(123);
     expect(cancel).toHaveBeenCalledOnce();
     expect(releaseLock).toHaveBeenCalledOnce();
+    animationFrame.mockRestore();
+    cancelAnimationFrame.mockRestore();
+  });
+
+  it('动画帧合并多个事件，并可在卸载前取消尚未刷新的帧', () => {
+    let frameCallback: FrameRequestCallback | undefined;
+    const animationFrame = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        frameCallback = callback;
+        return 456;
+      });
+    const cancelAnimationFrame = vi
+      .spyOn(window, 'cancelAnimationFrame')
+      .mockImplementation(() => {});
+    const wrapper = mountView();
+    const state = (wrapper.vm.$ as any).setupState;
+    state.output = '';
+
+    state.queueStreamOutput({ a: 1 });
+    state.queueStreamOutput({ b: 2 });
+    expect(animationFrame).toHaveBeenCalledOnce();
+    frameCallback?.(0);
+    expect(state.output).toContain('"a": 1');
+    expect(state.output).toContain('"b": 2');
+    frameCallback?.(0);
+
+    state.queueStreamOutput({ pending: true });
+    state.resetStreamOutput();
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(456);
+    animationFrame.mockRestore();
+    cancelAnimationFrame.mockRestore();
+  });
+
+  it('流在 DONE 前 EOF 时失败，不再误报成功', async () => {
+    chatMock.mockResolvedValue(
+      response('data: {"partial":true}\n\n', {
+        headers: { 'Content-Type': 'text/event-stream' },
+      }),
+    );
+    const wrapper = mountView();
+    const state = (wrapper.vm.$ as any).setupState;
+    state.stream = true;
+
+    await state.send();
+
+    expect(state.output).toContain('"partial": true');
+    expect(state.output).toContain('流式响应在 [DONE] 之前结束');
+    expect(toastMock.success).not.toHaveBeenCalled();
+    expect(toastMock.error).toHaveBeenCalledWith('请求失败');
+  });
+
+  it('坏 JSON、错误信封和被截断事件均报告失败', async () => {
+    chatMock
+      .mockResolvedValueOnce(response('data: not-json\n\n'))
+      .mockResolvedValueOnce(response('data: {"error":{"message":"额度不足"}}\n\n'))
+      .mockResolvedValueOnce(response('data: {"partial":'));
+    const wrapper = mountView();
+    const state = (wrapper.vm.$ as any).setupState;
+    state.stream = true;
+
+    await state.send();
+    expect(state.output).toBe('SSE data 不是有效 JSON');
+
+    await state.send();
+    expect(state.output).toBe('额度不足');
+
+    await state.send();
+    expect(state.output).toBe('SSE 流在事件结束前中断');
+    expect(toastMock.success).not.toHaveBeenCalled();
+    expect(toastMock.error).toHaveBeenCalledTimes(3);
   });
 
   it('reader cancel 失败仍释放锁', async () => {

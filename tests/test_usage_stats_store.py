@@ -1,4 +1,5 @@
 import asyncio
+import dataclasses
 import base64
 import json
 import math
@@ -184,8 +185,13 @@ class UsageStatsStoreTests(unittest.TestCase):
         return self.store.record_event(event, username=username)
 
     def test_record_event_persists_only_desensitized_columns_and_hourly_data(self):
-        event_id = self.record(self.event())
+        with mock.patch(
+            "src.usage_stats_store.asdict",
+            wraps=dataclasses.asdict,
+        ) as convert:
+            event_id = self.record(self.event())
         self.assertIsInstance(event_id, int)
+        convert.assert_called_once()
 
         with SQLiteDatabase(self.database_path).connect() as connection:
             detail = dict(connection.execute(
@@ -1315,6 +1321,13 @@ class UsageStatsStoreTests(unittest.TestCase):
         )
 
         self.assertEqual([item["id"] for item in page["items"]], [event_id])
+        detail = self.store.get_event(
+            "alice",
+            event_id,
+            snapshot_id=page["snapshot_id"],
+            snapshot_time=page["snapshot_time"],
+        )
+        self.assertEqual(detail["id"], event_id)
 
     def test_list_events_rejects_snapshot_invalidated_by_cleanup(self):
         cutoff = self.now - DETAIL_RETENTION_DAYS * 86400
@@ -1331,6 +1344,13 @@ class UsageStatsStoreTests(unittest.TestCase):
                 snapshot_id=first_page["snapshot_id"],
                 snapshot_time=first_page["snapshot_time"],
             )
+        with self.assertRaisesRegex(ValueError, "snapshot is no longer valid"):
+            self.store.get_event(
+                "alice",
+                event_id,
+                snapshot_id=first_page["snapshot_id"],
+                snapshot_time=first_page["snapshot_time"],
+            )
 
     def test_list_events_rejects_snapshot_beyond_event_sequence(self):
         event_id = self.record(self.event())
@@ -1341,6 +1361,30 @@ class UsageStatsStoreTests(unittest.TestCase):
                 snapshot_id=event_id + 1,
                 snapshot_time=self.now,
             )
+        with self.assertRaisesRegex(ValueError, "snapshot is no longer valid"):
+            self.store.get_event(
+                "alice",
+                event_id,
+                snapshot_id=event_id + 1,
+                snapshot_time=self.now,
+            )
+
+    def test_get_event_requires_complete_valid_snapshot_pair(self):
+        event_id = self.record(self.event())
+        invalid_snapshots = (
+            {"snapshot_id": event_id},
+            {"snapshot_time": self.now},
+            {"snapshot_id": True, "snapshot_time": self.now},
+            {"snapshot_id": event_id, "snapshot_time": True},
+            {"snapshot_id": SQLITE_MAX_INTEGER + 1, "snapshot_time": self.now},
+            {"snapshot_id": event_id, "snapshot_time": MAX_STATS_TIMESTAMP + 1},
+        )
+        for snapshot in invalid_snapshots:
+            with self.subTest(snapshot=snapshot), self.assertRaisesRegex(
+                ValueError,
+                "pagination snapshot",
+            ):
+                self.store.get_event("alice", event_id, **snapshot)
 
     def test_cleanup_removes_only_expired_details_and_keeps_aggregates(self):
         cutoff = self.now - DETAIL_RETENTION_DAYS * 86400

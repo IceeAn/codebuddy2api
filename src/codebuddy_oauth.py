@@ -1,22 +1,54 @@
 """CodeBuddy OAuth 启动、轮询和 token 保存逻辑。"""
 import base64
+import inspect
 import json
 import logging
 import secrets
 import time
 import uuid
 from typing import Any, Dict, Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 import httpx
 
-from config import get_codebuddy_api_endpoint, get_codebuddy_api_host, get_ssl_verify
+from config import get_codebuddy_api_endpoint, get_codebuddy_api_host
 from .auth_types import AuthenticatedUser
+from .stream_service import get_http_client
 
 logger = logging.getLogger(__name__)
 AUTH_START_FAILED_MESSAGE = "认证启动失败，请稍后重试"
 
-AUTH_STATE_TTL_SECONDS = 1800
+AUTH_STATE_TTL_SECONDS = 600
+AUTH_MAX_ACTIVE_PER_USER = 3
+AUTH_MAX_START_ATTEMPTS = 5
+AUTH_START_WINDOW_SECONDS = 60
+
+
+class AuthStartLimitError(RuntimeError):
+    """OAuth 启动并发或频率达到上限。"""
+
+    def __init__(self, retry_after: int):
+        super().__init__("OAuth start limit exceeded")
+        self.retry_after = max(1, int(retry_after))
+
+
+def is_safe_external_auth_url(value: Any) -> bool:
+    """仅接受无用户信息、无控制字符的绝对 HTTP(S) 认证 URL。"""
+    if not isinstance(value, str) or not value or value != value.strip():
+        return False
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        return False
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname
+        parsed.port
+    except ValueError:
+        return False
+    return (
+        parsed.scheme.lower() in {"http", "https"}
+        and bool(hostname)
+        and parsed.username is None
+    )
 
 
 def get_auth_start_headers() -> Dict[str, str]:
@@ -29,7 +61,6 @@ def get_auth_start_headers() -> Dict[str, str]:
         "Content-Type": "application/json",
         "Cache-Control": "no-cache",
         "Pragma": "no-cache",
-        "Connection": "close",
         "X-Requested-With": "XMLHttpRequest",
         "X-Domain": codebuddy_host,
         "X-No-Authorization": "true",
@@ -52,7 +83,6 @@ def get_auth_poll_headers() -> Dict[str, str]:
         "Accept": "application/json, text/plain, */*",
         "Cache-Control": "no-cache",
         "Pragma": "no-cache",
-        "Connection": "close",
         "X-Requested-With": "XMLHttpRequest",
         "X-Request-ID": request_id,
         "b3": f"{request_id}-{span_id}-1-",
@@ -81,13 +111,64 @@ def get_codebuddy_auth_token_endpoint() -> str:
 class AuthStateStore:
     """记录 auth_state 的所属用户，防止跨用户轮询截取 token。"""
 
-    def __init__(self, ttl_seconds: int = AUTH_STATE_TTL_SECONDS):
+    def __init__(
+            self,
+            ttl_seconds: int = AUTH_STATE_TTL_SECONDS,
+            max_active_per_user: int = AUTH_MAX_ACTIVE_PER_USER,
+            max_start_attempts: int = AUTH_MAX_START_ATTEMPTS,
+            start_window_seconds: int = AUTH_START_WINDOW_SECONDS,
+    ):
         self.ttl_seconds = ttl_seconds
+        self.max_active_per_user = max_active_per_user
+        self.max_start_attempts = max_start_attempts
+        self.start_window_seconds = start_window_seconds
         self._owners: Dict[str, Dict[str, Any]] = {}
+        self._starting: Dict[str, Dict[str, Any]] = {}
+        self._start_attempts: Dict[str, list[int]] = {}
 
-    def remember(self, auth_state: str, user: AuthenticatedUser) -> bool:
-        """登记未占用的 state；已存在时保持原所属用户不变。"""
+    def begin_start(self, user: AuthenticatedUser) -> str:
+        """登记一次启动尝试，并为上游请求预留活动名额。"""
+        current_time = int(time.time())
+        self.cleanup_expired(current_time)
+        attempts = self._start_attempts.setdefault(user.username, [])
+        if len(attempts) >= self.max_start_attempts:
+            retry_after = attempts[0] + self.start_window_seconds - current_time
+            raise AuthStartLimitError(retry_after)
+        attempts.append(current_time)
+
+        active_created_at = [
+            int(state_info.get("created_at", current_time))
+            for state_info in self._owners.values()
+            if state_info.get("username") == user.username
+            and state_info.get("consumed_at") is None
+        ]
+        active_created_at.extend(
+            int(start_info.get("created_at", current_time))
+            for start_info in self._starting.values()
+            if start_info.get("username") == user.username
+        )
+        if len(active_created_at) >= self.max_active_per_user:
+            retry_after = min(active_created_at) + self.ttl_seconds - current_time
+            raise AuthStartLimitError(retry_after)
+
+        reservation = secrets.token_urlsafe(18)
+        self._starting[reservation] = {
+            "username": user.username,
+            "created_at": current_time,
+        }
+        return reservation
+
+    def finish_start(
+            self,
+            reservation: str,
+            auth_state: str,
+            user: AuthenticatedUser,
+    ) -> bool:
+        """将启动预留原子转换为归属于当前用户的 auth_state。"""
         self.cleanup_expired()
+        start_info = self._starting.pop(reservation, None)
+        if not start_info or start_info.get("username") != user.username:
+            return False
         if auth_state in self._owners:
             return False
         self._owners[auth_state] = {
@@ -96,6 +177,9 @@ class AuthStateStore:
             "consumed_at": None,
         }
         return True
+
+    def cancel_start(self, reservation: str) -> None:
+        self._starting.pop(reservation, None)
 
     def validate_owner(self, auth_state: str, user: AuthenticatedUser) -> bool:
         self.cleanup_expired()
@@ -115,8 +199,9 @@ class AuthStateStore:
         state_info["consumed_at"] = int(time.time())
         return True
 
-    def cleanup_expired(self):
-        current_time = int(time.time())
+    def cleanup_expired(self, current_time: Optional[int] = None):
+        if current_time is None:
+            current_time = int(time.time())
         expired_states = [
             state
             for state, state_info in self._owners.items()
@@ -128,6 +213,23 @@ class AuthStateStore:
         ]
         for state in expired_states:
             self._owners.pop(state, None)
+        expired_reservations = [
+            reservation
+            for reservation, start_info in self._starting.items()
+            if current_time - int(start_info.get("created_at", 0)) > self.ttl_seconds
+        ]
+        for reservation in expired_reservations:
+            self._starting.pop(reservation, None)
+        for username, attempts in list(self._start_attempts.items()):
+            fresh_attempts = [
+                attempt
+                for attempt in attempts
+                if current_time - attempt < self.start_window_seconds
+            ]
+            if fresh_attempts:
+                self._start_attempts[username] = fresh_attempts
+            else:
+                self._start_attempts.pop(username, None)
 
 
 auth_state_store = AuthStateStore()
@@ -136,34 +238,43 @@ auth_state_store = AuthStateStore()
 class CodeBuddyAuthClient:
     """CodeBuddy OAuth 上游客户端。"""
 
+    def __init__(self, http_client_factory=None):
+        self._http_client_factory = http_client_factory or get_http_client
+
+    async def _get_http_client(self):
+        client = self._http_client_factory()
+        if inspect.isawaitable(client):
+            return await client
+        return client
+
     async def start_auth(self) -> Dict[str, Any]:
         """启动 CodeBuddy 认证流程。"""
         try:
             logger.info("启动CodeBuddy认证流程...")
             headers = get_auth_start_headers()
 
-            async with httpx.AsyncClient(verify=get_ssl_verify(), trust_env=False) as client:
-                result = await self._request_state(client, headers)
-                auth_state = result.get("auth_state")
-                auth_url = result.get("auth_url")
+            client = await self._get_http_client()
+            result = await self._request_state(client, headers)
+            auth_state = result.get("auth_state")
+            auth_url = result.get("auth_url")
 
-                if auth_state and auth_url:
-                    token_endpoint = f"{get_codebuddy_auth_token_endpoint()}?state={auth_state}"
+            if auth_state and auth_url:
+                token_endpoint = f"{get_codebuddy_auth_token_endpoint()}?state={auth_state}"
 
-                    return {
-                        "success": True,
-                        "method": "codebuddy_real_auth",
-                        "auth_state": auth_state,
-                        "verification_uri_complete": auth_url,
-                        "verification_uri": get_codebuddy_api_endpoint(),
-                        "token_endpoint": token_endpoint,
-                        "expires_in": 1800,
-                        "interval": 5,
-                        "status": "awaiting_login",
-                        "instructions": "请点击链接完成CodeBuddy登录",
-                        "message": "请使用提供的链接登录CodeBuddy",
-                        "platform": "CLI",
-                    }
+                return {
+                    "success": True,
+                    "method": "codebuddy_real_auth",
+                    "auth_state": auth_state,
+                    "verification_uri_complete": auth_url,
+                    "verification_uri": get_codebuddy_api_endpoint(),
+                    "token_endpoint": token_endpoint,
+                    "expires_in": AUTH_STATE_TTL_SECONDS,
+                    "interval": 5,
+                    "status": "awaiting_login",
+                    "instructions": "请点击链接完成CodeBuddy登录",
+                    "message": "请使用提供的链接登录CodeBuddy",
+                    "platform": "CLI",
+                }
 
             return {
                 "success": False,
@@ -171,8 +282,8 @@ class CodeBuddyAuthClient:
                 "message": "无法启动认证流程",
             }
 
-        except Exception:
-            logger.exception("启动CodeBuddy认证失败")
+        except Exception as error:
+            logger.exception("启动CodeBuddy认证失败（%s）", type(error).__name__)
             return {
                 "success": False,
                 "error": "auth_start_failed",
@@ -197,10 +308,11 @@ class CodeBuddyAuthClient:
         if not isinstance(data, dict):
             return {"auth_state": None, "auth_url": None}
 
-        return {
-            "auth_state": data.get("state"),
-            "auth_url": data.get("authUrl"),
-        }
+        auth_url = data.get("authUrl")
+        if not is_safe_external_auth_url(auth_url):
+            return {"auth_state": None, "auth_url": None}
+
+        return {"auth_state": data.get("state"), "auth_url": auth_url}
 
     async def poll_status(self, auth_state: str) -> Dict[str, Any]:
         """轮询 CodeBuddy 认证状态。"""
@@ -208,21 +320,20 @@ class CodeBuddyAuthClient:
             headers = get_auth_poll_headers()
             url = f"{get_codebuddy_auth_token_endpoint()}?state={auth_state}"
 
-            async with httpx.AsyncClient(verify=get_ssl_verify(), trust_env=False) as client:
-                response = await client.get(url, headers=headers, timeout=30)
+            client = await self._get_http_client()
+            response = await client.get(url, headers=headers, timeout=30)
 
             if response.status_code != 200:
                 return {
                     "status": "error",
                     "message": f"API请求失败，状态码: {response.status_code}",
-                    "response_text": response.text,
                 }
 
             result = response.json()
             if result.get("code") == 11217:
                 return {
                     "status": "pending",
-                    "message": result.get("msg", "login ing..."),
+                    "message": "等待用户完成登录",
                     "code": result.get("code"),
                 }
 
@@ -247,16 +358,15 @@ class CodeBuddyAuthClient:
 
             return {
                 "status": "unknown",
-                "message": result.get("msg", "Unknown status"),
+                "message": "认证服务返回未知状态",
                 "code": result.get("code"),
-                "response": result,
             }
 
-        except Exception as e:
-            logger.error(f"轮询认证状态失败: {e}")
+        except Exception as error:
+            logger.error("轮询认证状态失败（%s）", type(error).__name__)
             return {
                 "status": "error",
-                "message": f"轮询失败: {str(e)}",
+                "message": "认证状态查询失败",
             }
 
 
@@ -327,8 +437,7 @@ class TokenParser:
                         **issuer_info,
                     }
                     user_info = {key: value for key, value in user_info.items() if value is not None}
-                    logger.info(f"成功解析JWT，用户: {user_id}")
-                    logger.debug(f"JWT用户信息: {user_info}")
+                    logger.info("成功解析JWT")
                 except (json.JSONDecodeError, UnicodeDecodeError) as decode_error:
                     logger.warning(f"JWT payload解码失败: {decode_error}")
                     user_id = TokenParser._fallback_user_id(bearer_token)
@@ -394,10 +503,6 @@ class CodeBuddyTokenSaver:
 
 codebuddy_auth_client = CodeBuddyAuthClient()
 codebuddy_token_saver = CodeBuddyTokenSaver()
-
-
-def remember_auth_state(auth_state: str, user: AuthenticatedUser) -> bool:
-    return auth_state_store.remember(auth_state, user)
 
 
 def validate_auth_state_owner(auth_state: str, user: AuthenticatedUser) -> bool:

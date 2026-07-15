@@ -126,7 +126,7 @@ function mountView() {
         CDataTable: {
           props: ['columns', 'data', 'loading', 'error', 'bordered', 'size', 'rowKey'],
           template:
-            '<div class="c-data-table" :data-error="String(error)" :data-loading="String(loading)"><slot name="empty" /></div>',
+            '<div class="c-data-table" :data-error="String(error)" :data-loading="String(loading)" :data-row-key="rowKey"><slot name="empty" /></div>',
         },
         CForm: FormStub,
         CFormItem: {
@@ -197,7 +197,9 @@ describe('CredentialsView', () => {
     expect(state.loadError).toEqual(new Error('load failed'));
     expect(state.errorMessage).toBe('load failed');
     expect(state.formatElapsed(65)).toBe('01:05');
-    expect(queryOptions.map((option) => option.queryKey)).toEqual([['admin-credentials']]);
+    expect(queryOptions.map((option) => option.queryKey)).toEqual([
+      ['admin', 'test-user', 'credentials'],
+    ]);
   });
 
   it('筛选 tab 切换过滤 rows，计数从原始数据计算', async () => {
@@ -294,7 +296,9 @@ describe('CredentialsView', () => {
       current: {},
     };
     mountView();
-    expect(queryOptions.map((option) => option.queryKey)).toEqual([['admin-credentials']]);
+    expect(queryOptions.map((option) => option.queryKey)).toEqual([
+      ['admin', 'test-user', 'credentials'],
+    ]);
   });
 
   it('凭证池标题使用卡片标题样式', () => {
@@ -311,6 +315,7 @@ describe('CredentialsView', () => {
     const wrapper = mountView();
 
     expect(wrapper.find('.c-data-table').attributes('data-error')).toBe('true');
+    expect(wrapper.find('.c-data-table').attributes('data-row-key')).toBe('credential_id');
   });
 
   it('后台刷新时表格进入加载状态', () => {
@@ -447,7 +452,10 @@ describe('CredentialsView', () => {
     const deletedCurrent = { credential_id: 'keep', status: 'auto_rotation' };
     await mutationOptions[2].onSuccess({ deleted: true, current: deletedCurrent }, 'gone');
     expect(toastMock.success).toHaveBeenCalledWith('凭证已删除');
-    expect(setQueryData).toHaveBeenCalledWith(['admin-credentials'], expect.any(Function));
+    expect(setQueryData).toHaveBeenCalledWith(
+      ['admin', 'test-user', 'credentials'],
+      expect.any(Function),
+    );
     const updater = setQueryData.mock.calls.at(-1)![1] as (old: unknown) => unknown;
     const next = updater(credentialsQuery.data.value);
     expect((next as any).credentials).toEqual([{ credential_id: 'keep', is_expired: false }]);
@@ -464,9 +472,15 @@ describe('CredentialsView', () => {
 
     await (oauth as any).onSuccess();
 
-    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ['admin-credentials'] });
-    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ['admin-status'] });
-    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ['admin-settings'] });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ['admin', 'test-user', 'credentials'],
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ['admin', 'test-user', 'status'],
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ['admin', 'test-user', 'settings'],
+    });
   });
 
   it('mutationFn 读取当前输入并由后端决定测试模型', async () => {
@@ -485,18 +499,29 @@ describe('CredentialsView', () => {
     expect(deleteSpy).toHaveBeenCalledWith('gone');
   });
 
-  it('测试 mutation 维护行 loading 并提示结果', () => {
+  it('测试 mutation 用 ID 集合维护并发行 loading 并提示结果', () => {
     const wrapper = mountView();
     const state = (wrapper.vm.$ as any).setupState;
 
-    mutationOptions[3].onMutate('cred');
-    expect(state.testingId).toBe('cred');
-    mutationOptions[3].onSuccess({ ok: true, status_code: 200 });
+    mutationOptions[3].onMutate('cred-a');
+    mutationOptions[3].onMutate('cred-b');
+    expect([...state.testingIds]).toEqual(['cred-a', 'cred-b']);
+    mutationOptions[3].onSuccess({ ok: true, status_code: 200, model_source: 'actual' });
     expect(toastMock.success).toHaveBeenCalledWith('凭证可用');
-    mutationOptions[3].onSuccess({ ok: false, status_code: 500 });
-    expect(toastMock.error).toHaveBeenCalledWith('测试失败：HTTP 500');
-    mutationOptions[3].onSettled();
-    expect(state.testingId).toBeNull();
+    mutationOptions[3].onSuccess({
+      ok: true,
+      status_code: 200,
+      model_source: 'configured_fallback',
+    });
+    expect(toastMock.warning).toHaveBeenCalledWith('凭证可用（使用本地配置模型回退）');
+    mutationOptions[3].onSuccess({ ok: false, status_code: 500, detail: '上游拒绝请求' });
+    expect(toastMock.error).toHaveBeenCalledWith('测试失败：上游拒绝请求');
+    mutationOptions[3].onSuccess({ ok: false, status_code: 502 });
+    expect(toastMock.error).toHaveBeenCalledWith('测试失败：HTTP 502');
+    mutationOptions[3].onSettled(undefined, undefined, 'cred-a');
+    expect([...state.testingIds]).toEqual(['cred-b']);
+    mutationOptions[3].onSettled(undefined, undefined, 'cred-b');
+    expect([...state.testingIds]).toEqual([]);
   });
 
   it('列渲染覆盖当前、过期、可用和操作按钮', () => {
@@ -507,13 +532,17 @@ describe('CredentialsView', () => {
     const wrapper = mountView();
     const state = (wrapper.vm.$ as any).setupState;
     const active = { credential_id: 'active', is_expired: false, email: 'a@example.com' };
+    const activeExpired = { credential_id: 'active', is_expired: true };
     const expired = { credential_id: 'expired', is_expired: true, user_id: 'user' };
     const valid = { credential_id: 'valid', is_expired: false };
 
     const activeTag = state.columns[0].render(active);
+    const activeExpiredTag = state.columns[0].render(activeExpired);
     const expiredTag = state.columns[0].render(expired);
     const validTag = state.columns[0].render(valid);
     expect((activeTag.children as any).default()).toBe('当前');
+    expect((activeExpiredTag.children as any).default()).toBe('当前 · 已过期');
+    expect(activeExpiredTag.props?.type).toBe('error');
     expect((expiredTag.children as any).default()).toBe('过期');
     expect((validTag.children as any).default()).toBe('可用');
     expect(state.columns[1].render(active)).toBe('a@example.com');
@@ -528,6 +557,10 @@ describe('CredentialsView', () => {
     expect(actions.props?.credential).toBe(valid);
     expect(actions.props?.isCurrent).toBe(false);
     expect(actions.props?.isTesting).toBe(false);
+    expect(actions.props?.isSelecting).toBe(false);
+    expect(actions.props?.isDeleting).toBe(false);
+    expect(actions.props?.writeInProgress).toBe(false);
+    expect(actions.props?.hasActiveTests).toBe(false);
     actions.props?.onSelect('valid');
     actions.props?.onTest('valid');
     actions.props?.onDelete('valid');
@@ -550,6 +583,71 @@ describe('CredentialsView', () => {
 
     mutationOptions[3].onMutate('valid');
     expect(enabledState.columns[5].render(valid).props?.isTesting).toBe(true);
+  });
+
+  it('测试、选择和删除并发状态互相遵守冲突规则', async () => {
+    const wrapper = mountView();
+    const state = (wrapper.vm.$ as any).setupState;
+    const first = { credential_id: 'first', is_expired: false };
+    const second = { credential_id: 'second', is_expired: false };
+
+    mutationOptions[3].onMutate('first');
+    let firstActions = state.columns[5].render(first);
+    let secondActions = state.columns[5].render(second);
+    expect(firstActions.props?.isTesting).toBe(true);
+    expect(secondActions.props?.isTesting).toBe(false);
+    expect(secondActions.props?.hasActiveTests).toBe(true);
+
+    firstActions.props?.onTest('first');
+    secondActions.props?.onTest('second');
+    secondActions.props?.onSelect('second');
+    secondActions.props?.onDelete('second');
+    expect(mutationStates[3].mutate).toHaveBeenCalledTimes(1);
+    expect(mutationStates[3].mutate).toHaveBeenCalledWith('second');
+    expect(mutationStates[1].mutate).not.toHaveBeenCalled();
+    expect(mutationStates[2].mutate).not.toHaveBeenCalled();
+
+    mutationOptions[3].onSettled(undefined, undefined, 'first');
+    mutationOptions[1].onMutate('second');
+    secondActions = state.columns[5].render(second);
+    expect(secondActions.props?.isSelecting).toBe(true);
+    expect(secondActions.props?.writeInProgress).toBe(true);
+    secondActions.props?.onTest('second');
+    expect(mutationStates[3].mutate).toHaveBeenCalledTimes(1);
+    mutationOptions[1].onSettled(undefined, undefined, 'other');
+    expect(state.selectingId).toBe('second');
+    mutationOptions[1].onSettled(undefined, undefined, 'second');
+
+    mutationOptions[2].onMutate('second');
+    secondActions = state.columns[5].render(second);
+    expect(secondActions.props?.isDeleting).toBe(true);
+    mutationOptions[2].onSettled(undefined, undefined, 'other');
+    expect(state.deletingId).toBe('second');
+    mutationOptions[2].onSettled(undefined, undefined, 'second');
+  });
+
+  it('存在测试时禁止新增、轮换与开始认证', async () => {
+    const wrapper = mountView();
+    const state = (wrapper.vm.$ as any).setupState;
+    mutationOptions[3].onMutate('first');
+    await wrapper.vm.$nextTick();
+
+    const buttons = wrapper.findAll('button');
+    expect(
+      buttons.find((button) => button.text().includes('开始认证'))?.attributes('disabled'),
+    ).toBeDefined();
+    expect(
+      buttons.find((button) => button.text().trim() === '添加')?.attributes('disabled'),
+    ).toBeDefined();
+    expect(
+      buttons.find((button) => button.text().includes('自动轮换'))?.attributes('disabled'),
+    ).toBeDefined();
+    await state.submitCredential();
+    state.start();
+    state.toggleRotation();
+    expect(mutationStates[0].mutate).not.toHaveBeenCalled();
+    expect(oauth.start).not.toHaveBeenCalled();
+    expect(mutationStates[4].mutate).not.toHaveBeenCalled();
   });
 
   it('轮询与错误模板分支可操作', async () => {
@@ -603,6 +701,7 @@ describe('CredentialsView', () => {
 
     expect(toggleButton?.attributes('disabled')).toBeDefined();
     await toggleButton?.trigger('click');
+    (wrapper.vm.$ as any).setupState.toggleRotation();
     expect(mutationStates[4].mutate).not.toHaveBeenCalled();
   });
 

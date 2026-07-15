@@ -20,14 +20,16 @@ describe('CTooltip', () => {
     vi.useRealTimers();
   });
 
-  it('默认渲染触发元素', () => {
+  it('默认渲染触发元素且不为可聚焦子元素增加重复停靠点', async () => {
     const wrapper = mount(CTooltip, {
       slots: { default: '<button>触发</button>' },
     });
+    await wrapper.vm.$nextTick();
     expect(wrapper.find('button').exists()).toBe(true);
     expect(wrapper.element.tagName).toBe('SPAN');
     expect(wrapper.classes()).toContain('relative');
     expect(wrapper.classes()).toContain('inline-flex');
+    expect(wrapper.attributes('tabindex')).toBeUndefined();
   });
 
   it('初始不显示浮层', () => {
@@ -422,5 +424,123 @@ describe('CTooltip', () => {
     expect(removeSpy).toHaveBeenCalledWith('scroll', expect.any(Function), true);
     expect(removeSpy).toHaveBeenCalledWith('resize', expect.any(Function));
     removeSpy.mockRestore();
+  });
+
+  it('键盘聚焦可显示 tooltip，并关联触发控件与说明', async () => {
+    const wrapper = mount(CTooltip, {
+      props: { content: '键盘提示', delay: 100 },
+      attachTo: document.body,
+      slots: { default: '<button>触发</button>' },
+    });
+    const button = wrapper.get('button');
+    await button.trigger('focusin');
+    vi.advanceTimersByTime(100);
+    await flushPromises();
+    const popover = getPopover()!;
+    expect(popover.getAttribute('role')).toBe('tooltip');
+    expect(button.attributes('aria-describedby')).toBe(popover.id);
+  });
+
+  it('Escape 隐藏 tooltip，焦点移出也会隐藏并恢复原 aria-describedby', async () => {
+    const wrapper = mount(CTooltip, {
+      props: { content: '键盘提示', delay: 0 },
+      attachTo: document.body,
+      slots: { default: '<button aria-describedby="原说明">触发</button>' },
+    });
+    const button = wrapper.get('button');
+    await button.trigger('focusin');
+    vi.advanceTimersByTime(0);
+    await flushPromises();
+    expect(getPopover()).not.toBeNull();
+    await button.trigger('keydown', { key: 'Escape' });
+    await flushPromises();
+    expect(getPopover()).toBeNull();
+    expect(button.attributes('aria-describedby')).toBe('原说明');
+
+    await button.trigger('focusin');
+    vi.advanceTimersByTime(0);
+    await flushPromises();
+    await button.trigger('focusout', { relatedTarget: document.body });
+    await flushPromises();
+    expect(getPopover()).toBeNull();
+  });
+
+  it('重复进入不会叠加定时器，聚焦期间移出鼠标仍保持显示', async () => {
+    const wrapper = mount(CTooltip, {
+      props: { content: '提示', delay: 10 },
+      slots: { default: '<button>触发</button>' },
+    });
+    await wrapper.trigger('mouseenter');
+    await wrapper.trigger('mouseenter');
+    await wrapper.get('button').trigger('focusin');
+    vi.advanceTimersByTime(10);
+    await flushPromises();
+    await wrapper.trigger('mouseenter');
+    await wrapper.trigger('mouseleave');
+    expect(getPopover()).not.toBeNull();
+    await wrapper.get('button').trigger('focusout', { relatedTarget: document.body });
+    await flushPromises();
+    expect(getPopover()).toBeNull();
+  });
+
+  it('组内焦点移动和鼠标仍停留时不会隐藏', async () => {
+    const wrapper = mount(CTooltip, {
+      props: { content: '提示', delay: 0 },
+      slots: { default: '<span><button class="a">A</button><button class="b">B</button></span>' },
+    });
+    await wrapper.trigger('mouseenter');
+    await wrapper.get('button.a').trigger('focusin');
+    vi.advanceTimersByTime(0);
+    await flushPromises();
+    await wrapper.get('button.a').trigger('focusout', {
+      relatedTarget: wrapper.get('button.b').element,
+    });
+    expect(getPopover()).not.toBeNull();
+    await wrapper.get('button.a').trigger('focusout', { relatedTarget: document.body });
+    expect(getPopover()).not.toBeNull();
+    await wrapper.trigger('mouseleave');
+    expect(getPopover()).toBeNull();
+  });
+
+  it('无可聚焦子元素时把 tooltip 说明关联到触发容器', async () => {
+    const wrapper = mount(CTooltip, {
+      props: { content: '纯文本提示', delay: 0 },
+      slots: { default: '<span>纯文本</span>' },
+    });
+    await wrapper.vm.$nextTick();
+    expect(wrapper.attributes('tabindex')).toBe('0');
+    await wrapper.trigger('focusin');
+    await wrapper.trigger('mouseenter');
+    vi.advanceTimersByTime(0);
+    await flushPromises();
+    expect(wrapper.attributes('aria-describedby')).toBe(getPopover()?.id);
+  });
+
+  it('禁用控件不算可聚焦子元素，鼠标提示仍关联到可停靠的触发容器', async () => {
+    const wrapper = mount(CTooltip, {
+      props: { content: '禁用原因', delay: 0 },
+      slots: { default: '<button disabled>不可用</button>' },
+    });
+    await wrapper.vm.$nextTick();
+    expect(wrapper.attributes('tabindex')).toBe('0');
+
+    await wrapper.trigger('mouseenter');
+    vi.advanceTimersByTime(0);
+    await flushPromises();
+
+    expect(wrapper.attributes('aria-describedby')).toBe(getPopover()?.id);
+    expect(wrapper.get('button').attributes('aria-describedby')).toBeUndefined();
+  });
+
+  it('异步显示尚未落盘时可被 Escape 取消', async () => {
+    const wrapper = mount(CTooltip, {
+      props: { content: '提示', delay: 0 },
+      slots: { default: '<button>触发</button>' },
+    });
+    await wrapper.trigger('mouseenter');
+    vi.advanceTimersByTime(0);
+    wrapper.element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await flushPromises();
+    expect(getPopover()).toBeNull();
   });
 });

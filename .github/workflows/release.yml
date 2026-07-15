@@ -437,8 +437,24 @@ jobs:
         working-directory: frontend
         run: pnpm run build:bundle
 
+      - name: Resolve release archive timestamp
+        id: release_archive
+        shell: bash
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          source_date_epoch="$(git show -s --format=%ct "${TAG}^{commit}")"
+          if [[ ! "${source_date_epoch}" =~ ^[0-9]+$ ]]; then
+            echo "::error::Unable to resolve the release commit timestamp."
+            exit 1
+          fi
+          echo "source_date_epoch=${source_date_epoch}" >> "${GITHUB_OUTPUT}"
+
       - name: Build release package
         env:
+          SOURCE_DATE_EPOCH: ${{ steps.release_archive.outputs.source_date_epoch }}
           TAG: ${{ needs.resolve.outputs.tag }}
         run: python3 scripts/build_release_package.py "${TAG}"
 
@@ -605,6 +621,8 @@ jobs:
             )
             if [[ "${UPDATE_LATEST}" == "true" ]]; then
               edit_args+=(--latest)
+            else
+              edit_args+=(--latest=false)
             fi
             gh release edit "${TAG}" "${edit_args[@]}"
           else

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { mount } from '@vue/test-utils';
+import { flushPromises, mount } from '@vue/test-utils';
 import CCheckbox from '../components/ui/CCheckbox.vue';
+import CForm from '../components/ui/CForm.vue';
+import CFormItem from '../components/ui/CFormItem.vue';
 
 describe('CCheckbox', () => {
   it('默认 modelValue=false，box 未选中态', () => {
@@ -111,5 +113,37 @@ describe('CCheckbox', () => {
     expect(input.exists()).toBe(true);
     expect(input.classes()).toContain('sr-only');
     expect(input.classes()).toContain('peer');
+  });
+
+  it('indeterminate 同步到原生属性并暴露 mixed ARIA 状态', async () => {
+    const wrapper = mount(CCheckbox, { props: { indeterminate: true } });
+    const input = wrapper.get('input').element as HTMLInputElement;
+    expect(input.indeterminate).toBe(true);
+    expect(wrapper.get('input').attributes('aria-checked')).toBe('mixed');
+    await wrapper.setProps({ indeterminate: false, modelValue: true });
+    await flushPromises();
+    expect(input.indeterminate).toBe(false);
+    expect(wrapper.get('input').attributes('aria-checked')).toBe('true');
+    await wrapper.get('input').trigger('blur');
+  });
+
+  it('在表单项中继承标签与错误关联并触发 blur 校验', async () => {
+    const wrapper = mount(
+      {
+        components: { CCheckbox, CForm, CFormItem },
+        data: () => ({ model: { accepted: false } }),
+        template: `
+          <CForm :model="model" :rules="{ accepted: { validator: (value) => value, message: '请确认', trigger: 'blur' } }">
+            <CFormItem label="确认" path="accepted"><CCheckbox v-model="model.accepted" /></CFormItem>
+          </CForm>
+        `,
+      },
+      { attachTo: document.body },
+    );
+    const input = wrapper.get('input');
+    expect(input.attributes('aria-labelledby')).toBe(wrapper.get('label').attributes('id'));
+    await input.trigger('blur');
+    await flushPromises();
+    expect(wrapper.text()).toContain('请确认');
   });
 });

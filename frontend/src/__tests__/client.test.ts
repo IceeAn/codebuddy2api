@@ -139,8 +139,9 @@ describe('401 全局未授权处理', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('isUnauthorizedError 识别 401 ApiError', () => {
-    expect(isUnauthorizedError(new ApiError(401, '认证失败'))).toBe(true);
+  it('isUnauthorizedError 仅识别已确认的本系统认证失败', () => {
+    expect(isUnauthorizedError(new ApiError(401, '认证失败', undefined, true))).toBe(true);
+    expect(isUnauthorizedError(new ApiError(401, '上游凭证失效'))).toBe(false);
     expect(isUnauthorizedError(new ApiError(403, '禁止'))).toBe(false);
     expect(isUnauthorizedError(new Error('普通错误'))).toBe(false);
     expect(isUnauthorizedError(null)).toBe(false);
@@ -205,5 +206,41 @@ describe('请求超时', () => {
     callerController.abort();
     expect(signal.aborted).toBe(true);
     timeoutSpy.mockRestore();
+  });
+
+  it('浏览器缺少 AbortSignal.any 时仍能合并调用方取消信号', async () => {
+    const nativeAny = AbortSignal.any;
+    Object.defineProperty(AbortSignal, 'any', { configurable: true, value: undefined });
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+    const callerController = new AbortController();
+
+    try {
+      await apiRequest('/auth/session', { signal: callerController.signal });
+      const signal = fetchMock.mock.calls[0]![1]!.signal as AbortSignal;
+      expect(signal.aborted).toBe(false);
+      callerController.abort();
+      expect(signal.aborted).toBe(true);
+    } finally {
+      Object.defineProperty(AbortSignal, 'any', { configurable: true, value: nativeAny });
+    }
+  });
+
+  it('兼容合并会立即继承已取消的调用方 signal', async () => {
+    const nativeAny = AbortSignal.any;
+    Object.defineProperty(AbortSignal, 'any', { configurable: true, value: undefined });
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+    const callerController = new AbortController();
+    callerController.abort('caller cancelled');
+
+    try {
+      await apiRequest('/auth/session', { signal: callerController.signal });
+      const signal = fetchMock.mock.calls[0]![1]!.signal as AbortSignal;
+      expect(signal.aborted).toBe(true);
+      expect(signal.reason).toBe('caller cancelled');
+    } finally {
+      Object.defineProperty(AbortSignal, 'any', { configurable: true, value: nativeAny });
+    }
   });
 });

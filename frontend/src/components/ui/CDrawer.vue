@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue';
 import { X } from '@lucide/vue';
+import { registerOverlay } from './overlayStack';
 
 interface Props {
   open: boolean;
   placement?: 'left' | 'right';
   width?: number;
   title?: string;
+  ariaLabel?: string;
   closable?: boolean;
 }
 
@@ -17,6 +19,7 @@ const props = withDefaults(defineProps<Props>(), {
   placement: 'left',
   width: 296,
   title: undefined,
+  ariaLabel: undefined,
   closable: true,
 });
 
@@ -24,37 +27,47 @@ const emit = defineEmits<{
   'update:open': [value: boolean];
 }>();
 
+const maskRef = ref<HTMLElement | null>(null);
+const panelRef = ref<HTMLElement | null>(null);
+const titleId = `c-drawer-title-${useId().replace(/[^A-Za-z0-9_-]/g, '')}`;
+let unregisterOverlay: (() => void) | null = null;
+
 function close(): void {
+  if (!props.closable) return;
   emit('update:open', false);
 }
 
-/** ESC 键处理（仅在 open 时通过 listener 注册，故无需再判 open）。 */
-function handleKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape') {
-    close();
-  }
+function deactivateOverlay(): void {
+  unregisterOverlay?.();
+  unregisterOverlay = null;
 }
 
-function setBodyLock(locked: boolean): void {
-  document.body.style.overflow = locked ? 'hidden' : '';
+function activateOverlay(): void {
+  const mask = maskRef.value!;
+  const panel = panelRef.value!;
+  unregisterOverlay = registerOverlay({
+    elements: [mask, panel],
+    focusRoot: panel,
+    modal: true,
+    onEscape: props.closable ? close : undefined,
+  });
 }
 
 watch(
   () => props.open,
   (open) => {
-    setBodyLock(open);
-    if (open) {
-      document.addEventListener('keydown', handleKeydown);
-    } else {
-      document.removeEventListener('keydown', handleKeydown);
-    }
+    if (open) activateOverlay();
+    else deactivateOverlay();
   },
-  { immediate: true },
+  { flush: 'post' },
 );
 
+onMounted(() => {
+  if (props.open) activateOverlay();
+});
+
 onBeforeUnmount(() => {
-  document.removeEventListener('keydown', handleKeydown);
-  setBodyLock(false);
+  deactivateOverlay();
 });
 
 const currentPlacement = computed<DrawerPlacement>(() => props.placement);
@@ -74,6 +87,7 @@ const transitionName = computed(() =>
     <Transition name="c-drawer-mask">
       <div
         v-if="open"
+        ref="maskRef"
         class="c-drawer-mask fixed inset-0 z-40 bg-[var(--color-overlay)] backdrop-blur-[2px]"
         @click="close"
       />
@@ -81,17 +95,23 @@ const transitionName = computed(() =>
     <Transition :name="transitionName">
       <div
         v-if="open"
+        ref="panelRef"
         :class="[
           'c-drawer-panel fixed top-0 bottom-0 z-50 flex flex-col bg-surface shadow-2xl',
           placementClass,
         ]"
         :style="{ width: width + 'px' }"
+        role="dialog"
+        aria-modal="true"
+        :aria-labelledby="title ? titleId : undefined"
+        :aria-label="title ? undefined : ariaLabel || '抽屉'"
+        tabindex="-1"
       >
         <div
           v-if="title || closable"
           class="c-drawer-header flex h-14 items-center justify-between border-b border-border px-4"
         >
-          <div v-if="title" class="c-drawer-title font-display text-md font-semibold">
+          <div v-if="title" :id="titleId" class="c-drawer-title font-display text-md font-semibold">
             {{ title }}
           </div>
           <div v-else />

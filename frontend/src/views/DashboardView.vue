@@ -19,15 +19,19 @@ import {
   describeCredentialStatus,
   describeServiceStatus,
 } from '../utils/dashboardStatus';
+import { useSessionStore } from '../stores/session';
+import { adminQueryKeys } from '../utils/adminQueryKeys';
 
 const { copy } = useClipboard();
 const router = useRouter();
+const session = useSessionStore();
+const queryKeys = adminQueryKeys(session.username);
 const STATUS_REFETCH_INTERVAL_MS = 600_000;
 const FOCUS_REFETCH_STALE_MS = 180_000;
 const UPTIME_TICK_MS = 1_000;
 
 const statusQuery = useQuery({
-  queryKey: ['admin-status'],
+  queryKey: queryKeys.status,
   queryFn: adminApi.status,
   refetchInterval: STATUS_REFETCH_INTERVAL_MS,
   refetchOnMount: 'always',
@@ -46,13 +50,20 @@ function todayStatsParams() {
 }
 
 const todayStatsQuery = useQuery({
-  queryKey: ['admin-stats-overview', 'dashboard-today'],
+  queryKey: queryKeys.statsOverview('dashboard-today'),
   queryFn: () => adminApi.statsOverview(todayStatsParams()),
   refetchOnMount: 'always',
   refetchOnWindowFocus: 'always',
 });
 
 const isError = computed(() => statusQuery.isError.value);
+const statusData = computed(() => (isError.value ? undefined : statusQuery.data.value));
+const statusLoading = computed(() => !isError.value && statusData.value === undefined);
+const serviceTone = computed<'brand' | 'success' | 'warning' | 'error'>(() => {
+  if (isError.value) return 'error';
+  if (statusLoading.value) return 'brand';
+  return statusData.value?.status === 'healthy' ? 'success' : 'warning';
+});
 const nowMs = ref(Date.now());
 const uptimeSnapshotSeconds = ref<number | null>(null);
 const uptimeSnapshotMs = ref(nowMs.value);
@@ -121,7 +132,7 @@ watch(
 );
 
 watch(
-  () => statusQuery.data.value,
+  () => statusData.value,
   (status) => {
     if (typeof status?.uptime_seconds !== 'number') {
       uptimeSnapshotSeconds.value = null;
@@ -139,8 +150,8 @@ watch(
 const runningUptimeSeconds = computed(() => {
   if (uptimeSnapshotSeconds.value === null) return null;
 
-  const elapsedSeconds = Math.floor((nowMs.value - uptimeSnapshotMs.value) / 1_000);
-  return uptimeSnapshotSeconds.value + elapsedSeconds;
+  const elapsedSeconds = Math.max(0, Math.floor((nowMs.value - uptimeSnapshotMs.value) / 1_000));
+  return Math.max(0, uptimeSnapshotSeconds.value + elapsedSeconds);
 });
 
 const uptimeDisplay = computed(() => buildUptimeDisplay(runningUptimeSeconds.value));
@@ -150,8 +161,8 @@ const todayRequestCount = computed(() =>
 );
 
 const validityPercent = computed(() => {
-  const valid = statusQuery.data.value?.credentials.valid ?? 0;
-  const total = statusQuery.data.value?.credentials.total ?? 0;
+  const valid = statusData.value?.credentials.valid ?? 0;
+  const total = statusData.value?.credentials.total ?? 0;
   return computeValidityPercent(valid, total);
 });
 
@@ -167,7 +178,7 @@ async function refreshDashboard(): Promise<unknown> {
 const dashboardQuery = { isFetching: combinedFetching, refetch: refreshDashboard };
 
 function copyApiBaseUrl() {
-  const value = statusQuery.data.value?.api_base_url;
+  const value = statusData.value?.api_base_url;
   if (!value) return;
   copy(value, '客户端入口地址已复制');
 }
@@ -201,18 +212,18 @@ function openStats(): void {
     <div class="stats-grid grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
       <StatTile
         label="服务状态"
-        :value="describeServiceStatus(statusQuery.data.value?.status, isError)"
-        tone="success"
+        :value="describeServiceStatus(statusData?.status, isError, statusLoading)"
+        :tone="serviceTone"
         :icon="CheckCircle2"
-        :meta="statusQuery.data.value?.service"
+        :meta="statusData?.service"
         :class="{ 'animate-success': statusRecovered }"
       />
       <StatTile
         label="有效凭证"
-        :value="`${statusQuery.data.value?.credentials.valid ?? 0}/${statusQuery.data.value?.credentials.total ?? 0}`"
-        tone="brand"
+        :value="`${statusData?.credentials.valid ?? 0}/${statusData?.credentials.total ?? 0}`"
+        :tone="isError ? 'error' : 'brand'"
         :icon="KeyRound"
-        :meta="describeCredentialStatus(statusQuery.data.value?.credentials.current.status)"
+        :meta="describeCredentialStatus(statusData?.credentials.current.status)"
       >
         <template #corner>
           <CProgress :percentage="validityPercent" :stroke-width="5" :size="52" />
@@ -233,7 +244,7 @@ function openStats(): void {
       <StatTile
         :label="uptimeDisplay.label"
         :value="uptimeDisplay.value"
-        tone="success"
+        :tone="isError ? 'error' : 'success'"
         :icon="Clock3"
         :meta="uptimeDisplay.meta"
         value-class="break-words text-[24px] leading-tight [overflow-wrap:anywhere]"
@@ -242,7 +253,7 @@ function openStats(): void {
 
     <CCard title="客户端入口">
       <CInputGroup>
-        <CInput :model-value="statusQuery.data.value?.api_base_url || ''" readonly />
+        <CInput :model-value="statusData?.api_base_url || ''" readonly />
         <CButton variant="secondary" @click="copyApiBaseUrl">
           <template #icon>
             <Link :size="16" />

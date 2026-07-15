@@ -29,7 +29,7 @@ describe('管理 API 封装', () => {
     await authApi.logout();
 
     expect(apiRequestMock.mock.calls).toEqual([
-      ['/auth/session'],
+      ['/auth/session', { signal: undefined }],
       ['/auth/login', { method: 'POST', json: { username: 'admin', password: 'secret' } }],
       ['/auth/logout', { method: 'POST', json: {} }],
     ]);
@@ -71,7 +71,7 @@ describe('管理 API 封装', () => {
       cursor: 'next/cursor',
       limit: 25,
     });
-    await adminApi.statsRequestDetail(123);
+    await adminApi.statsRequestDetail(123, { id: 123, time: 15 });
 
     expect(apiRequestMock.mock.calls).toEqual([
       ['/api/admin/status'],
@@ -95,7 +95,7 @@ describe('管理 API 封装', () => {
       [
         '/api/admin/stats/dimensions/api_keys?start_at=10&end_at=20&timezone=Asia%2FTaipei&traffic=external&model=glm%2F5&search=robot+key&cursor=next%2Fcursor&limit=25',
       ],
-      ['/api/admin/stats/requests/123'],
+      ['/api/admin/stats/requests/123?snapshot_id=123&snapshot_time=15'],
     ]);
   });
 
@@ -108,10 +108,10 @@ describe('管理 API 封装', () => {
     await openaiPlaygroundApi.models();
 
     expect(apiRequestMock.mock.calls).toEqual([
-      ['/codebuddy/auth/start', { timeoutMs: 35000 }],
+      ['/codebuddy/auth/start', { method: 'POST', timeoutMs: 35000 }],
       ['/codebuddy/auth/poll', { method: 'POST', json: { auth_state: 'state' }, timeoutMs: 35000 }],
       ['/codebuddy/auth/cancel', { method: 'POST', json: { auth_state: 'state' } }],
-      ['/api/admin/playground/openai/v1/models'],
+      ['/api/admin/playground/openai/v1/models', { timeoutMs: 35000 }],
     ]);
   });
 
@@ -122,6 +122,7 @@ describe('管理 API 封装', () => {
     await codebuddyOAuthApi.startAuth(controller.signal);
 
     expect(apiRequestMock).toHaveBeenCalledWith('/codebuddy/auth/start', {
+      method: 'POST',
       signal: controller.signal,
       timeoutMs: 35000,
     });

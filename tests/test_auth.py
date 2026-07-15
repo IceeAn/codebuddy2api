@@ -1,8 +1,12 @@
 import base64
+import asyncio
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
 import config
+import httpx
 from fastapi import HTTPException, Response
 
 from src.auth_router import (
@@ -27,6 +31,7 @@ from src.password_hashing import (
     is_supported_password_hash,
     verify_password,
 )
+from src.login_security import LoginAttemptGuard
 from src.users_store import (
     UsersFileConfigurationError,
     UsersFileStore,
@@ -34,6 +39,7 @@ from src.users_store import (
 )
 
 from tests.helpers import TempConfigMixin, configure_users_file, make_request
+from web import app
 
 
 class PasswordHashingTests(unittest.TestCase):
@@ -129,6 +135,77 @@ class UsersFileStoreTests(TempConfigMixin, unittest.TestCase):
         self.assertTrue(store.verify("admin", "secret-password"))
         self.assertFalse(store.verify("admin", "bad-password"))
         self.assertFalse(store.verify("missing", "secret-password"))
+
+    def test_concurrent_user_file_cache_loads_are_serialized(self):
+        configure_users_file(self.temp_path)
+        store = UsersFileStore()
+        original_load = store._load_if_needed
+        first_inside = threading.Event()
+        second_inside = threading.Event()
+        release_first = threading.Event()
+        call_lock = threading.Lock()
+        call_count = 0
+
+        def controlled_load():
+            nonlocal call_count
+            with call_lock:
+                call_count += 1
+                current_call = call_count
+            if current_call == 1:
+                first_inside.set()
+                if not release_first.wait(timeout=2):
+                    raise TimeoutError("first cache load was not released")
+            else:
+                second_inside.set()
+            return original_load()
+
+        with (
+            mock.patch.object(store, "_load_if_needed", side_effect=controlled_load),
+            ThreadPoolExecutor(max_workers=2) as executor,
+        ):
+            first = executor.submit(store.has_username, "admin")
+            try:
+                self.assertTrue(first_inside.wait(timeout=1))
+                second = executor.submit(store.has_username, "admin")
+                self.assertFalse(second_inside.wait(timeout=0.1))
+            finally:
+                release_first.set()
+
+            self.assertTrue(first.result(timeout=1))
+            self.assertTrue(second.result(timeout=1))
+
+    def test_password_comparison_runs_outside_user_file_cache_lock(self):
+        configure_users_file(self.temp_path)
+        store = UsersFileStore()
+        self.assertTrue(store.has_users_file())
+        both_started = threading.Event()
+        release_comparisons = threading.Event()
+        call_lock = threading.Lock()
+        call_count = 0
+
+        def blocking_verify(_password, _password_hash):
+            nonlocal call_count
+            with call_lock:
+                call_count += 1
+                if call_count == 2:
+                    both_started.set()
+            if not release_comparisons.wait(timeout=2):
+                raise TimeoutError("password comparisons were not released")
+            return False
+
+        with (
+            mock.patch("src.users_store.verify_password", side_effect=blocking_verify),
+            ThreadPoolExecutor(max_workers=2) as executor,
+        ):
+            first = executor.submit(store.verify, "admin", "wrong")
+            second = executor.submit(store.verify, "admin", "wrong")
+            try:
+                self.assertTrue(both_started.wait(timeout=1))
+            finally:
+                release_comparisons.set()
+
+            self.assertFalse(first.result(timeout=1))
+            self.assertFalse(second.result(timeout=1))
 
     def test_missing_user_still_runs_hash_verification(self):
         configure_users_file(self.temp_path)
@@ -312,7 +389,7 @@ class AuthSessionTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(user.username, "admin")
         self.assertEqual(user.source, "session_cookie")
 
-    async def test_login_sets_secure_cookie_for_forwarded_https(self):
+    async def test_login_ignores_untrusted_forwarded_https_header(self):
         response = Response()
 
         await service_login(
@@ -321,7 +398,7 @@ class AuthSessionTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
             LoginRequest(username="admin", password="secret-password"),
         )
 
-        self.assertIn("Secure", response.headers["set-cookie"])
+        self.assertNotIn("Secure", response.headers["set-cookie"])
 
     async def test_login_sets_secure_cookie_for_direct_https(self):
         response = Response()
@@ -349,6 +426,99 @@ class AuthSessionTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(context.exception.status_code, 401)
+
+    async def test_forwarded_for_header_cannot_bypass_socket_ip_limit(self):
+        guard = LoginAttemptGuard(
+            global_max_attempts=10,
+            ip_max_attempts=1,
+            username_max_attempts=10,
+            window_seconds=60,
+            max_concurrency=2,
+        )
+        first_request = make_request(extra_headers={"X-Forwarded-For": "192.0.2.1"})
+        second_request = make_request(extra_headers={"X-Forwarded-For": "192.0.2.2"})
+
+        with mock.patch("src.auth_router.login_attempt_guard", guard):
+            with self.assertRaises(HTTPException) as first:
+                await service_login(
+                    first_request,
+                    Response(),
+                    LoginRequest(username="admin", password="wrong"),
+                )
+            with self.assertRaises(HTTPException) as second:
+                await service_login(
+                    second_request,
+                    Response(),
+                    LoginRequest(username="other", password="wrong"),
+                )
+
+        self.assertEqual(first.exception.status_code, 401)
+        self.assertEqual(second.exception.status_code, 429)
+
+    async def test_password_hashing_runs_off_loop_with_bounded_concurrency(self):
+        guard = LoginAttemptGuard(
+            global_max_attempts=100,
+            ip_max_attempts=100,
+            username_max_attempts=100,
+            window_seconds=60,
+            max_concurrency=2,
+        )
+        release_hashes = threading.Event()
+        started_hashes = threading.Event()
+        state_lock = threading.Lock()
+        worker_threads = []
+
+        def blocking_verify(_username, _password):
+            with state_lock:
+                worker_threads.append(threading.get_ident())
+                if len(worker_threads) == 2:
+                    started_hashes.set()
+            if not release_hashes.wait(timeout=2):
+                raise TimeoutError("password verification was not released")
+            return False
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://localhost",
+        ) as client:
+            with (
+                mock.patch("src.auth_router.login_attempt_guard", guard),
+                mock.patch("src.auth_router.users_store.verify", side_effect=blocking_verify),
+            ):
+                first = asyncio.create_task(
+                    client.post("/auth/login", json={"username": "admin", "password": "wrong"})
+                )
+                second = asyncio.create_task(
+                    client.post("/auth/login", json={"username": "admin", "password": "wrong"})
+                )
+                try:
+                    for _ in range(100):
+                        if started_hashes.is_set():
+                            break
+                        await asyncio.sleep(0.01)
+                    self.assertTrue(started_hashes.is_set())
+
+                    health = await asyncio.wait_for(client.get("/health"), timeout=0.5)
+                    rejected = await asyncio.wait_for(
+                        client.post(
+                            "/auth/login",
+                            json={"username": "admin", "password": "wrong"},
+                        ),
+                        timeout=0.5,
+                    )
+                finally:
+                    release_hashes.set()
+
+                first_response, second_response = await asyncio.gather(first, second)
+
+        self.assertEqual(health.status_code, 200)
+        self.assertEqual(rejected.status_code, 429)
+        self.assertEqual(rejected.headers["Retry-After"], "1")
+        self.assertEqual(first_response.status_code, 401)
+        self.assertEqual(second_response.status_code, 401)
+        self.assertEqual(len(worker_threads), 2)
+        self.assertNotIn(threading.get_ident(), worker_threads)
 
     async def test_logout_invalidates_session_cookie(self):
         cookie = await self._login_and_get_cookie()

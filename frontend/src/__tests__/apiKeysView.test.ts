@@ -89,7 +89,7 @@ function mountView() {
         CDataTable: {
           props: ['columns', 'data', 'loading', 'error', 'bordered', 'size', 'rowKey'],
           template:
-            '<div class="c-data-table" :data-error="String(error)" :data-loading="String(loading)"><slot name="empty" /></div>',
+            '<div class="c-data-table" :data-error="String(error)" :data-loading="String(loading)" :data-row-key="rowKey"><slot name="empty" /></div>',
         },
         Copy: true,
         Plus: true,
@@ -170,6 +170,26 @@ describe('ApiKeysView', () => {
     expect(mutationStates[0].mutate).toHaveBeenCalledOnce();
   });
 
+  it('名称限制为 80 字符并显示长度，程序化超长输入也拒绝创建', async () => {
+    const wrapper = mountView();
+    const state = (wrapper.vm.$ as any).setupState;
+    const input = wrapper.findComponent(CInput);
+
+    expect(input.props('maxlength')).toBe(80);
+    expect(wrapper.text()).toContain('0/80');
+    input.vm.$emit('update:modelValue', 'x'.repeat(80));
+    await wrapper.vm.$nextTick();
+    expect(wrapper.text()).toContain('80/80');
+    state.handleCreate();
+    expect(mutationStates[0].mutate).toHaveBeenCalledOnce();
+
+    mutationStates[0].mutate.mockClear();
+    state.name = 'x'.repeat(81);
+    state.handleCreate();
+    expect(mutationStates[0].mutate).not.toHaveBeenCalled();
+    expect(toastMock.warning).toHaveBeenCalledWith('API Key 名称不能超过 80 个字符');
+  });
+
   it('创建成功追加带名称的一次性 key，不覆盖尚未保存的 key', async () => {
     const wrapper = mountView();
     const state = (wrapper.vm.$ as any).setupState;
@@ -219,7 +239,22 @@ describe('ApiKeysView', () => {
     await mutationOptions[1].onSuccess();
 
     expect(toastMock.success).toHaveBeenCalledWith('API Key 已删除');
-    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ['admin-api-keys'] });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ['admin', 'test-user', 'api-keys'],
+    });
+  });
+
+  it('删除成功同步移除同 ID 的一次性明文卡片', async () => {
+    const wrapper = mountView();
+    const state = (wrapper.vm.$ as any).setupState;
+    await mutationOptions[0].onSuccess(createdApiKey('key-1', 'one', 'sk-one'));
+    await mutationOptions[0].onSuccess(createdApiKey('key-2', 'two', 'sk-two'));
+
+    await mutationOptions[1].onSuccess({ deleted: true }, 'key-1');
+
+    expect(state.pendingApiKeys).toEqual([
+      expect.objectContaining({ id: 'key-2', apiKey: 'sk-two' }),
+    ]);
   });
 
   it('已创建的 API Key 标题使用卡片标题样式', () => {
@@ -238,6 +273,7 @@ describe('ApiKeysView', () => {
     const wrapper = mountView();
 
     expect(wrapper.find('.c-data-table').attributes('data-error')).toBe('true');
+    expect(wrapper.find('.c-data-table').attributes('data-row-key')).toBe('id');
   });
 
   it('后台刷新时表格进入加载状态', () => {

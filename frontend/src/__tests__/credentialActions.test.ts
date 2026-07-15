@@ -39,6 +39,10 @@ function mountActions(
     isCurrent: boolean;
     autoRotationEnabled: boolean;
     isTesting: boolean;
+    isSelecting: boolean;
+    isDeleting: boolean;
+    writeInProgress: boolean;
+    hasActiveTests: boolean;
   }> = {},
 ) {
   return mount(CredentialActions, {
@@ -111,5 +115,43 @@ describe('CredentialActions', () => {
 
     await wrapper.setProps({ credential: { ...credential, email: undefined, user_id: '' } });
     expect(popconfirm.props('title')).toContain('cred-1');
+  });
+
+  it('并发测试只锁定写操作，任一写操作会锁定全部行操作', async () => {
+    const wrapper = mountActions({ hasActiveTests: true });
+    const selectButton = wrapper.get('[aria-label="切换为当前凭证"]');
+
+    expect(selectButton.attributes('disabled')).toBeDefined();
+    expect(selectButton.classes()).not.toContain('current-credential-action-button');
+    expect(selectButton.find('.lucide-circle-check-big').exists()).toBe(false);
+    expect(selectButton.find('.lucide-mouse-pointer-click').exists()).toBe(true);
+    expect(wrapper.get('[aria-label="删除凭证"]').attributes('disabled')).toBeDefined();
+    expect(wrapper.get('[aria-label="测试凭证"]').attributes('disabled')).toBeUndefined();
+
+    await wrapper.setProps({ isTesting: true });
+    expect(wrapper.get('[aria-label="测试凭证"]').attributes('disabled')).toBeDefined();
+
+    await wrapper.setProps({ hasActiveTests: false, isTesting: false, writeInProgress: true });
+    expect(wrapper.get('[aria-label="切换为当前凭证"]').attributes('disabled')).toBeDefined();
+    expect(wrapper.get('[aria-label="测试凭证"]').attributes('disabled')).toBeDefined();
+    expect(wrapper.get('[aria-label="删除凭证"]').attributes('disabled')).toBeDefined();
+
+    await wrapper.get('[aria-label="切换为当前凭证"]').trigger('click');
+    await wrapper.get('[aria-label="测试凭证"]').trigger('click');
+    await wrapper.get('[aria-label="确认删除"]').trigger('click');
+    const state = (wrapper.vm.$ as any).setupState;
+    state.selectCredential();
+    state.testCredential();
+    expect(wrapper.emitted('select')).toBeUndefined();
+    expect(wrapper.emitted('test')).toBeUndefined();
+    expect(wrapper.emitted('delete')).toBeUndefined();
+  });
+
+  it('选择和删除分别显示目标行 loading', async () => {
+    const wrapper = mountActions({ isSelecting: true });
+    expect(wrapper.get('[aria-label="切换为当前凭证"]').attributes('disabled')).toBeDefined();
+
+    await wrapper.setProps({ isSelecting: false, isDeleting: true });
+    expect(wrapper.get('[aria-label="删除凭证"]').attributes('disabled')).toBeDefined();
   });
 });

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from .auth_router import require_session_user
 from .auth_types import AuthenticatedUser
 from .private_response import PrivateNoStoreRoute
-from .usage_stats_middleware import dropped_usage_events
+from .usage_stats_middleware import dropped_completion_events
 from .usage_stats_store import (
     MAX_STATS_TIMESTAMP,
     SQLITE_MAX_INTEGER,
@@ -82,7 +82,7 @@ def get_stats_overview(
             filters,
             dropped_events=(
                 usage_stats_store.get_dropped_events(user.username)
-                + dropped_usage_events.get(user.username)
+                + dropped_completion_events.get(user.username)
             ),
         )
     except ValueError as error:
@@ -172,11 +172,18 @@ def list_stats_dimensions(
 @router.get("/requests/{id}")
 def get_stats_request(
     event_id: Annotated[int, Path(alias="id", gt=0, le=SQLITE_MAX_INTEGER)],
+    snapshot_id: Annotated[Optional[int], Query(ge=0, le=SQLITE_MAX_INTEGER)] = None,
+    snapshot_time: Annotated[Optional[int], Query(ge=0, le=MAX_STATS_TIMESTAMP)] = None,
     user: AuthenticatedUser = Depends(require_session_user),
 ):
     """返回当前用户的一条脱敏请求明细。"""
     try:
-        event = usage_stats_store.get_event(user.username, event_id)
+        event = usage_stats_store.get_event(
+            user.username,
+            event_id,
+            snapshot_id=snapshot_id,
+            snapshot_time=snapshot_time,
+        )
     except ValueError as error:
         raise _invalid_query(error) from error
     if event is None:

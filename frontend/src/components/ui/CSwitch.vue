@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, inject, useId } from 'vue';
+import { formItemControlKey } from './formContext';
 
 interface Props {
   modelValue?: boolean;
   size?: 'sm' | 'md';
   disabled?: boolean;
+  id?: string;
 }
 
 type SwitchSize = NonNullable<Props['size']>;
@@ -13,14 +15,19 @@ const props = withDefaults(defineProps<Props>(), {
   modelValue: false,
   size: 'md',
   disabled: false,
+  id: undefined,
 });
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean];
 }>();
+const formItem = inject(formItemControlKey, null);
+const ownId = `c-switch-${useId().replace(/[^A-Za-z0-9_-]/g, '')}`;
+const controlId = computed(() => props.id || formItem?.controlId || ownId);
 
 function toggle(): void {
   emit('update:modelValue', !props.modelValue);
+  formItem?.onInput();
 }
 
 const currentSize = computed<SwitchSize>(() => props.size);
@@ -49,8 +56,12 @@ const thumbTranslateClass = computed(() =>
 <template>
   <button
     type="button"
+    :id="controlId"
     role="switch"
     :aria-checked="modelValue"
+    :aria-labelledby="formItem?.labelId.value"
+    :aria-invalid="formItem?.invalid.value || undefined"
+    :aria-describedby="formItem?.describedBy.value"
     :disabled="disabled"
     :class="[
       'relative inline-flex items-center rounded-full transition-[background-color,box-shadow] duration-[var(--duration-fast)]',
@@ -59,6 +70,7 @@ const thumbTranslateClass = computed(() =>
       disabled ? 'opacity-50' : '',
     ]"
     @click="toggle"
+    @blur="formItem?.onBlur()"
   >
     <span
       :class="[

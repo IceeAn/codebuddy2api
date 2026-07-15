@@ -28,7 +28,7 @@
 ### 前置要求
 
 - Python 3.10 或更高版本；建议使用 Python 3.12
-- 确保你的命令行网络可以访问 GitHub。你也可以选择手动从 [releases](https://github.com/IceeAn/codebuddy2api) 页面下载 `codebuddy2api.zip`，手动解压并从命令行进入解压后的目录。
+- 确保你的命令行网络可以访问 GitHub。你也可以选择手动从 [releases](https://github.com/IceeAn/codebuddy2api/releases) 页面下载 `codebuddy2api.zip`，手动解压并从命令行进入解压后的目录。
 
 ### macOS / Linux
 
@@ -139,7 +139,7 @@ docker compose up -d
 
 SQLite 与 CodeBuddy 凭证保存在当前目录的 `data` 中，系统用户保存在 `secrets/users.txt`。
 
-若需要通过域名、服务器 IP 访问服务或修改其他配置，可参考 [.env.example](.env.example) 创建 `.env` 并配置相关环境变量后再启动。
+若需要通过域名、服务器 IP 访问服务、配置反向代理或修改其他配置，可参考 [.env.example](.env.example) 创建 `.env` 并配置相关环境变量后再启动。
 
 ## 开始使用
 
@@ -192,6 +192,12 @@ Invoke-RestMethod `
 兼容大部分支持允许自定义端点 URL 且支持 OpenAI Chat Completions 协议的客户端。
 
 手动调用示例如下（须将 `sk-your_api_key` 更换为上文获取的 API Key）：
+
+Python 示例需要另外安装 OpenAI SDK：
+
+```bash
+python3 -m pip install openai
+```
 
 ```python
 import openai
@@ -259,10 +265,17 @@ OpenAPI 文档会展示外部 `/openai/v1/*` 的 Bearer API Key 鉴权和 Chat C
 | `CODEBUDDY_DATA_DIR`              | `data`                        | 运行数据目录，包含 SQLite 和 `credentials/`；相对路径以应用根目录为基准，Docker 固定为 `/app/data` |
 | `CODEBUDDY_ALLOWED_HOSTS`         | `localhost,127.0.0.1`         | 允许访问本服务的 Host 头                                                                           |
 | `CODEBUDDY_ALLOWED_ORIGINS`       | 空                            | 允许跨域访问的浏览器 Origin；空表示不启用 CORS                                                     |
+| `CODEBUDDY_MAX_REQUEST_BODY_BYTES` | `16777216`                   | 全局 HTTP 请求体上限；登录接口另有固定 8 KiB 上限                                                  |
+| `CODEBUDDY_LOGIN_RATE_WINDOW_SECONDS` | `60`                       | 登录全局、IP、用户名三个独立速率桶共用的滑动窗口秒数                                               |
+| `CODEBUDDY_LOGIN_GLOBAL_MAX_ATTEMPTS` | `60`                      | 每个登录限流窗口允许的进程全局尝试数                                                               |
+| `CODEBUDDY_LOGIN_IP_MAX_ATTEMPTS` | `10`                          | 每个登录限流窗口允许的单一客户端 IP 尝试数                                                         |
+| `CODEBUDDY_LOGIN_USERNAME_MAX_ATTEMPTS` | `5`                    | 每个登录限流窗口允许的单一用户名尝试数                                                             |
+| `CODEBUDDY_LOGIN_MAX_CONCURRENCY` | `2`                           | 同时进入工作线程或等待线程池的 PBKDF2 登录校验数；超限不排队                                      |
+| `CODEBUDDY_MAX_CONCURRENT_REQUESTS` | 空                          | Uvicorn 全局连接/任务并发上限；空表示不限制                                                        |
 | `CODEBUDDY_SSL_VERIFY`            | `true`                        | 上游 TLS 证书校验；公网部署必须保持开启                                                            |
 | `CODEBUDDY_LOG_LEVEL`             | `INFO`                        | `DEBUG`、`INFO`、`WARNING`、`ERROR` 或 `CRITICAL`                                                  |
 
-`CODEBUDDY_API_ENDPOINT` 不在白名单内时会记录错误并回退到默认中国站，防止真实 Token 被转发到未授权地址。
+`CODEBUDDY_API_ENDPOINT`、白名单 URL 或其他强类型配置无效时，服务会在启动阶段直接失败；不会回退到其他站点，也不会把真实 Token 转发到未明确授权的地址。
 
 ### 用户级运行配置
 
@@ -312,6 +325,8 @@ python3 web.py
 ```
 
 ### 前端开发运行
+
+前端开发和构建要求 Node.js 24.11+ 与 pnpm 10.29+。
 
 前端开发服务器会把 `/auth`、`/api`、`/codebuddy`、`/openai`、`/health`、`/docs`、`/redoc` 和 `/openapi.json` 代理到本地后端 `127.0.0.1:8001`。
 

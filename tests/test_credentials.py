@@ -346,6 +346,23 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
                     with mock.patch.object(manager.rotation_policy, "select", return_value=selection):
                         self.assertEqual(manager.get_next_credential()["bearer_token"], "selected-token")
 
+    def test_preview_next_credential_does_not_advance_rotation_state(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
+            self.assertTrue(add_credential(manager, "a-token", "a-user", "a"))
+            self.assertTrue(add_credential(manager, "b-token", "b-user", "b"))
+            manager.current_index = 0
+            manager.usage_count = 0
+
+            first_id, first = manager.preview_next_credential()
+            second_id, second = manager.preview_next_credential()
+
+            self.assertEqual(first["bearer_token"], "a-token")
+            self.assertEqual(second["bearer_token"], "a-token")
+            self.assertEqual(first_id, second_id)
+            self.assertEqual(manager.current_index, 0)
+            self.assertEqual(manager.usage_count, 0)
+
     def test_credentials_info_calculates_expiration_metadata(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
@@ -563,6 +580,8 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
     def test_token_manager_current_info_reports_no_credentials(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
+
+            self.assertIsNone(manager.preview_next_credential())
 
             self.assertEqual(
                 manager.get_current_credential_info(),

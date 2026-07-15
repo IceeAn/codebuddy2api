@@ -308,4 +308,37 @@ describe('CPopconfirm', () => {
     await flushPromises();
     expect(getPopover()).toBeNull();
   });
+
+  it('使用 alertdialog 语义，打开后聚焦取消按钮', async () => {
+    const wrapper = mount(CPopconfirm, {
+      props: { title: '确定删除吗？' },
+      attachTo: attach(),
+      slots: { default: '<button class="trigger">删除</button>' },
+    });
+    await openPopover(wrapper);
+    const popover = getPopover()!;
+    const desc = popover.querySelector('.c-popconfirm-desc') as HTMLElement;
+    expect(popover.getAttribute('role')).toBe('alertdialog');
+    expect(popover.getAttribute('aria-modal')).toBe('true');
+    expect(popover.getAttribute('aria-describedby')).toBe(desc.id);
+    expect(document.activeElement).toBe(getPopoverButtons()[0]);
+  });
+
+  it('捕获 Tab，Escape 取消并恢复触发点焦点', async () => {
+    const wrapper = mount(CPopconfirm, {
+      attachTo: attach(),
+      slots: { default: '<button class="trigger">删除</button>' },
+    });
+    const trigger = wrapper.get('button.trigger').element as HTMLButtonElement;
+    trigger.focus();
+    await openPopover(wrapper);
+    const buttons = getPopoverButtons();
+    buttons[1].focus();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    expect(document.activeElement).toBe(buttons[0]);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await flushPromises();
+    expect(wrapper.emitted('cancel')).toBeTruthy();
+    expect(document.activeElement).toBe(trigger);
+  });
 });

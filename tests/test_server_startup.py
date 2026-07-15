@@ -71,6 +71,22 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("export CODEBUDDY_DATA_DIR", entrypoint)
         self.assertNotIn(".codebuddy_creds", entrypoint)
 
+    def test_container_entrypoint_forwards_log_level_and_disables_server_header(self):
+        entrypoint = (self.repository_root / "entrypoint.sh").read_text(encoding="utf-8")
+
+        self.assertIn('CODEBUDDY_LOG_LEVEL:-INFO', entrypoint)
+        self.assertIn("tr '[:upper:]' '[:lower:]'", entrypoint)
+        self.assertIn('--log-level "${log_level}"', entrypoint)
+        self.assertIn("--no-server-header", entrypoint)
+
+    def test_container_entrypoint_applies_optional_concurrency_limit(self):
+        entrypoint = (self.repository_root / "entrypoint.sh").read_text(encoding="utf-8")
+
+        self.assertIn('CODEBUDDY_MAX_CONCURRENT_REQUESTS:-', entrypoint)
+        self.assertIn("to_uvicorn_limit_concurrency", entrypoint)
+        self.assertIn('--limit-concurrency "${uvicorn_limit_concurrency}"', entrypoint)
+        self.assertNotIn('--limit-concurrency "${max_concurrent_requests}"', entrypoint)
+
     def test_container_entrypoint_supports_user_setup_commands(self):
         entrypoint = (self.repository_root / "entrypoint.sh").read_text(encoding="utf-8")
 
@@ -134,11 +150,24 @@ class RepositoryConfigurationTests(unittest.TestCase):
 
         self.assertEqual(package["version"], web.app.version)
 
+    def test_readme_documents_releases_frontend_toolchain_and_openai_dependency(self):
+        readme = (self.repository_root / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn(
+            "[releases](https://github.com/IceeAn/codebuddy2api/releases)",
+            readme,
+        )
+        self.assertIn("Node.js 24.11+", readme)
+        self.assertIn("pnpm 10.29+", readme)
+        self.assertIn("python3 -m pip install openai", readme)
+
 class ServerStartupTests(unittest.TestCase):
     def test_run_server_uses_uvicorn(self):
         with (
             mock.patch.object(web, "get_server_host", return_value="127.0.0.2"),
             mock.patch.object(web, "get_server_port", return_value=9001),
+            mock.patch.object(web, "get_log_level", return_value="WARNING"),
+            mock.patch.object(web, "get_max_concurrent_requests", return_value=100),
             mock.patch("uvicorn.run") as run,
         ):
             web.run_server()
@@ -147,10 +176,24 @@ class ServerStartupTests(unittest.TestCase):
             web.app,
             host="127.0.0.2",
             port=9001,
-            log_level="info",
+            log_level="warning",
             access_log=False,
-            use_colors=True,
+            use_colors=None,
+            server_header=False,
+            limit_concurrency=101,
         )
+
+    def test_run_server_leaves_concurrency_unlimited_by_default(self):
+        with (
+            mock.patch.object(web, "get_server_host", return_value="127.0.0.1"),
+            mock.patch.object(web, "get_server_port", return_value=8001),
+            mock.patch.object(web, "get_log_level", return_value="INFO"),
+            mock.patch.object(web, "get_max_concurrent_requests", return_value=None),
+            mock.patch("uvicorn.run") as run,
+        ):
+            web.run_server()
+
+        self.assertIsNone(run.call_args.kwargs["limit_concurrency"])
 
     def test_main_module_enables_cors_and_invokes_server(self):
         with (
@@ -228,15 +271,11 @@ class ServerLifecycleTests(unittest.IsolatedAsyncioTestCase):
         retention_shutdown.assert_awaited_once_with()
         shutdown.assert_awaited_once_with()
 
-    async def test_health_and_root_endpoints_return_metadata(self):
+    async def test_health_endpoint_and_application_version(self):
         health = await web.health_check()
-        root = await web.root()
 
         self.assertEqual(health["status"], "healthy")
-        self.assertEqual(root["service"], "CodeBuddy2API")
         self.assertRegex(web.app.version, r"^\d+\.\d+\.\d+$")
-        self.assertEqual(root["version"], web.app.version)
-        self.assertEqual(root["endpoints"]["chat"], "/openai/v1/chat/completions")
 
 
 if __name__ == "__main__":

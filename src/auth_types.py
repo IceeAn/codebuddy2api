@@ -1,12 +1,13 @@
 """认证相关类型和常量。"""
 from dataclasses import dataclass
-from typing import Optional
+from typing import Annotated, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, StringConstraints
 
 DUMMY_PASSWORD_HASH = "pbkdf2_sha256$600000$Q2ZpaYeWHUv958nZM_Zl6A$cRI0uf1Yms6VBjzrG-XchKqQzqc6GSC1w09w2070AH8"
 SESSION_COOKIE_NAME = "codebuddy2api_session"
 SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
+SESSION_REFRESH_STATE_KEY = "session_cookie_refresh"
 API_KEY_PREFIX = "sk-"
 
 
@@ -30,4 +31,4 @@ class LoginRequest(BaseModel):
 class ApiKeyCreateRequest(BaseModel):
     """API Key 创建请求。"""
 
-    name: str = ""
+    name: Annotated[str, StringConstraints(strip_whitespace=True, max_length=80)] = ""

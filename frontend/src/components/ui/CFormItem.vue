@@ -1,6 +1,17 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, onMounted, ref, useSlots, type ComputedRef } from 'vue';
+import {
+  computed,
+  inject,
+  onBeforeUnmount,
+  onMounted,
+  provide,
+  ref,
+  useId,
+  useSlots,
+  type ComputedRef,
+} from 'vue';
 import type { FormRule, FormRules } from './CForm.vue';
+import { formItemControlKey } from './formContext';
 
 interface FormContext {
   rules: ComputedRef<FormRules>;
@@ -37,6 +48,10 @@ if (!ctx) {
 const formCtx: FormContext = ctx;
 
 const error = ref<string | null>(null);
+const instanceId = useId().replace(/[^A-Za-z0-9_-]/g, '');
+const controlId = `c-form-control-${instanceId}`;
+const labelElementId = `c-form-label-${instanceId}`;
+const errorId = `c-form-error-${instanceId}`;
 
 const rules = computed<FormRule[]>(() => {
   const r = formCtx.rules.value[props.path];
@@ -46,6 +61,7 @@ const rules = computed<FormRule[]>(() => {
 
 const isRequired = computed(() => props.required || rules.value.some((r) => r.required));
 const hasLabel = computed(() => Boolean(props.label || slots.label));
+const labelId = computed(() => (hasLabel.value ? labelElementId : undefined));
 
 const labelPlacement = computed<'left' | 'top'>(() => formCtx.labelPlacement.value);
 
@@ -66,8 +82,12 @@ function applyRule(rule: FormRule, value: unknown): string | null {
 }
 
 async function validate(): Promise<string | null> {
+  return validateRules(rules.value);
+}
+
+async function validateRules(rulesToApply: FormRule[]): Promise<string | null> {
   const value = formCtx.model.value[props.path];
-  for (const rule of rules.value) {
+  for (const rule of rulesToApply) {
     const msg = applyRule(rule, value);
     if (msg) {
       error.value = msg;
@@ -76,6 +96,12 @@ async function validate(): Promise<string | null> {
   }
   error.value = null;
   return null;
+}
+
+function validateForTrigger(trigger: 'input' | 'blur'): void {
+  const triggeredRules = rules.value.filter((rule) => rule.trigger === trigger);
+  if (triggeredRules.length === 0 && !error.value) return;
+  void validateRules(error.value ? rules.value : triggeredRules);
 }
 
 function restoreValidation(): void {
@@ -89,6 +115,16 @@ const expose: FormItemExpose = {
   validate,
   restoreValidation,
 };
+
+provide(formItemControlKey, {
+  controlId,
+  labelId,
+  errorId,
+  invalid: computed(() => error.value !== null),
+  describedBy: computed(() => (error.value ? errorId : undefined)),
+  onInput: () => validateForTrigger('input'),
+  onBlur: () => validateForTrigger('blur'),
+});
 
 onMounted(() => {
   formCtx.registerItem(expose);
@@ -104,6 +140,8 @@ onBeforeUnmount(() => {
     <template v-if="labelPlacement === 'left'">
       <label
         v-if="hasLabel"
+        :id="labelElementId"
+        :for="controlId"
         class="c-form-item-label max-w-full min-w-0 text-left text-[13px] font-medium text-text md:flex md:min-h-[38px] md:items-center md:justify-end md:text-right"
       >
         <slot name="label">
@@ -116,6 +154,8 @@ onBeforeUnmount(() => {
     <template v-else>
       <label
         v-if="hasLabel"
+        :id="labelElementId"
+        :for="controlId"
         class="c-form-item-label mb-1.5 block max-w-full min-w-0 text-[13px] font-medium text-text"
       >
         <slot name="label">
@@ -131,7 +171,10 @@ onBeforeUnmount(() => {
       </div>
       <div
         v-if="error"
+        :id="errorId"
         class="c-form-item-error mt-1 h-4 animate-[shake_0.3s_ease] text-xs text-tone-error"
+        role="alert"
+        aria-live="polite"
       >
         {{ error }}
       </div>

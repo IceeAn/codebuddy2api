@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, useId } from 'vue';
 
 interface Props {
   percentage?: number;
@@ -20,8 +20,10 @@ const props = withDefaults(defineProps<Props>(), {
 });
 
 const clampedPercentage = computed(() => {
+  if (!Number.isFinite(props.percentage)) return 0;
   return Math.max(0, Math.min(100, props.percentage));
 });
+const gradientId = `c-progress-gradient-${useId().replace(/[^A-Za-z0-9_-]/g, '')}`;
 
 const radius = computed(() => (props.size - props.strokeWidth) / 2);
 const center = computed(() => props.size / 2);
@@ -42,7 +44,7 @@ const thresholdStroke = computed(() => {
 });
 
 const progressStroke = computed(() => {
-  return props.thresholdColors ? thresholdStroke.value : 'url(#c-progress-gradient)';
+  return props.thresholdColors ? thresholdStroke.value : `url(#${gradientId})`;
 });
 const trackStroke = computed(() =>
   props.variant === 'cache-hit'
@@ -59,9 +61,14 @@ const textClass = computed(() => (props.size < 64 ? 'text-[13px]' : 'text-[18px]
     :height="size"
     :viewBox="`0 0 ${size} ${size}`"
     :style="{ transform: 'rotate(-90deg)' }"
+    role="progressbar"
+    aria-label="进度"
+    aria-valuemin="0"
+    aria-valuemax="100"
+    :aria-valuenow="clampedPercentage"
   >
     <defs v-if="!thresholdColors">
-      <linearGradient id="c-progress-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <linearGradient :id="gradientId" x1="0%" y1="0%" x2="100%" y2="100%">
         <stop offset="0%" stop-color="var(--color-brand-500)" />
         <stop offset="100%" stop-color="var(--color-accent-400)" />
       </linearGradient>

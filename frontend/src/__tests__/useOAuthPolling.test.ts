@@ -121,6 +121,41 @@ describe('useOAuthPolling', () => {
     oauth.reset();
   });
 
+  it.each([
+    'javascript:alert(document.domain)',
+    'data:text/html,unsafe',
+    '/relative/auth',
+    'https://user:password@cb.example/auth',
+    'https://cb.example/\nunsafe',
+  ])('拒绝危险认证链接且不导航预打开窗口：%s', async (unsafeUrl) => {
+    const popup = {
+      closed: false,
+      close: vi.fn<() => void>(),
+      location: { href: 'about:blank' },
+      opener: window,
+    } as unknown as Window;
+    vi.mocked(window.open).mockReturnValue(popup);
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
+      verification_uri_complete: unsafeUrl,
+      auth_state: 'unsafe-state',
+    });
+    const pollAuth = vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockResolvedValue({});
+    const cancelAuth = vi
+      .spyOn(codebuddyOAuthApi, 'cancelAuth')
+      .mockResolvedValue({ cancelled: true });
+
+    const oauth = useOAuthPolling();
+    await oauth.start();
+
+    expect(popup.location.href).toBe('about:blank');
+    expect(popup.close).toHaveBeenCalledOnce();
+    expect(pollAuth).not.toHaveBeenCalled();
+    expect(cancelAuth).toHaveBeenCalledWith('unsafe-state');
+    expect(oauth.authUrl.value).toBe('');
+    expect(oauth.authState.value).toBe('');
+    expect(toastMock.error).toHaveBeenCalledWith('认证链接无效');
+  });
+
   it('弹窗被拦截或在响应前关闭时保留手动打开入口', async () => {
     vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
       verification_uri_complete: 'https://cb/auth',
@@ -528,21 +563,57 @@ describe('useOAuthPolling', () => {
     expect(toastMock.error).toHaveBeenCalledWith('poll failed');
   });
 
-  it('pollAuth 的普通异常停止并按类型提示', async () => {
+  it('凭证保存失败的 500 为终止错误，保留原始提示且不再轮询已消费 state', async () => {
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
+      verification_uri_complete: 'https://cb/auth',
+      auth_state: 'state-save-failed',
+    });
+    const pollAuth = vi
+      .spyOn(codebuddyOAuthApi, 'pollAuth')
+      .mockRejectedValue(
+        new ApiError(500, '凭证保存失败，请重新认证', { detail: '凭证保存失败，请重新认证' }),
+      );
+    const cancelAuth = vi.mocked(codebuddyOAuthApi.cancelAuth);
+
+    const oauth = useOAuthPolling({ pollIntervalMs: 1000 });
+    await oauth.start();
+
+    expect(oauth.polling.value).toBe(false);
+    expect(oauth.authState.value).toBe('');
+    expect(toastMock.error).toHaveBeenCalledWith('凭证保存失败，请重新认证');
+    expect(cancelAuth).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(pollAuth).toHaveBeenCalledOnce();
+  });
+
+  it('pollAuth 的网络错误指数退避并保留 state', async () => {
     vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
       verification_uri_complete: 'https://cb/auth',
       auth_state: 'state-normal-error',
     });
-    vi.spyOn(codebuddyOAuthApi, 'pollAuth')
+    const pollAuth = vi
+      .spyOn(codebuddyOAuthApi, 'pollAuth')
       .mockRejectedValueOnce(new Error('network'))
-      .mockRejectedValueOnce('bad');
+      .mockRejectedValueOnce(new Error('network again'))
+      .mockRejectedValue(new ApiError(400, 'pending', { error: 'authorization_pending' }));
+    const cancelAuth = vi.mocked(codebuddyOAuthApi.cancelAuth);
 
-    const oauth = useOAuthPolling();
+    const oauth = useOAuthPolling({ pollIntervalMs: 1000 });
     await oauth.start();
-    expect(toastMock.error).toHaveBeenLastCalledWith('network');
+    expect(oauth.polling.value).toBe(true);
+    expect(oauth.authState.value).toBe('state-normal-error');
+    expect(cancelAuth).not.toHaveBeenCalled();
 
-    await oauth.start();
-    expect(toastMock.error).toHaveBeenLastCalledWith('认证失败');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(pollAuth).toHaveBeenCalledTimes(2);
+    expect(oauth.polling.value).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(pollAuth).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(pollAuth).toHaveBeenCalledTimes(3);
+    expect(cancelAuth).not.toHaveBeenCalled();
+    oauth.reset();
   });
 
   it('达到 maxAttempts 时停止并提示超时', async () => {
@@ -569,6 +640,30 @@ describe('useOAuthPolling', () => {
     expect(toastMock.warning).toHaveBeenCalledWith('授权等待超时，请重试');
     oauth.reset();
     await startPromise;
+  });
+
+  it('达到五分钟式时长上限时取消后端 state 并停止轮询', async () => {
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
+      verification_uri_complete: 'https://cb/auth',
+      auth_state: 'state-duration-limit',
+    });
+    vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockRejectedValue(
+      new ApiError(400, 'pending', { error: 'authorization_pending' }),
+    );
+    const cancelAuth = vi.mocked(codebuddyOAuthApi.cancelAuth);
+    const oauth = useOAuthPolling({
+      pollIntervalMs: 5000,
+      maxDurationSeconds: 3,
+      maxAttempts: 100,
+    });
+
+    await oauth.start();
+    await vi.advanceTimersByTimeAsync(3000);
+
+    expect(cancelAuth).toHaveBeenCalledWith('state-duration-limit');
+    expect(oauth.polling.value).toBe(false);
+    expect(oauth.authState.value).toBe('');
+    expect(toastMock.warning).toHaveBeenCalledWith('授权等待超时，请重试');
   });
 
   it('stop() 清理所有 timer 且不再继续轮询', async () => {

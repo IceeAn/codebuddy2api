@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, inject, ref, useId } from 'vue';
 import { ChevronDown, ChevronUp, X } from '@lucide/vue';
+import { formItemControlKey } from './formContext';
 
 interface Props {
   modelValue?: number | null;
@@ -11,6 +12,7 @@ interface Props {
   clearable?: boolean;
   disabled?: boolean;
   placeholder?: string;
+  id?: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -22,11 +24,15 @@ const props = withDefaults(defineProps<Props>(), {
   clearable: false,
   disabled: false,
   placeholder: undefined,
+  id: undefined,
 });
 
 const emit = defineEmits<{
   'update:modelValue': [value: number | null];
 }>();
+const formItem = inject(formItemControlKey, null);
+const ownId = `c-input-number-${useId().replace(/[^A-Za-z0-9_-]/g, '')}`;
+const controlId = computed(() => props.id || formItem?.controlId || ownId);
 
 const inputRef = ref<HTMLInputElement | null>(null);
 
@@ -47,6 +53,7 @@ function applyNativeStep(direction: 1 | -1): void {
   const steppedValue = input.valueAsNumber;
   const fallbackValue = clamp((props.modelValue ?? 0) + direction * props.step);
   emit('update:modelValue', Number.isNaN(steppedValue) ? fallbackValue : steppedValue);
+  formItem?.onInput();
 }
 
 const displayValue = computed(() => {
@@ -63,14 +70,17 @@ function onInput(event: Event): void {
   const raw = target.value;
   if (raw === '') {
     emit('update:modelValue', null);
+    formItem?.onInput();
     return;
   }
   // type="number" 的 input.value 不会返回非数字字符串，无需 NaN 守卫
-  emit('update:modelValue', clamp(Number(raw)));
+  emit('update:modelValue', Number(raw));
+  formItem?.onInput();
 }
 
 function clear(): void {
   emit('update:modelValue', null);
+  formItem?.onInput();
 }
 
 // 右侧控件使用 absolute 定位，需要为输入文本预留空间。
@@ -81,6 +91,7 @@ const inputPaddingRight = computed(() => (props.clearable ? 'pr-16' : 'pr-9'));
   <div class="c-input-number relative inline-flex w-full items-stretch">
     <input
       ref="inputRef"
+      :id="controlId"
       type="number"
       :value="displayValue"
       :placeholder="placeholder"
@@ -88,12 +99,16 @@ const inputPaddingRight = computed(() => (props.clearable ? 'pr-16' : 'pr-9'));
       :min="min"
       :max="max"
       :step="step"
+      :aria-labelledby="formItem?.labelId.value"
+      :aria-invalid="formItem?.invalid.value || undefined"
+      :aria-describedby="formItem?.describedBy.value"
       :class="[
         'c-input-number-input c-control-focus w-full rounded-md border border-border bg-surface text-text placeholder:text-muted/60 hover:border-border-strong disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-muted/60',
         inputSizeClass,
         inputPaddingRight,
       ]"
       @input="onInput"
+      @blur="formItem?.onBlur()"
     />
     <button
       v-if="clearable && modelValue !== null && modelValue !== undefined"

@@ -5,9 +5,10 @@ import unittest
 from starlette.requests import ClientDisconnect
 
 from src.usage_stats_middleware import (
+    DroppedCompletionEvents,
     USAGE_STATS_CONTEXT_STATE_KEY,
     UsageStatsMiddleware,
-    dropped_usage_events,
+    dropped_completion_events,
 )
 from src.private_response import PrivateNoStoreFastAPI, PrivateNoStoreMiddleware
 
@@ -26,7 +27,10 @@ class RecordingContext:
 
 class UsageStatsMiddlewareTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        dropped_usage_events.reset_for_tests()
+        dropped_completion_events.reset_for_tests()
+
+    def test_completion_drop_counter_has_distinct_semantic_name(self):
+        self.assertEqual(DroppedCompletionEvents.__name__, "DroppedCompletionEvents")
 
     async def test_non_http_scope_passes_through(self):
         scopes = []
@@ -52,7 +56,7 @@ class UsageStatsMiddlewareTests(unittest.IsolatedAsyncioTestCase):
         await UsageStatsMiddleware(app)(self._scope(), self._unused_receive, send)
 
         self.assertEqual([item["type"] for item in sent], ["http.response.start", "http.response.body"])
-        self.assertEqual(dropped_usage_events.get("admin"), 0)
+        self.assertEqual(dropped_completion_events.get("admin"), 0)
 
     async def test_context_attached_downstream_receives_final_status_and_sent_bytes(self):
         context = RecordingContext()
@@ -202,8 +206,8 @@ class UsageStatsMiddlewareTests(unittest.IsolatedAsyncioTestCase):
             await UsageStatsMiddleware(app)(self._scope(), self._unused_receive, send)
 
         self.assertEqual(sent[-1]["body"], b"ok")
-        self.assertEqual(dropped_usage_events.get("admin"), 1)
-        self.assertEqual(dropped_usage_events.get("alice"), 0)
+        self.assertEqual(dropped_completion_events.get("admin"), 1)
+        self.assertEqual(dropped_completion_events.get("alice"), 0)
 
     async def test_async_completion_is_supported_and_send_failure_bytes_are_not_counted(self):
         class AsyncContext(RecordingContext):

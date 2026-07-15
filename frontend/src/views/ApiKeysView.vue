@@ -17,11 +17,17 @@ import { useClipboard } from '../composables/useClipboard';
 import { useToast } from '../composables/useToast';
 import RefreshButton from '../components/RefreshButton.vue';
 import { formatDeleteConfirm } from '../utils/apiKeyText';
+import { useSessionStore } from '../stores/session';
+import { adminQueryKeys } from '../utils/adminQueryKeys';
 
 const queryClient = useQueryClient();
+const session = useSessionStore();
+const queryKeys = adminQueryKeys(session.username);
 const toast = useToast();
 const { copy } = useClipboard();
 const name = ref('');
+const MAX_API_KEY_NAME_LENGTH = 80;
+const nameLength = computed(() => name.value.length);
 const actionButtonClass = 'table-action-button';
 const leaveWarning = '仍有未保存的 API Key，离开后将无法再次查看。确定要离开吗？';
 
@@ -71,7 +77,7 @@ onBeforeUnmount(() => {
 });
 
 const apiKeysQuery = useQuery({
-  queryKey: ['admin-api-keys'],
+  queryKey: queryKeys.apiKeys,
   queryFn: adminApi.apiKeys,
 });
 
@@ -88,20 +94,21 @@ function formatMinuteTimestamp(value: number): string {
 }
 
 const createMutation = useMutation({
-  mutationFn: () => adminApi.createApiKey(name.value),
+  mutationFn: () => adminApi.createApiKey(name.value.trim()),
   onSuccess: async (created) => {
     addPendingApiKey(created);
     name.value = '';
     toast.success('API Key 已生成');
-    await queryClient.invalidateQueries({ queryKey: ['admin-api-keys'] });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.apiKeys });
   },
 });
 
 const deleteMutation = useMutation({
   mutationFn: adminApi.deleteApiKey,
-  onSuccess: async () => {
+  onSuccess: async (_data, keyId) => {
+    dismissNewKey(keyId);
     toast.success('API Key 已删除');
-    await queryClient.invalidateQueries({ queryKey: ['admin-api-keys'] });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.apiKeys });
   },
 });
 
@@ -109,6 +116,10 @@ function handleCreate() {
   if (createMutation.isPending.value) return;
   if (!name.value.trim()) {
     toast.warning('请输入 API Key 名称');
+    return;
+  }
+  if (name.value.trim().length > MAX_API_KEY_NAME_LENGTH) {
+    toast.warning('API Key 名称不能超过 80 个字符');
     return;
   }
   createMutation.mutate();
@@ -192,20 +203,28 @@ const tableRows = computed(() => rows.value as unknown as Record<string, unknown
   <div class="section-grid">
     <CCard title="创建 API Key">
       <div class="flex flex-col gap-4">
-        <CInputGroup>
-          <CInput v-model="name" placeholder="名称" @enter="handleCreate" />
-          <CButton
-            variant="primary"
-            :loading="createMutation.isPending.value"
-            :disabled="createMutation.isPending.value"
-            @click="handleCreate"
-          >
-            <template #icon>
-              <Plus :size="16" />
-            </template>
-            生成
-          </CButton>
-        </CInputGroup>
+        <div>
+          <CInputGroup>
+            <CInput
+              v-model="name"
+              placeholder="名称"
+              :maxlength="MAX_API_KEY_NAME_LENGTH"
+              @enter="handleCreate"
+            />
+            <CButton
+              variant="primary"
+              :loading="createMutation.isPending.value"
+              :disabled="createMutation.isPending.value"
+              @click="handleCreate"
+            >
+              <template #icon>
+                <Plus :size="16" />
+              </template>
+              生成
+            </CButton>
+          </CInputGroup>
+          <div class="mt-1 text-right text-xs text-muted">{{ nameLength }}/80</div>
+        </div>
 
         <CAlert
           v-for="pendingKey in pendingApiKeys"
@@ -255,6 +274,7 @@ const tableRows = computed(() => rows.value as unknown as Record<string, unknown
       <CDataTable
         :columns="tableColumns"
         :data="tableRows"
+        row-key="id"
         :loading="apiKeysQuery.isLoading.value || apiKeysQuery.isFetching.value"
         :error="apiKeysQuery.isError.value"
         :bordered="false"

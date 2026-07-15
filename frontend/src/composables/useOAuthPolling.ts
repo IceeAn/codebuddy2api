@@ -2,12 +2,15 @@ import { ref, onBeforeUnmount } from 'vue';
 import { useToast } from './useToast';
 import { ApiError } from '../api/client';
 import { codebuddyOAuthApi } from '../api/admin';
+import { normalizeExternalHttpUrl } from '../utils/externalUrl';
 
 interface OAuthPollingOptions {
   /** 轮询间隔，默认 5000ms */
   pollIntervalMs?: number;
   /** 最大轮询次数（含 start 时立即执行的那一次），默认 60（约 5 分钟） */
   maxAttempts?: number;
+  /** 前端等待上限（秒），默认 300 秒 */
+  maxDurationSeconds?: number;
   /** 认证成功回调，通常用于刷新凭证列表 */
   onSuccess?: () => void;
 }
@@ -34,6 +37,7 @@ export function useOAuthPolling(options: OAuthPollingOptions = {}) {
   const toast = useToast();
   const pollIntervalMs = options.pollIntervalMs ?? 5000;
   const maxAttempts = options.maxAttempts ?? 60;
+  const maxDurationSeconds = options.maxDurationSeconds ?? 300;
 
   const authUrl = ref('');
   const authState = ref('');
@@ -48,6 +52,8 @@ export function useOAuthPolling(options: OAuthPollingOptions = {}) {
   let abortController: AbortController | null = null;
   let pollInFlight = false;
   let authWindow: Window | null = null;
+  let transientFailureCount = 0;
+  let nextPollDelayMs = pollIntervalMs;
 
   async function start(): Promise<void> {
     if (starting.value || polling.value) return;
@@ -68,7 +74,20 @@ export function useOAuthPolling(options: OAuthPollingOptions = {}) {
         return;
       }
 
-      authUrl.value = result.verification_uri_complete;
+      const safeAuthUrl = normalizeExternalHttpUrl(result.verification_uri_complete);
+      if (!safeAuthUrl) {
+        const rejectedState = result.auth_state;
+        reset();
+        try {
+          await codebuddyOAuthApi.cancelAuth(rejectedState);
+        } catch {
+          // 本地必须保持终止状态；后端会按 TTL 清理无法取消的 state。
+        }
+        toast.error('认证链接无效');
+        return;
+      }
+
+      authUrl.value = safeAuthUrl;
       authState.value = result.auth_state;
       polling.value = true;
       starting.value = false;
@@ -77,6 +96,10 @@ export function useOAuthPolling(options: OAuthPollingOptions = {}) {
       navigateAuthWindow(authUrl.value);
       elapsedTimer = setInterval(() => {
         elapsedSeconds.value += 1;
+        if (elapsedSeconds.value >= maxDurationSeconds) {
+          void expireAuthFlow();
+          return;
+        }
         if (authWindow?.closed) {
           authWindow = null;
           manualOpenRequired.value = true;
@@ -133,13 +156,20 @@ export function useOAuthPolling(options: OAuthPollingOptions = {}) {
       if ((error as Error)?.name === 'AbortError' || !isCurrentController(controller)) return;
       if (error instanceof ApiError) {
         const detail = error.detail as { error?: string; error_description?: string };
-        if (detail?.error === 'authorization_pending' || detail?.error === 'slow_down') return;
+        if (detail?.error === 'authorization_pending' || detail?.error === 'slow_down') {
+          resetTransientBackoff();
+          return;
+        }
+        if (error.status >= 500) {
+          reset();
+          toast.error(detail?.error_description || error.message);
+          return;
+        }
         await cancelAndReset(false);
         toast.error(detail?.error_description || error.message);
         return;
       }
-      await cancelAndReset(false);
-      toast.error(error instanceof Error ? error.message : '认证失败');
+      increaseTransientBackoff();
     } finally {
       if (abortController === controller) {
         pollInFlight = false;
@@ -188,7 +218,22 @@ export function useOAuthPolling(options: OAuthPollingOptions = {}) {
     pollTimer = setTimeout(() => {
       pollTimer = null;
       void poll();
-    }, pollIntervalMs);
+    }, nextPollDelayMs);
+  }
+
+  function resetTransientBackoff(): void {
+    transientFailureCount = 0;
+    nextPollDelayMs = pollIntervalMs;
+  }
+
+  function increaseTransientBackoff(): void {
+    transientFailureCount += 1;
+    nextPollDelayMs = Math.min(pollIntervalMs * 2 ** (transientFailureCount - 1), 30_000);
+  }
+
+  async function expireAuthFlow(): Promise<void> {
+    await cancelAndReset(false);
+    toast.warning('授权等待超时，请重试');
   }
 
   function clearRuntime(closeWindow: boolean): void {
@@ -233,6 +278,7 @@ export function useOAuthPolling(options: OAuthPollingOptions = {}) {
     elapsedSeconds.value = 0;
     manualOpenRequired.value = false;
     attemptCount = 0;
+    resetTransientBackoff();
   }
 
   async function cancelAndReset(reportFailure: boolean): Promise<void> {

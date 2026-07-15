@@ -2,14 +2,44 @@
 
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
-from starlette.datastructures import MutableHeaders
+from starlette.datastructures import Headers, MutableHeaders
+from starlette.responses import Response
 from starlette.routing import Match
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .usage_stats_middleware import UsageStatsMiddleware
+from .auth_types import SESSION_COOKIE_NAME, SESSION_REFRESH_STATE_KEY, SESSION_TTL_SECONDS
+from .session_store import session_store
 
 PRIVATE_NO_STORE_VALUE = "private, no-store"
 _PRIVATE_NO_STORE_STATE_KEY = "private_no_store"
+
+
+def _is_secure_scope(scope: Scope) -> bool:
+    return scope.get("scheme") == "https"
+
+
+def _session_id_from_scope(scope: Scope) -> str:
+    cookie_header = Headers(scope=scope).get("Cookie", "")
+    for part in cookie_header.split(";"):
+        name, separator, value = part.strip().partition("=")
+        if separator and name == SESSION_COOKIE_NAME:
+            return value
+    return ""
+
+
+def _session_cookie_header(session_id: str, secure: bool) -> str:
+    response = Response()
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=session_id,
+        max_age=SESSION_TTL_SECONDS,
+        httponly=True,
+        secure=secure,
+        samesite="lax",
+        path="/",
+    )
+    return response.headers["Set-Cookie"]
 
 
 class PrivateNoStoreRoute(APIRoute):
@@ -38,11 +68,32 @@ class PrivateNoStoreMiddleware:
         private_response_state = scope.setdefault("state", {})
 
         async def send_wrapper(message: Message) -> None:
-            if (
-                message["type"] == "http.response.start"
-                and private_response_state.get(_PRIVATE_NO_STORE_STATE_KEY)
-            ):
-                MutableHeaders(scope=message)["Cache-Control"] = PRIVATE_NO_STORE_VALUE
+            if message["type"] == "http.response.start":
+                response_headers = MutableHeaders(scope=message)
+                if private_response_state.get(_PRIVATE_NO_STORE_STATE_KEY):
+                    response_headers["Cache-Control"] = PRIVATE_NO_STORE_VALUE
+
+                refresh = private_response_state.get(SESSION_REFRESH_STATE_KEY)
+                status = int(message.get("status", 0))
+                if (
+                    refresh is None
+                    and 300 <= status < 400
+                    and private_response_state.get(_PRIVATE_NO_STORE_STATE_KEY)
+                ):
+                    redirect_session_id = _session_id_from_scope(scope)
+                    if redirect_session_id and session_store.get_user(redirect_session_id):
+                        refresh = {
+                            "session_id": redirect_session_id,
+                            "secure": _is_secure_scope(scope),
+                        }
+                if refresh is not None:
+                    response_headers.append(
+                        "Set-Cookie",
+                        _session_cookie_header(
+                            refresh["session_id"],
+                            bool(refresh["secure"]),
+                        ),
+                    )
             await send(message)
 
         await self.app(scope, receive, send_wrapper)

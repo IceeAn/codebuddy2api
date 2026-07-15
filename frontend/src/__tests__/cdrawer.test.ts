@@ -322,4 +322,47 @@ describe('CDrawer', () => {
     document.dispatchEvent(event);
     await flushPromises();
   });
+
+  it('提供 dialog 语义、可访问名称与初始焦点', async () => {
+    mount(
+      {
+        components: { CDrawer },
+        template: '<CDrawer :open="true" title="导航抽屉"><button>操作</button></CDrawer>',
+      },
+      { attachTo: attach() },
+    );
+    await flushPromises();
+    const panel = document.body.querySelector('.c-drawer-panel') as HTMLElement;
+    const title = document.body.querySelector('.c-drawer-title') as HTMLElement;
+    expect(panel.getAttribute('role')).toBe('dialog');
+    expect(panel.getAttribute('aria-modal')).toBe('true');
+    expect(panel.getAttribute('aria-labelledby')).toBe(title.id);
+    expect(panel.contains(document.activeElement)).toBe(true);
+  });
+
+  it('closable=false 时遮罩和 Escape 均不能关闭', async () => {
+    const wrapper = mount(
+      {
+        components: { CDrawer },
+        data: () => ({ open: true }),
+        template: '<CDrawer v-model:open="open" :closable="false" aria-label="处理中" />',
+      },
+      { attachTo: attach() },
+    );
+    (document.body.querySelector('.c-drawer-mask') as HTMLElement).click();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    await flushPromises();
+    expect((wrapper.vm as any).open).toBe(true);
+  });
+
+  it('支持从关闭状态动态打开并注册浮层', async () => {
+    const wrapper = mount(CDrawer, {
+      props: { open: false, title: '动态抽屉' },
+      attachTo: attach(),
+    });
+    await wrapper.setProps({ open: true });
+    await flushPromises();
+    expect(document.body.querySelector('.c-drawer-panel')).toBeTruthy();
+    expect(document.body.style.overflow).toBe('hidden');
+  });
 });

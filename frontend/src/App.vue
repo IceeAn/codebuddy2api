@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { isNavigationFailure, NavigationFailureType, useRoute, useRouter } from 'vue-router';
 import { useQueryClient } from '@tanstack/vue-query';
 import {
   Activity,
@@ -58,6 +58,7 @@ let themeIconSwapTimer: number | undefined;
 
 function updateMobile(event: MediaQueryListEvent | MediaQueryList): void {
   isMobile.value = !event.matches;
+  if (event.matches) mobileNavOpen.value = false;
 }
 
 function navigateMobile(routeName: string): void {
@@ -78,7 +79,7 @@ onMounted(async () => {
   visibleThemeIconMode.value = theme.mode;
 
   setUnauthorizedHandler(() => {
-    void session.logout();
+    session.endLocalSession();
     queryClient.clear();
   });
 
@@ -96,9 +97,20 @@ onUnmounted(() => {
 });
 
 async function logout() {
-  await session.logout();
+  const navigationFailure = await router.push('/');
+  if (
+    navigationFailure &&
+    !isNavigationFailure(navigationFailure, NavigationFailureType.duplicated)
+  ) {
+    return;
+  }
+
   queryClient.clear();
-  await router.push('/');
+  try {
+    await session.logout();
+  } finally {
+    queryClient.clear();
+  }
 }
 
 function toggleTheme() {
@@ -112,11 +124,35 @@ function toggleTheme() {
     themeIconSwapTimer = undefined;
   }, THEME_ICON_SWAP_DELAY_MS);
 }
+
+function retrySessionRestore(): void {
+  void session.restore();
+}
 </script>
 
 <template>
   <div v-if="!session.ready" class="boot-screen grid min-h-screen place-items-center bg-bg">
     <CSpin size="lg" />
+  </div>
+
+  <div
+    v-else-if="session.restoreError"
+    class="restore-error-screen grid min-h-screen place-items-center bg-bg px-5"
+  >
+    <div
+      class="w-full max-w-md rounded-xl border border-border bg-surface p-6 text-center shadow-(--shadow-card)"
+    >
+      <h1 class="font-display text-lg font-semibold text-text-strong">无法确认登录状态</h1>
+      <p class="mt-2 text-sm text-muted">{{ session.restoreError }}</p>
+      <CButton
+        class="mt-5"
+        variant="primary"
+        :loading="session.restoring"
+        @click="retrySessionRestore"
+      >
+        重试
+      </CButton>
+    </div>
   </div>
 
   <LoginView v-else-if="!session.authenticated" />

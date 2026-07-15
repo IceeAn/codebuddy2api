@@ -3,8 +3,13 @@ import type { CredentialStatus } from '../types/admin';
 /**
  * 查询失败时显示“加载失败”，避免和后端返回的非 healthy 状态混淆。
  */
-export function describeServiceStatus(status: string | undefined, isError: boolean): string {
+export function describeServiceStatus(
+  status: string | undefined,
+  isError: boolean,
+  isLoading = false,
+): string {
   if (isError) return '加载失败';
+  if (isLoading) return '加载中';
   if (status === 'healthy') return '运行中';
   return '异常';
 }

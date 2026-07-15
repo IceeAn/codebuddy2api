@@ -157,6 +157,25 @@ class CodeBuddyTokenManager:
 
         return selection.credential_record["data"]
 
+    def preview_next_credential(self) -> Optional[tuple[str, Dict]]:
+        """预览下一张可用凭证，不修改当前索引和使用计数。"""
+        from config import get_rotation_count
+
+        selection = self.rotation_policy.select(
+            credentials=self.credentials,
+            current_index=self.current_index,
+            usage_count=self.usage_count,
+            auto_rotation_enabled=self._is_auto_rotation_enabled(),
+            rotation_count=get_rotation_count(self.username),
+        )
+        if not selection.credential_record:
+            return None
+        filename = os.path.basename(selection.credential_record["file_path"])
+        return (
+            self._credential_id_from_filename(filename),
+            selection.credential_record["data"],
+        )
+
     def get_all_credentials(self) -> List[Dict]:
         """获取所有凭证。"""
         return [cred["data"] for cred in self.credentials]

@@ -19,6 +19,7 @@ import { useClipboard } from '../composables/useClipboard';
  * 返回 textarea、body 引用以便断言交互。
  */
 function stubDocument(execCommandResult: boolean) {
+  const previousFocus = { focus: vi.fn<() => void>() };
   const textarea = {
     value: '',
     style: {} as Record<string, string>,
@@ -31,10 +32,11 @@ function stubDocument(execCommandResult: boolean) {
   const documentMock = {
     createElement: vi.fn<(tagName: 'textarea') => typeof textarea>(() => textarea),
     execCommand: vi.fn<(commandId: string) => boolean>(() => execCommandResult),
+    activeElement: previousFocus,
     body,
   };
   vi.stubGlobal('document', documentMock);
-  return { textarea, body, documentMock };
+  return { textarea, body, documentMock, previousFocus };
 }
 
 describe('useClipboard', () => {
@@ -77,13 +79,15 @@ describe('useClipboard', () => {
 
   it('execCommand 失败时返回 false 并不抛错', async () => {
     vi.stubGlobal('navigator', {});
-    stubDocument(false);
+    const { textarea, body, previousFocus } = stubDocument(false);
 
     const { copy } = useClipboard();
     const result = await copy('x');
 
     expect(result).toBe(false);
     expect(toastMock.error).toHaveBeenCalledWith('复制失败');
+    expect(body.removeChild).toHaveBeenCalledWith(textarea);
+    expect(previousFocus.focus).toHaveBeenCalled();
   });
 
   it('writeText 抛错时返回 false', async () => {
@@ -130,5 +134,32 @@ describe('useClipboard', () => {
     await copy('x', '链接已复制');
 
     expect(toastMock.success).toHaveBeenCalledWith('链接已复制');
+  });
+
+  it('后一次复制会取消前一次 copied 复位计时器', async () => {
+    vi.useFakeTimers();
+    const writeText = vi.fn<Clipboard['writeText']>().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    const { copy, copied } = useClipboard();
+
+    await copy('first');
+    vi.advanceTimersByTime(1000);
+    await copy('second');
+    vi.advanceTimersByTime(1000);
+    expect(copied.value).toBe(true);
+    vi.advanceTimersByTime(1000);
+    expect(copied.value).toBe(false);
+  });
+
+  it('fallback 挂载临时节点失败时不尝试移除但仍恢复焦点', async () => {
+    vi.stubGlobal('navigator', {});
+    const { body, previousFocus } = stubDocument(true);
+    body.appendChild.mockImplementation(() => {
+      throw new Error('无法挂载');
+    });
+    const { copy } = useClipboard();
+    await expect(copy('x')).resolves.toBe(false);
+    expect(body.removeChild).not.toHaveBeenCalled();
+    expect(previousFocus.focus).toHaveBeenCalled();
   });
 });

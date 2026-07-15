@@ -1,19 +1,25 @@
 """CodeBuddy 模型列表查询与合并。"""
+import asyncio
+import inspect
 import logging
 import time
 from typing import Any, Callable, Dict, List, Optional
 
 import httpx
 
-from config import get_available_models, get_ssl_verify
+from config import (
+    get_available_models,
+    get_codebuddy_api_endpoint,
+    get_codebuddy_api_host,
+)
 from .auth_types import AuthenticatedUser
 from .codebuddy_api_client import codebuddy_api_client
 from .codebuddy_token_manager import get_token_manager_for_user
+from .credential_rotation import TokenExpiry
+from .stream_service import get_http_client
 
 logger = logging.getLogger(__name__)
 
-_CONFIG_API_URL = "https://copilot.tencent.com/v3/config"
-_CONFIG_API_HOST = "copilot.tencent.com"
 _CODEBUDDY_IDE_VERSION = "4.9.13"
 _MODEL_CACHE_TTL_SECONDS = 600.0
 
@@ -43,11 +49,13 @@ class ModelsManager:
             monotonic_factory: Callable[[], float] = time.monotonic,
             cache_ttl_seconds: float = _MODEL_CACHE_TTL_SECONDS,
     ):
-        self._http_client_factory = http_client_factory or httpx.AsyncClient
+        self._http_client_factory = http_client_factory or get_http_client
         self._monotonic_factory = monotonic_factory
         self._cache_ttl_seconds = cache_ttl_seconds
         self._models_cache: Dict[str, List[str]] = {}
         self._models_cache_expires_at: Dict[str, float] = {}
+        self._inflight: Dict[str, asyncio.Task[List[str]]] = {}
+        self._token_expiry = TokenExpiry()
 
     async def get_available_models(self, user: AuthenticatedUser) -> List[str]:
         """返回配置模型与真实模型的并集，配置模型优先。"""
@@ -55,8 +63,11 @@ class ModelsManager:
 
         try:
             actual_models = await self.get_actual_models(user)
-        except Exception as e:
-            logger.warning("查询 CodeBuddy 真实模型列表失败，使用本地配置回退: %s", e)
+        except Exception as error:
+            logger.warning(
+                "查询 CodeBuddy 真实模型列表失败，使用本地配置回退（%s）",
+                type(error).__name__,
+            )
             actual_models = []
 
         return _ordered_union(configured_models, actual_models)
@@ -66,19 +77,19 @@ class ModelsManager:
         token_manager = get_token_manager_for_user(user)
         current_credential_id = self._current_credential_id(token_manager)
         if current_credential_id:
-            cached_models = self._fresh_cached_models(self._credential_cache_key(user, current_credential_id))
-            if cached_models is not None:
-                current_credential = token_manager.get_credential_by_id(current_credential_id)
-                if current_credential is not None and not token_manager.is_token_expired(current_credential):
+            current_cache_key = self._credential_cache_key(user, current_credential_id)
+            current_credential = token_manager.get_credential_by_id(current_credential_id)
+            if current_credential is None or token_manager.is_token_expired(current_credential):
+                self._invalidate_cache_key(current_cache_key)
+            else:
+                cached_models = self._fresh_cached_models(current_cache_key)
+                if cached_models is not None:
                     return cached_models
 
-        credential = token_manager.get_next_credential()
-        if not credential:
+        preview = token_manager.preview_next_credential()
+        if not preview:
             raise RuntimeError("没有可用的 CodeBuddy 凭证")
-
-        credential_id = self._current_credential_id(token_manager)
-        if not credential_id:
-            raise RuntimeError("CodeBuddy 凭证缺少 credential_id")
+        credential_id, credential = preview
         return await self.get_actual_models_for_credential(user, credential_id, credential)
 
     async def get_actual_models_for_credential(
@@ -89,21 +100,54 @@ class ModelsManager:
     ) -> List[str]:
         """返回指定凭证的真实模型列表，缓存和 TTL 均按 credential_id 隔离。"""
         cache_key = self._credential_cache_key(user, credential_id)
+        if self._token_expiry.is_expired(credential):
+            self._invalidate_cache_key(cache_key)
         cached_models = self._fresh_cached_models(cache_key)
         if cached_models is not None:
             return cached_models
 
-        try:
-            actual_models = await self._fetch_models_from_codebuddy_credential(credential)
-        except Exception:
-            stale_models = self._models_cache.get(cache_key)
-            if stale_models is not None:
-                return stale_models
-            raise
+        inflight = self._inflight.get(cache_key)
+        if inflight is None:
+            inflight = asyncio.create_task(
+                self._fetch_and_cache(cache_key, credential),
+            )
+            self._inflight[cache_key] = inflight
+            inflight.add_done_callback(
+                lambda completed: self._remove_completed_inflight(cache_key, completed)
+            )
+        return await asyncio.shield(inflight)
 
-        self._models_cache[cache_key] = actual_models
-        self._models_cache_expires_at[cache_key] = self._monotonic_factory() + self._cache_ttl_seconds
+    def _remove_completed_inflight(
+            self,
+            cache_key: str,
+            completed: asyncio.Task[List[str]],
+    ) -> None:
+        if not completed.cancelled():
+            completed.exception()
+        if self._inflight.get(cache_key) is completed:
+            self._inflight.pop(cache_key, None)
+
+    async def _fetch_and_cache(
+            self,
+            cache_key: str,
+            credential: Dict[str, Any],
+    ) -> List[str]:
+        actual_models = await self._fetch_models_from_codebuddy_credential(credential)
+        if self._inflight.get(cache_key) is asyncio.current_task():
+            self._models_cache[cache_key] = actual_models
+            self._models_cache_expires_at[cache_key] = (
+                self._monotonic_factory() + self._cache_ttl_seconds
+            )
         return actual_models
+
+    def invalidate_credential(self, user: AuthenticatedUser, credential_id: str) -> None:
+        """凭证删除或失效时立即驱逐对应模型缓存。"""
+        self._invalidate_cache_key(self._credential_cache_key(user, credential_id))
+
+    def _invalidate_cache_key(self, cache_key: str) -> None:
+        self._inflight.pop(cache_key, None)
+        self._models_cache.pop(cache_key, None)
+        self._models_cache_expires_at.pop(cache_key, None)
 
     async def get_first_actual_model(self, user: AuthenticatedUser) -> str:
         """返回 CodeBuddy 配置接口真实模型列表中的第一个模型。"""
@@ -147,8 +191,15 @@ class ModelsManager:
             return None
         expires_at = self._models_cache_expires_at.get(cache_key, 0.0)
         if self._monotonic_factory() >= expires_at:
+            self._invalidate_cache_key(cache_key)
             return None
         return cached_models
+
+    async def _get_http_client(self):
+        client = self._http_client_factory()
+        if inspect.isawaitable(client):
+            return await client
+        return client
 
     async def _fetch_models_from_codebuddy_credential(self, credential: Dict[str, Any]) -> List[str]:
         bearer_token = credential.get("bearer_token")
@@ -164,31 +215,33 @@ class ModelsManager:
         self._apply_config_api_headers(headers)
 
         timeout = httpx.Timeout(30.0, connect=10.0, read=30.0)
-        async with self._http_client_factory(
-                timeout=timeout,
-                verify=get_ssl_verify(),
-                trust_env=False,
-        ) as client:
-            response = await client.get(_CONFIG_API_URL, headers=headers)
+        client = await self._get_http_client()
+        response = await client.get(
+            f"{get_codebuddy_api_endpoint()}/v3/config",
+            headers=headers,
+            timeout=timeout,
+        )
 
         if response.status_code != 200:
-            raise RuntimeError(
-                f"CodeBuddy 配置接口返回 HTTP {response.status_code}: {response.text[:200]}"
-            )
+            raise RuntimeError(f"CodeBuddy 配置接口返回 HTTP {response.status_code}")
 
-        body = response.json()
+        try:
+            body = response.json()
+        except Exception as error:
+            raise RuntimeError("CodeBuddy 配置接口返回无效 JSON") from error
+        if not isinstance(body, dict):
+            raise RuntimeError("CodeBuddy 配置接口返回内容不是对象")
         if body.get("code") != 0:
-            raise RuntimeError(
-                f"CodeBuddy 配置接口返回错误: code={body.get('code')}, msg={body.get('msg')}"
-            )
+            raise RuntimeError(f"CodeBuddy 配置接口返回错误代码 {body.get('code')}")
 
         return self._extract_model_ids(body)
 
     @staticmethod
     def _apply_config_api_headers(headers: Dict[str, str]) -> None:
+        config_api_host = get_codebuddy_api_host()
         headers.update({
-            "Host": _CONFIG_API_HOST,
-            "X-Domain": _CONFIG_API_HOST,
+            "Host": config_api_host,
+            "X-Domain": config_api_host,
             "Accept": "application/json",
             "X-IDE-Type": "CodeBuddyIDE",
             "X-IDE-Name": "CodeBuddyIDE",

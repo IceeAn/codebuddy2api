@@ -19,6 +19,18 @@ from tests.helpers import ConfigIsolationMixin
 
 
 class ConfigTests(ConfigIsolationMixin, unittest.TestCase):
+    def test_load_config_rejects_api_endpoint_outside_explicit_allowlist(self):
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "CODEBUDDY_DATA_DIR": config.get_data_dir(),
+                "CODEBUDDY_API_ENDPOINT": "https://copilot.tencent.com",
+                "CODEBUDDY_ALLOWED_API_ENDPOINTS": "https://www.codebuddy.ai",
+            },
+        ):
+            with self.assertRaisesRegex(ValueError, "CODEBUDDY_API_ENDPOINT"):
+                config.load_config()
+
     def test_load_config_continues_when_dotenv_is_unavailable(self):
         real_import = __import__
         data_dir = config.get_data_dir()
@@ -42,10 +54,6 @@ class ConfigTests(ConfigIsolationMixin, unittest.TestCase):
     def test_config_helpers_cover_missing_and_invalid_values(self):
         self.assertIsNone(config._username_from_user(object()))
         self.assertEqual(config._parse_csv(None), [])
-        self.assertEqual(
-            set(config.get_active_config()),
-            set(config._DEFAULT_CONFIG),
-        )
 
         config._config_cache["CODEBUDDY_ROTATION_COUNT"] = 0
         with self.assertRaisesRegex(ValueError, "positive integer"):
@@ -83,11 +91,12 @@ class ConfigTests(ConfigIsolationMixin, unittest.TestCase):
                 str(application_root / "relative-data" / "credentials"),
             )
 
-    def test_unsafe_api_endpoint_falls_back_to_default(self):
+    def test_unsafe_api_endpoint_fails_closed(self):
         config._config_cache["CODEBUDDY_API_ENDPOINT"] = "https://evil.example"
         config._config_cache["CODEBUDDY_ALLOWED_API_ENDPOINTS"] = "https://copilot.tencent.com,https://www.codebuddy.ai"
 
-        self.assertEqual(config.get_codebuddy_api_endpoint(), "https://copilot.tencent.com")
+        with self.assertRaisesRegex(ValueError, "CODEBUDDY_API_ENDPOINT"):
+            config.get_codebuddy_api_endpoint()
 
     def test_api_endpoint_normalizes_case_and_trailing_slash(self):
         config._config_cache["CODEBUDDY_API_ENDPOINT"] = "https://COPILOT.TENCENT.COM/"
@@ -95,13 +104,55 @@ class ConfigTests(ConfigIsolationMixin, unittest.TestCase):
 
         self.assertEqual(config.get_codebuddy_api_endpoint(), "https://copilot.tencent.com")
 
-    def test_allowed_api_endpoints_filters_invalid_values_and_keeps_default(self):
+    def test_base_url_normalization_rejects_unsafe_shapes_and_preserves_port(self):
+        self.assertEqual(
+            config._normalize_base_url("https://EXAMPLE.com:8443/base/"),
+            "https://example.com:8443/base",
+        )
+        self.assertEqual(
+            config._normalize_base_url("https://[2001:DB8::1]:8443/base/"),
+            "https://[2001:db8::1]:8443/base",
+        )
+        for value in (
+            "https://example.com:invalid",
+            "http://example.com",
+            "https:///missing-host",
+            "https://user:password@example.com",
+            "https://example.com?query=1",
+            "https://example.com#fragment",
+            "https://example.com/\x00path",
+            "https://example.com/\x7fpath",
+            "https://example.com\r\n",
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(config._normalize_base_url(value), "")
+
+    def test_invalid_api_endpoint_shape_fails_closed(self):
+        config._config_cache["CODEBUDDY_API_ENDPOINT"] = "not-a-url"
+        config._config_cache["CODEBUDDY_ALLOWED_API_ENDPOINTS"] = "https://www.codebuddy.ai"
+
+        with self.assertRaisesRegex(ValueError, "valid HTTPS"):
+            config.get_codebuddy_api_endpoint()
+
+    def test_allowed_api_endpoints_rejects_invalid_values(self):
         config._config_cache["CODEBUDDY_ALLOWED_API_ENDPOINTS"] = "http://bad,not-a-url,https://www.codebuddy.ai"
 
-        self.assertEqual(
-            config.get_allowed_api_endpoints(),
-            ["https://www.codebuddy.ai", "https://copilot.tencent.com"],
+        with self.assertRaisesRegex(ValueError, "CODEBUDDY_ALLOWED_API_ENDPOINTS"):
+            config.get_allowed_api_endpoints()
+
+    def test_allowed_api_endpoints_normalizes_and_deduplicates_explicit_values(self):
+        config._config_cache["CODEBUDDY_ALLOWED_API_ENDPOINTS"] = (
+            "https://WWW.CODEBUDDY.AI/,https://www.codebuddy.ai"
         )
+
+        self.assertEqual(config.get_allowed_api_endpoints(), ["https://www.codebuddy.ai"])
+
+    def test_empty_api_endpoint_allowlist_fails_closed(self):
+        config._config_cache["CODEBUDDY_API_ENDPOINT"] = "https://www.codebuddy.ai"
+        config._config_cache["CODEBUDDY_ALLOWED_API_ENDPOINTS"] = ""
+
+        with self.assertRaisesRegex(ValueError, "CODEBUDDY_ALLOWED_API_ENDPOINTS"):
+            config.get_codebuddy_api_endpoint()
 
     def test_default_models_keep_minimal_static_fallback(self):
         config._config_cache["CODEBUDDY_MODELS"] = ",".join(config.DEFAULT_CODEBUDDY_MODELS)
@@ -110,30 +161,113 @@ class ConfigTests(ConfigIsolationMixin, unittest.TestCase):
 
         self.assertEqual(models, ["glm-5.2", "deepseek-v4-pro"])
 
-    def test_parse_model_csv_preserves_current_behavior_for_empty_entries(self):
-        config._config_cache["CODEBUDDY_MODELS"] = "glm-5.2,, lite "
+    def test_parse_model_csv_filters_empty_entries_and_preserves_ordered_uniqueness(self):
+        config._config_cache["CODEBUDDY_MODELS"] = "glm-5.2,, lite,glm-5.2,lite "
 
-        self.assertEqual(config.get_available_models(), ["glm-5.2", "", "lite"])
+        self.assertEqual(config.get_available_models(), ["glm-5.2", "lite"])
 
     def test_forced_reasoning_models_filters_empty_entries(self):
         config._config_cache["CODEBUDDY_FORCED_REASONING_MODELS"] = "glm-5.2,, lite "
 
         self.assertEqual(config.get_forced_reasoning_models(), ["glm-5.2", "lite"])
 
-    def test_forced_temperature_accepts_int_float_empty_and_invalid_classes(self):
+    def test_forced_temperature_accepts_bounded_numbers_and_empty_values(self):
         cases = [
             ("1", 1),
             ("0.7", 0.7),
             (2, 2),
+            (0, 0),
             ("", None),
             (None, None),
-            ("not-a-number", None),
         ]
 
         for value, expected in cases:
             with self.subTest(value=value):
                 config._config_cache["CODEBUDDY_FORCED_TEMPERATURE"] = value
                 self.assertEqual(config.get_forced_temperature(), expected)
+
+    def test_forced_temperature_rejects_invalid_non_finite_and_out_of_range_values(self):
+        for value in ("not-a-number", "nan", "inf", -0.1, 2.1, True):
+            with self.subTest(value=value):
+                config._config_cache["CODEBUDDY_FORCED_TEMPERATURE"] = value
+                with self.assertRaisesRegex(ValueError, "CODEBUDDY_FORCED_TEMPERATURE"):
+                    config.get_forced_temperature()
+
+    def test_startup_boolean_and_log_level_values_are_strict(self):
+        boolean_cases = (
+            ("CODEBUDDY_SSL_VERIFY", config.get_ssl_verify),
+            ("CODEBUDDY_AUTO_ROTATION_ENABLED", config.get_auto_rotation_enabled),
+        )
+        for key, getter in boolean_cases:
+            for value, expected in (("true", True), ("1", True), ("false", False), ("0", False)):
+                with self.subTest(key=key, value=value):
+                    config._config_cache[key] = value
+                    self.assertIs(getter(), expected)
+            for invalid in ("sometimes", 1):
+                config._config_cache[key] = invalid
+                with self.assertRaisesRegex(ValueError, key):
+                    getter()
+
+        for value in ("debug", "INFO", "warning", "ERROR", "critical"):
+            with self.subTest(log_level=value):
+                config._config_cache["CODEBUDDY_LOG_LEVEL"] = value
+                self.assertEqual(config.get_log_level(), value.upper())
+        config._config_cache["CODEBUDDY_LOG_LEVEL"] = "TRACE"
+        with self.assertRaisesRegex(ValueError, "CODEBUDDY_LOG_LEVEL"):
+            config.get_log_level()
+
+        for value, expected in (("1", 1), (8001, 8001), ("65535", 65535)):
+            with self.subTest(port=value):
+                config._config_cache["CODEBUDDY_PORT"] = value
+                self.assertEqual(config.get_server_port(), expected)
+        for value in ("invalid", 0, -1, 65536, True):
+            with self.subTest(port=value):
+                config._config_cache["CODEBUDDY_PORT"] = value
+                with self.assertRaisesRegex(ValueError, "CODEBUDDY_PORT"):
+                    config.get_server_port()
+
+    def test_load_config_validates_all_strict_startup_values(self):
+        cases = {
+            "CODEBUDDY_PORT": "invalid",
+            "CODEBUDDY_SSL_VERIFY": "maybe",
+            "CODEBUDDY_LOG_LEVEL": "TRACE",
+            "CODEBUDDY_FORCED_TEMPERATURE": "nan",
+            "CODEBUDDY_STRIP_MODEL_NAMESPACE": "maybe",
+            "CODEBUDDY_AUTO_ROTATION_ENABLED": "maybe",
+            "CODEBUDDY_ROTATION_COUNT": "1.5",
+            "CODEBUDDY_MAX_REQUEST_BODY_BYTES": "0",
+            "CODEBUDDY_LOGIN_RATE_WINDOW_SECONDS": "1.5",
+            "CODEBUDDY_LOGIN_GLOBAL_MAX_ATTEMPTS": "0",
+            "CODEBUDDY_LOGIN_IP_MAX_ATTEMPTS": "-1",
+            "CODEBUDDY_LOGIN_USERNAME_MAX_ATTEMPTS": "invalid",
+            "CODEBUDDY_LOGIN_MAX_CONCURRENCY": "0",
+            "CODEBUDDY_MAX_CONCURRENT_REQUESTS": "0",
+        }
+        for key, value in cases.items():
+            with self.subTest(key=key):
+                with mock.patch.dict(
+                    "os.environ",
+                    {"CODEBUDDY_DATA_DIR": config.get_data_dir(), key: value},
+                    clear=True,
+                ):
+                    with self.assertRaisesRegex(ValueError, key):
+                        config.load_config()
+
+    def test_security_limit_defaults_and_optional_global_concurrency(self):
+        self.assertEqual(config.get_max_request_body_bytes(), 16 * 1024 * 1024)
+        self.assertEqual(config.get_login_rate_window_seconds(), 60)
+        self.assertEqual(config.get_login_global_max_attempts(), 60)
+        self.assertEqual(config.get_login_ip_max_attempts(), 10)
+        self.assertEqual(config.get_login_username_max_attempts(), 5)
+        self.assertEqual(config.get_login_max_concurrency(), 2)
+        self.assertIsNone(config.get_max_concurrent_requests())
+
+        config._config_cache["CODEBUDDY_MAX_CONCURRENT_REQUESTS"] = "100"
+        self.assertEqual(config.get_max_concurrent_requests(), 100)
+
+        config._config_cache["CODEBUDDY_MAX_CONCURRENT_REQUESTS"] = True
+        with self.assertRaisesRegex(ValueError, "positive integer"):
+            config.get_max_concurrent_requests()
 
     def test_strip_model_namespace_defaults_to_enabled_but_empty_disables(self):
         self.assertIs(config._DEFAULT_CONFIG["CODEBUDDY_STRIP_MODEL_NAMESPACE"], True)

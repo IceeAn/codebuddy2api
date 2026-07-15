@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mount } from '@vue/test-utils';
+import { flushPromises, mount } from '@vue/test-utils';
 import CRadioGroup from '../components/ui/CRadioGroup.vue';
 import CRadioButton from '../components/ui/CRadioButton.vue';
+import CForm from '../components/ui/CForm.vue';
+import CFormItem from '../components/ui/CFormItem.vue';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -153,6 +155,96 @@ describe('CRadioGroup', () => {
     expect(buttons[0].attributes('aria-checked')).toBe('false');
     expect(buttons[1].classes()).toContain('text-text-strong');
     expect(buttons[1].attributes('aria-checked')).toBe('true');
+  });
+
+  it('暴露 radiogroup/radio 语义与 roving tabindex', () => {
+    const wrapper = mount(CRadioGroup, {
+      props: { modelValue: 'b', ariaLabel: '状态筛选' },
+      slots: {
+        default: `
+          <CRadioButton value="a">A</CRadioButton>
+          <CRadioButton value="b">B</CRadioButton>
+        `,
+      },
+      global: { components: { CRadioButton } },
+    });
+    expect(wrapper.attributes('role')).toBe('radiogroup');
+    expect(wrapper.attributes('aria-label')).toBe('状态筛选');
+    const radios = wrapper.findAll('[role="radio"]');
+    expect(radios.map((radio) => radio.attributes('aria-checked'))).toEqual(['false', 'true']);
+    expect(radios.map((radio) => radio.attributes('tabindex'))).toEqual(['-1', '0']);
+  });
+
+  it('方向键与 Home/End 循环移动焦点并选择', async () => {
+    const wrapper = mount(CRadioGroup, {
+      attachTo: document.body,
+      props: { modelValue: 'a' },
+      slots: {
+        default: `
+          <CRadioButton value="a">A</CRadioButton>
+          <CRadioButton value="b">B</CRadioButton>
+          <CRadioButton value="c">C</CRadioButton>
+        `,
+      },
+      global: { components: { CRadioButton } },
+    });
+    const radios = wrapper.findAll<HTMLElement>('[role="radio"]');
+    radios[0].element.focus();
+    await radios[0].trigger('keydown', { key: 'ArrowLeft' });
+    expect(document.activeElement).toBe(radios[2].element);
+    expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual(['c']);
+    await radios[2].trigger('keydown', { key: 'Home' });
+    expect(document.activeElement).toBe(radios[0].element);
+    await radios[0].trigger('keydown', { key: 'End' });
+    expect(document.activeElement).toBe(radios[2].element);
+    await radios[2].trigger('keydown', { key: 'ArrowRight' });
+    expect(document.activeElement).toBe(radios[0].element);
+    await radios[0].trigger('keydown', { key: 'ArrowDown' });
+    await radios[1].trigger('keydown', { key: 'ArrowUp' });
+    await radios[0].trigger('keydown', { key: 'Enter' });
+    await flushPromises();
+    expect(document.activeElement).toBe(radios[0].element);
+  });
+
+  it('忽略容器自身的非 Radio 键盘事件，并处理重复值注册', async () => {
+    const wrapper = mount(CRadioGroup, {
+      slots: {
+        default: `
+          <CRadioButton value="a">A1</CRadioButton>
+          <CRadioButton value="a">A2</CRadioButton>
+        `,
+      },
+      global: { components: { CRadioButton } },
+    });
+    await wrapper.trigger('keydown', { key: 'ArrowRight' });
+    await wrapper.trigger('focusout', { relatedTarget: document.body });
+    expect(wrapper.emitted('update:modelValue')).toBeFalsy();
+    wrapper.unmount();
+  });
+
+  it('在表单项中继承标签名称，并忽略组内焦点移动的 blur', async () => {
+    const wrapper = mount(
+      {
+        components: { CForm, CFormItem, CRadioGroup, CRadioButton },
+        data: () => ({ model: { state: 'a' } }),
+        template: `
+          <CForm :model="model">
+            <CFormItem label="状态" path="state">
+              <CRadioGroup v-model="model.state">
+                <CRadioButton value="a">A</CRadioButton>
+                <CRadioButton value="b">B</CRadioButton>
+              </CRadioGroup>
+            </CFormItem>
+          </CForm>
+        `,
+      },
+      { attachTo: document.body },
+    );
+    const group = wrapper.get('[role="radiogroup"]');
+    const radios = wrapper.findAll('[role="radio"]');
+    expect(group.attributes('aria-labelledby')).toBe(wrapper.get('label').attributes('id'));
+    await group.trigger('focusout', { relatedTarget: radios[1].element });
+    await group.trigger('focusout', { relatedTarget: document.body });
   });
 });
 

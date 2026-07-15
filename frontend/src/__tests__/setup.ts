@@ -1,4 +1,16 @@
-import { vi } from 'vitest';
+import { beforeEach, vi } from 'vitest';
+import { createPinia, setActivePinia } from 'pinia';
+
+beforeEach(() => {
+  const pinia = createPinia();
+  pinia.state.value.session = {
+    authenticated: true,
+    username: 'test-user',
+    source: 'session_cookie',
+    ready: true,
+  };
+  setActivePinia(pinia);
+});
 
 class ResizeObserverMock {
   observe(): void {}
