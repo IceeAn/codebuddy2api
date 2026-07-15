@@ -491,8 +491,7 @@ describe('useOAuthPolling', () => {
     const oauth = useOAuthPolling({ pollIntervalMs: 5000 });
     await oauth.start();
     const pollCallback = timeoutSpy.mock.calls.find((call) => call[1] === 5000)?.[0] as
-      | (() => void)
-      | undefined;
+      (() => void) | undefined;
     expect(pollCallback).toBeTypeOf('function');
     const callsAfterImmediate = pollAuth.mock.calls.length;
 

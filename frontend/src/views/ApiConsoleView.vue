@@ -262,8 +262,7 @@ onBeforeUnmount(() => {
     <CCard title="响应">
       <pre
         class="min-h-[20rem] overflow-auto rounded-lg bg-slate-950 p-3.5 font-mono text-[13px] leading-relaxed whitespace-pre-wrap text-slate-200"
-        >{{ output }}</pre
-      >
+        >{{ output }}</pre>
     </CCard>
   </div>
 </template>

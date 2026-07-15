@@ -1,7 +1,5 @@
 export type SseDecodeResult =
-  | { type: 'message'; data: unknown }
-  | { type: 'done' }
-  | { type: 'error'; message: string };
+  { type: 'message'; data: unknown } | { type: 'done' } | { type: 'error'; message: string };
 
 const EVENT_SEPARATOR = /(?:\r\n|\r|\n)(?:\r\n|\r|\n)/;
 
