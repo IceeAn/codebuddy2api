@@ -14,7 +14,7 @@
 </p>
 
 > [!WARNING]
-> 本仓库代码通过 AI 生成，未经过严格的人工代码审查或安全审计，不能保证部署环境的安全性。建议仅在本地、内网使用；如确需公网部署，建议反向代理鉴权、IP 白名单等额外保护。不建议将本服务直接暴露在公网。
+> 本仓库代码通过 AI 生成，未经过严格的人工代码审查或安全审计，不能保证公开环境部署的安全性。建议仅在本地、内网使用；如确需公网部署，建议使用反向代理鉴权、IP 白名单等额外保护。不建议将本服务直接暴露在公网。
 
 ## 支持协议
 
@@ -28,13 +28,13 @@
 ### 前置要求
 
 - Python 3.10 或更高版本；建议使用 Python 3.12
-- 确保你的命令行网络可以访问 GitHub。你也可以选择手动从 [releases](https://github.com/IceeAn/codebuddy2api/releases) 页面下载 `codebuddy2api.zip`，手动解压并从命令行进入解压后的目录。
+- 确保你的命令行网络可以访问 GitHub。你也可以选择手动从 [releases](https://github.com/IceeAn/codebuddy2api/releases) 页面下载 `codebuddy2api.zip`，解压并从命令行进入解压后的目录。
 
 ### macOS / Linux
 
 1. 获取运行包
 
-> 如果选择手动下载，跳过此步骤
+> 如果选择手动下载、解压和进入目录，跳过此步骤
 
 ```bash
 curl -fL -o codebuddy2api.tar.gz https://github.com/iceean/codebuddy2api/releases/latest/download/codebuddy2api.tar.gz
@@ -64,7 +64,7 @@ python3 web.py
 
 1. 获取运行包
 
-> 如果选择手动下载，跳过此步骤
+> 如果选择手动下载、解压和进入目录，跳过此步骤
 
 ```powershell
 Invoke-WebRequest `
@@ -255,26 +255,43 @@ OpenAPI 文档会展示外部 `/openai/v1/*` 的 Bearer API Key 鉴权和 Chat C
 
 ### 启动与安全边界配置
 
-| 环境变量                          | 默认值                        | 说明                                                                                               |
-| --------------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------- |
-| `CODEBUDDY_USERS_FILE`            | `secrets/users.txt`           | 系统用户文件路径；启动时必须存在且至少包含一个有效用户                                             |
-| `CODEBUDDY_HOST`                  | `127.0.0.1`                   | 本地启动监听地址                                                                                   |
-| `CODEBUDDY_PORT`                  | `8001`                        | 本地启动监听端口                                                                                   |
-| `CODEBUDDY_API_ENDPOINT`          | `https://copilot.tencent.com` | CodeBuddy 上游；国际站可使用 `https://www.codebuddy.ai`                                            |
-| `CODEBUDDY_ALLOWED_API_ENDPOINTS` | 中国站、国际站                | 可接收真实 CodeBuddy Token 的上游白名单                                                            |
-| `CODEBUDDY_DATA_DIR`              | `data`                        | 运行数据目录，包含 SQLite 和 `credentials/`；相对路径以应用根目录为基准，Docker 固定为 `/app/data` |
-| `CODEBUDDY_ALLOWED_HOSTS`         | `localhost,127.0.0.1`         | 允许访问本服务的 Host 头                                                                           |
-| `CODEBUDDY_ALLOWED_ORIGINS`       | 空                            | 允许跨域访问的浏览器 Origin；空表示不启用 CORS                                                     |
-| `CODEBUDDY_CSP_FRAME_ANCESTORS`   | `none`                        | CSP 页面嵌入来源；支持 `self` 与空格分隔的 HTTP/HTTPS Origin                                      |
-| `CODEBUDDY_MAX_REQUEST_BODY_BYTES` | `16777216`                   | 全局 HTTP 请求体上限；登录接口另有固定 8 KiB 上限                                                  |
-| `CODEBUDDY_LOGIN_RATE_WINDOW_SECONDS` | `60`                       | 登录全局、IP、用户名三个独立速率桶共用的滑动窗口秒数                                               |
-| `CODEBUDDY_LOGIN_GLOBAL_MAX_ATTEMPTS` | `60`                      | 每个登录限流窗口允许的进程全局尝试数                                                               |
-| `CODEBUDDY_LOGIN_IP_MAX_ATTEMPTS` | `10`                          | 每个登录限流窗口允许的单一客户端 IP 尝试数                                                         |
-| `CODEBUDDY_LOGIN_USERNAME_MAX_ATTEMPTS` | `5`                    | 每个登录限流窗口允许的单一用户名尝试数                                                             |
-| `CODEBUDDY_LOGIN_MAX_CONCURRENCY` | `2`                           | 同时进入工作线程或等待线程池的 PBKDF2 登录校验数；超限不排队                                      |
-| `CODEBUDDY_MAX_CONCURRENT_REQUESTS` | 空                          | Uvicorn 全局连接/任务并发上限；空表示不限制                                                        |
-| `CODEBUDDY_SSL_VERIFY`            | `true`                        | 上游 TLS 证书校验；公网部署必须保持开启                                                            |
-| `CODEBUDDY_LOG_LEVEL`             | `INFO`                        | `DEBUG`、`INFO`、`WARNING`、`ERROR` 或 `CRITICAL`                                                  |
+#### 服务启动与存储
+
+| 环境变量               | 默认值              | 说明                                                                                               |
+| ---------------------- | ------------------- | -------------------------------------------------------------------------------------------------- |
+| `CODEBUDDY_USERS_FILE` | `secrets/users.txt` | 系统用户文件路径；启动时必须存在且至少包含一个有效用户                                             |
+| `CODEBUDDY_HOST`       | `127.0.0.1`         | 本地启动监听地址                                                                                   |
+| `CODEBUDDY_PORT`       | `8001`              | 本地启动监听端口                                                                                   |
+| `CODEBUDDY_DATA_DIR`   | `data`              | 运行数据目录，包含 SQLite 和 `credentials/`；相对路径以应用根目录为基准，Docker 固定为 `/app/data` |
+| `CODEBUDDY_LOG_LEVEL`  | `INFO`              | `DEBUG`、`INFO`、`WARNING`、`ERROR` 或 `CRITICAL`                                                  |
+
+#### 上游连接安全
+
+| 环境变量                          | 默认值                        | 说明                                                    |
+| --------------------------------- | ----------------------------- | ------------------------------------------------------- |
+| `CODEBUDDY_API_ENDPOINT`          | `https://copilot.tencent.com` | CodeBuddy 上游；国际站可使用 `https://www.codebuddy.ai` |
+| `CODEBUDDY_ALLOWED_API_ENDPOINTS` | 中国站、国际站                | 可接收真实 CodeBuddy Token 的上游白名单                 |
+| `CODEBUDDY_SSL_VERIFY`            | `true`                        | 上游 TLS 证书校验；公网部署必须保持开启                 |
+
+#### HTTP 与浏览器安全
+
+| 环境变量                        | 默认值                | 说明                                                         |
+| ------------------------------- | --------------------- | ------------------------------------------------------------ |
+| `CODEBUDDY_ALLOWED_HOSTS`       | `localhost,127.0.0.1` | 允许访问本服务的 Host 头                                     |
+| `CODEBUDDY_ALLOWED_ORIGINS`     | 空                    | 允许跨域访问的浏览器 Origin；空表示不启用 CORS               |
+| `CODEBUDDY_CSP_FRAME_ANCESTORS` | `none`                | CSP 页面嵌入来源；支持 `self` 与空格分隔的 HTTP/HTTPS Origin |
+
+#### 登录与容量保护
+
+| 环境变量                                | 默认值     | 说明                                                         |
+| --------------------------------------- | ---------- | ------------------------------------------------------------ |
+| `CODEBUDDY_MAX_REQUEST_BODY_BYTES`      | `16777216` | 全局 HTTP 请求体上限；登录接口另有固定 8 KiB 上限            |
+| `CODEBUDDY_LOGIN_RATE_WINDOW_SECONDS`   | `60`       | 登录全局、IP、用户名三个独立速率桶共用的滑动窗口秒数         |
+| `CODEBUDDY_LOGIN_GLOBAL_MAX_ATTEMPTS`   | `60`       | 每个登录限流窗口允许的进程全局尝试数                         |
+| `CODEBUDDY_LOGIN_IP_MAX_ATTEMPTS`       | `10`       | 每个登录限流窗口允许的单一客户端 IP 尝试数                   |
+| `CODEBUDDY_LOGIN_USERNAME_MAX_ATTEMPTS` | `5`        | 每个登录限流窗口允许的单一用户名尝试数                       |
+| `CODEBUDDY_LOGIN_MAX_CONCURRENCY`       | `2`        | 同时进入工作线程或等待线程池的 PBKDF2 登录校验数；超限不排队 |
+| `CODEBUDDY_MAX_CONCURRENT_REQUESTS`     | 空         | Uvicorn 全局连接/任务并发上限；空表示不限制                  |
 
 `CODEBUDDY_API_ENDPOINT`、白名单 URL 或其他强类型配置无效时，服务会在启动阶段直接失败；不会回退到其他站点，也不会把真实 Token 转发到未明确授权的地址。
 

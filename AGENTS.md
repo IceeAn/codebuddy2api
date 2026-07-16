@@ -1,107 +1,115 @@
 # AGENTS.md
 
+本文档只记录长期有效、仅查看局部代码容易误判的项目约定与维护陷阱。可直接从代码、依赖清单或 CI 配置得出的实现细节不在此重复；新增内容也应遵循这一原则。
+
 ## 常用命令
 
 ```bash
-# 开发服务器（需要 venv）
+# 后端开发服务器
 source venv/bin/activate && python3 web.py
 
 # 前端开发服务器（代理后端 8001）
 cd frontend && pnpm run dev
 
-# 构建前端静态产物
-cd frontend && pnpm run build
-
-# Docker 部署
-docker compose up -d
-
-# 本地构建 Docker 镜像
-docker build -t codebuddy2api:local .
-
-# 安装开发依赖
+# 安装后端开发依赖
 venv/bin/python3 -m pip install -r requirements-dev.txt
 
-# 后端验证（unittest + 行/分支覆盖率 100% 门槛）
+# 后端验证（unittest，行/分支覆盖率门槛 100%）
 venv/bin/python3 -m coverage run -m unittest discover -s tests
 venv/bin/python3 -m coverage report
 
-# 前端修改后验证
+# 前端完整验证
 cd frontend && pnpm run format:check && pnpm run lint && pnpm run build && pnpm run test:coverage
 
-# 原子新增系统用户或更新已有用户密码
+# Docker 部署/本地构建
+docker compose up -d
+docker build -t codebuddy2api:local .
+
+# 原子新增系统用户或更新密码
 venv/bin/python3 scripts/hash_password.py <用户名> --output secrets/users.txt
 
-# 使用发布镜像新增系统用户或更新已有用户密码
+# 使用发布镜像管理用户
 docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:latest add-user <用户名>
 ```
-
-## 架构
-
-- **入口点**: `web.py` — FastAPI 应用，使用 **Uvicorn** 提供服务，本地通过 `uvicorn.run()` 启动。
-- **配置**: `config.py` — 启动级配置优先级为：环境变量 > 硬编码默认值，日志级别等服务配置不支持运行时修改。`CODEBUDDY_DATA_DIR` 的相对路径始终以应用根目录（`config.py` 所在目录）为基准，SQLite 与 CodeBuddy 凭证必须从该绝对数据目录派生，不得依赖进程工作目录。管理台设置按本系统用户隔离，首次保存后持久化到 `data/codebuddy2api.sqlite3`；未保存的用户使用当前系统默认配置，安全边界配置不会从数据库加载。
-- **请求资源限制**: 所有 HTTP 请求在 ASGI 层预检 `Content-Length`，并对下游实际读取的请求流累计字节数，默认上限 16 MiB；未读取请求体的端点不会仅为验证无声明长度的完整大小而主动消费请求流，可以在客户端发送完整请求体前响应，因此该限制是应用处理上限而非线级全量传输或带宽限制。`/auth/login` 固定使用不超过 8 KiB 的更小上限。Uvicorn 连接/任务并发默认不限制，只有 `CODEBUDDY_MAX_CONCURRENT_REQUESTS` 为正整数时启用限制；用户配置表示实际容量 N，启动边界必须通过 `to_uvicorn_limit_concurrency()` 转为 N+1，以补偿固定版本 Uvicorn 在判断前已计入当前连接的语义。
-- **SQLite 存储**: `src/sqlite_database.py` 维护 schema 版本、WAL、事务和 0600 权限；当前 schema 为 v2，支持从 v1 原子迁移并保留 API Key 和用户设置。首次建表或迁移与 `user_version` 在同一 `BEGIN IMMEDIATE` 事务中提交。每次连接都检查并恢复 WAL，无法启用时快速失败；数据目录不得为符号链接，数据库文件及 `-wal`、`-shm`、`-journal` sidecar 必须是非符号链接普通文件。`src/user_settings_store.py` 保存用户设置，`src/api_key_store.py` 保存 API Key 的 SHA-256 摘要，`src/usage_stats_store.py` 保存请求统计。服务启动时自动创建数据库及空表。
-- **认证**: 实际实现拆分在 `src/auth_router.py`、`src/users_store.py`、`src/api_key_store.py`、`src/session_store.py` 和 `src/auth_types.py`。生产代码应直接从这些真实模块导入，不再通过 `src/auth.py` 兼容层转导出。认证层包含两个独立入口：
-   - Web UI 登录 → HttpOnly 会话 Cookie（7 天有效期），通过 `secrets/users.txt`（PBKDF2 哈希，每行格式 `用户名:哈希`）验证。
-   - API 访问 → 通过 Web UI 生成的 `sk-...` Bearer Token。SQLite 仅保存带唯一索引的 SHA-256 摘要，不保存明文 Key。
-   - 管理会话采用滑动 7 天有效期；每次成功 Cookie 鉴权都必须在最终 ASGI 响应层续期 Cookie（含错误与流式响应），每个系统用户最多保留 10 个会话并按创建时间淘汰最旧项。
-   - API Key 必须是 `sk-` 加 40 字节规范无填充 Base64URL；鉴权只计算一次 SHA-256 并按摘要索引查询。`last_used_at` 存储现实分钟起点的 Unix 时间戳，同一分钟最多实际更新一次，管理台仅显示到分钟。
-   - 两类鉴权入口的最终响应统一设置 `Cache-Control: private, no-store`，覆盖鉴权失败、畸形请求体、参数校验错误、`HTTPException`、未处理的 500、流式响应及自动斜杠重定向；登录、登出及 OAuth 回调同样受保护。私有路由必须使用 `PrivateNoStoreRoute`，由位于 `ServerErrorMiddleware` 外层的最终 ASGI 响应中间件根据路由匹配标记统一执行，端点不得依赖注入的临时 `Response` 设置此头。
-- **Web 管理台**: 前端位于 `frontend/`，使用 Vue 3 + TypeScript + Vite + 自建 UI 组件 + Pinia + Vue Query；`/` 和兼容旧链接的 `/admin` 都可进入管理台，缺少 `frontend/dist/index.html` 时快速失败，不再提供单文件回退。所有管理数据 Vue Query key 必须以 `['admin', username, ...]` 隔离；登出、本地 401 终止及用户名变化必须清空 Query/Mutation Cache。Vite 内容哈希的 JS/CSS/字体使用一年 `immutable`，入口 HTML 使用 `no-store`，未哈希公共资源必须要求重新验证。开发态使用 `pnpm run dev`，Vite 将 `/auth`、`/api`、`/codebuddy`、`/openai`、`/health`、`/docs`、`/redoc` 和 `/openapi.json` 代理到 `127.0.0.1:8001`。
-- **浏览器安全响应**: 所有 HTTP 响应在最外层 ASGI 中间件统一覆盖 CSP、`X-Frame-Options`、`X-Content-Type-Options` 和 `Referrer-Policy`，包括 404 与未处理的 500。`X-Frame-Options` 固定为 `DENY`；`CODEBUDDY_CSP_FRAME_ANCESTORS` 默认 `none`，也可使用由 `self` 与无路径 HTTP/HTTPS Origin 组成的空格分隔列表，非法来源必须在启动阶段失败。祖先来源主机名必须先规范化为 IDNA ASCII，再按合法 DNS 标签或 IPv6 字面量校验，禁止任何可逃逸 CSP 指令或无法写入 Latin-1 响应头的字符。管理台使用严格的同源资源策略；`/docs` 与 `/redoc` 单独允许 FastAPI 默认使用的 jsDelivr、Google Fonts 和 FastAPI 图标域名，不在前端依赖或构建产物中打包 Swagger/ReDoc。
-- **前端工具链**: Vite 8 使用 Rolldown，手动分包必须使用 `rollupOptions.output.codeSplitting.groups`，不再支持对象形式的 `manualChunks`。TypeScript 6 默认检查副作用导入，`tsconfig.json` 必须包含 `vite/client` 类型。前端开发和构建要求 Node.js 24.11+。
-- **协议入口**: OpenAI 兼容处理集中在 `src/openai_router.py`。外部客户端使用 `/openai/v1/*`，仅接受 `sk-...` API Key；管理台测试使用 `/api/admin/playground/openai/v1/*`，仅接受会话 Cookie。两组入口必须复用相同协议处理逻辑，但不得互相接受对方的认证方式。新增协议时遵循外部 `/<协议>/v1/*`、管理台测试 `/api/admin/playground/<协议>/v1/*` 的命名规则。
-- **开发文档**: `/docs`、`/redoc` 和 `/openapi.json` 仅接受管理台会话 Cookie，未登录时返回带 `WWW-Authenticate: Bearer` 的 401，外部 API Key 不可替代会话；三个端点的成功和鉴权失败响应都必须设置 `Cache-Control: private, no-store`。OpenAPI 使用 `ApiKeyBearer` 描述外部 `/openai/v1/*`，使用 `SessionCookie` 描述公开 schema 中受会话保护的管理接口。Chat Completions 的 `messages` 必须为非空数组且每项必须包含 `role` 和 `content`；仅带非空对象数组 `tool_calls` 的 assistant 消息可省略 `content`。隐藏 `/api/admin/playground/openai/v1/*`。Swagger 禁用外部 schema 验证器和授权持久化。
-- **管理 API**: 管理台专用接口集中在 `src/admin_router.py` 并挂载到 `/api/admin/*`。凭证管理使用稳定 `credential_id`，不要在前端或新 API 中依赖凭证列表 index；手动添加凭证的 `bearer_token` 在 Pydantic 模型层去除首尾空白并拒绝空值。
-- **持久化统计**: 独立统计页按系统用户隔离展示外部 API 与管理台请求；管理台来源细分为 `admin_playground` 和 `credential_test`。SQLite v2 保存严格 90 天逐请求脱敏明细、永久 UTC 小时汇总及最近清理水位；启动时及独立定时任务按 `occurred_at` 索引分批清理过期明细，不能依赖下一次写入。查询在同步 FastAPI 路由的线程池内执行，并在 SQL 中有界聚合，按浏览器 IANA 时区合并为小时、天或周；保留期内的非整点范围及本地日历边界以明细精确替换边界小时，过期历史边界只能按小时近似并通过 `boundary_precision` 明示。请求明细使用 `page`、`page_size` 及成对的 `snapshot_id`、`snapshot_time` 做快照式页码分页，同一快照内的总数与任意跳页不得受新增请求影响；由列表打开请求详情时必须携带所属列表的同一对快照参数。服务允许旧快照的列表和详情查看尚未清理的稍过期明细，但拒绝超过当前事件序列的快照，并在清理水位越过快照保留期下界后要求重新获取第一页。管理台的分页大小只提供 10、20、50、100。默认维度筛选返回全部候选，排行最多 20；`GET /api/admin/stats/dimensions/{dimension}` 提供绑定查询快照的完整维度搜索分页，管理台为排行提供“查看全部”，同时从筛选下拉底部进入维度统计详情。统计涵盖请求结果、模型/API Key/凭证维度、Token、上游原始 `credit`、总耗时及首个有效输出耗时；永久模型维度只能使用配置或成功上游响应确认的规范模型，未确认值统一为 `unknown`。缺失 usage 保持 `null`，覆盖率以 `total_tokens` 是否已知计算；超过 600000ms 的延迟使用独立溢出桶并由 `*_overflow` 明示。`GET /api/admin/stats/overview`、`GET /api/admin/stats/dimensions/{dimension}`、`GET /api/admin/stats/requests` 和 `GET /api/admin/stats/requests/{id}` 仅接受会话 Cookie。统计写入从 ASGI 事件循环卸载到线程；异常不得影响聊天响应，只记录日志并增加当前进程的 `dropped_events`；运行期数据库丢失必须快速失败，不得返回伪造空统计。绝不保存提示词、回答、请求头、Bearer/CodeBuddy Token、工具参数、原始错误体或会话 ID；模型、错误类型、思考模式和结束原因必须先归一化到受控值。首版不接入 billing 套餐容量、已用量、剩余额度或货币换算。
-- **CodeBuddy OAuth**: `src/codebuddy_auth_router.py` 只保留 FastAPI 路由；上游认证客户端、auth_state 所属关系和 token 解析/保存位于 `src/codebuddy_oauth.py`。认证可通过会话保护的 `POST /codebuddy/auth/cancel` 取消，state 被取消或消费后不可继续轮询或重放。上游登录 URL 在后端、管理台都只能接受带主机的绝对 HTTP/HTTPS URL，必须拒绝 userinfo、控制字符、相对 URL 和其他协议；校验失败不得登记 state 或导航预打开窗口。轮询成功仅向浏览器返回保存结果，不得返回 access token、refresh token 或用户信息；凭证保存失败必须返回 500，且已消费的 state 不得恢复。手动添加与 OAuth 保存凭证共用 token 解析：`user_id` 优先取 JWT `sub`，解析失败或无 `sub` 时按真实 CLI token fallback 使用 `anonymous_<token 后 8 位>`，不读取 `ACC_USER_ID` 或 `ACC_USER_NICKNAME`。
-- **凭证隔离**: 每个系统用户在 `data/credentials/users/<哈希目录名>/` 下拥有独立的 CodeBuddy Token 目录。Token 管理器按用户单例化（`CodeBuddyTokenManagerRegistry`）；磁盘安全读写位于 `src/credential_store.py`，过期判断和轮换策略位于 `src/credential_rotation.py`。凭证轮换开关为用户级设置 `CODEBUDDY_AUTO_ROTATION_ENABLED`，轮换频率 `CODEBUDDY_ROTATION_COUNT` 必须为正整数。
-- **模型配置缓存**: CodeBuddy `/v3/config` URL 必须由当前 `CODEBUDDY_API_ENDPOINT` 派生，`Host`/`X-Domain` 跟随同一站点。真实模型缓存按系统用户与 `credential_id` 隔离；过期、删除或失效凭证必须立即驱逐缓存并作废对应在途查询，旧结果不得回写或被同 ID 新凭证复用。过期数据不得作为失败回退，并以 per-key single-flight 合并并发未命中。
-- **上游 API**: CodeBuddy 仅支持流式响应。客户端的非流式请求也必须通过 `client.stream()` 增量读取上游 SSE，再由 `StreamResponseAggregator` 聚合，禁止先缓冲完整响应体。所有请求体在 `RequestProcessor.prepare_request()` 中强制注入 `stream=True`。
-
-## 特殊约定与注意事项
-
-- **强制推理**: `CODEBUDDY_FORCED_REASONING_MODELS` 中的模型会被强制设置 `reasoning_effort="max"` 及 `thinking.type="enabled"`；默认包含 `deepseek-v4-pro`、`deepseek-v4-flash`、`glm-5.1` 和 `glm-5.2`。其他 `thinking` 子项（如 `clear_thinking`）按客户端请求透传。
-- **默认思考开关**: 未命中强制推理模型列表的请求默认补传 `enable_thinking=true`；若客户端显式传入 `enable_thinking=false` 或 `thinking.type="disabled"`，则不补。
-- **强制 temperature**: `CODEBUDDY_FORCED_TEMPERATURE` 默认为 `1`，会覆盖客户端传入值；留空则不覆盖。
-- **模型名前缀处理**: `CODEBUDDY_STRIP_MODEL_NAMESPACE` 默认为 `true`，会把 `provider/model` 形式的模型名在转发上游前改为 `model`；留空或 `false` 则不处理。
-- **关键词替换**: 系统消息中自动将 Anthropic/Claude 相关引用替换为 Tencent/CodeBuddy（`src/keyword_replacer.py`）。
-- **工具调用 ID 兼容**: 透传上游工具调用 ID，仅通过 `add_openai_tool_call_indexes()` 为流式响应补齐 OpenAI 客户端需要的 `index`。
-- **响应标准化**: 流式和非流式路径通过 `CodeBuddyResponseEvent` 宽松提取共享的首个 choice 响应语义，不承担上游协议验证。`OpenAIStreamNormalizer` 再将混合的 `reasoning_content`+`content` delta 拆分为独立块，并在首个块中注入 `role: assistant`。
-- **HTTP 客户端代理**: 全局上游 HTTP 客户端设置 `trust_env=False`，避免本机 `ALL_PROXY`/`HTTP_PROXY` 指向 SOCKS 代理但未安装 `socksio` 时导致服务启动失败。
-- **端点前缀**: 外部聊天 API 路径为 `POST /openai/v1/chat/completions`，客户端应将 `base_url` 设置为包含 `/openai/v1`；管理台测试入口为 `/api/admin/playground/openai/v1`。
-- **管理台离线请求**: Vue Query 的查询和 mutation 全局使用 `networkMode="always"`，查询同时禁用 `refetchOnReconnect`，确保断网时立即失败而不是暂停排队，禁止恢复联网后补发读取或写入操作。所有手动刷新和错误重试统一使用 `RefreshButton`；该组件在调用 `refetch()` 前检查离线状态，并独立维护至少 300ms 的按钮加载状态，不能只依赖 `isFetching`。
-- **管理台主题切换**: 根节点只注册并执行一个 520ms 的 `--theme-progress` 数值过渡，所有动画语义颜色必须在 `:root` 中通过 `color-mix(in oklab, 亮色端点, 暗色端点 var(--theme-dark-weight))` 由该进度派生；新增视觉角色不再单独注册 `@property` 或加入 transition 列表。不得给所有后代元素递归添加颜色、描边或阴影过渡；主题切换期间临时禁用后代组件的局部 transition，后代只继承根节点的派生颜色。组件不得通过 `dark:` 在两个不同的动画语义变量之间切换，同一视觉角色须使用固定的专用语义变量，避免主题 class 切换瞬间跳到错误中间色。分隔线等要求明度单调变化的角色不得在不透明色与低 Alpha 颜色之间插值，应将低 Alpha 端点换算为叠加在目标背景上的等效不透明色，避免中间帧泛白。主题按钮在主题过渡期间必须保持可交互，连续切换从当前进度平滑转向新主题；图标在每次点击 143ms 后切换。页面路由切换动画期间必须禁用主题按钮，避免两个全页动画重叠。
-- **文件安全**: 凭证写入使用 `O_NOFOLLOW` + 0600 权限。加载时跳过 `data/credentials/` 中的符号链接。文件名经过路径穿越清理。SQLite 数据库拒绝符号链接路径并强制设置 0600 权限。
 
 ## 开发规定
 
 - **测试驱动开发**：开发流程须完全遵循 TDD，保证单元测试100%覆盖、且尽可能覆盖真实用例。
 - **后端测试**：使用标准库 `unittest` 与 `coverage.py`；`venv/bin/python3 -m coverage report` 对 `config.py`、`web.py` 和 `src/` 生产代码强制执行行/分支综合 100% 覆盖率门槛。
 - **前端测试**：Vitest 使用 jsdom 与 Vue Test Utils；`pnpm run test:coverage` 对 `src/` 生产代码强制执行 statements、branches、functions、lines 四项 100% 覆盖率门槛。
-- **前端修改后流程**：前端文件修改后先运行 Prettier 检查，失败时执行 `pnpm run format` 并重新检查；随后依次运行 `pnpm run lint`、`pnpm run build`、`pnpm run test:coverage`。`pnpm run build` 包含类型检查和生产构建；CI 单独运行 `pnpm run typecheck` 与 `pnpm run build:bundle`。
+- **前端修改后流程**：前端修改后依次执行格式检查、lint、构建和覆盖率测试；格式检查失败时先执行 `pnpm run format`。`pnpm run build` 已包含类型检查和生产构建。
 - **保证需求的正确性**：若我需要你实现的需求存在不明确的部分，请直接提问；若工作过程中出现重要的选择，停下来说明并等待回复。尽可能地不要自行推测意图和需求。
-- **快速失败而不是兜底**：非常重要！目前项目仍在开发中。为保证质量、尽早发现错误，各种非预期的错误应该快速失败，少对错误数据进行防御性的兜底。
+- **快速失败而不是兜底**：为保证质量、尽早发现错误，各种非预期的错误应该快速失败，少对错误数据进行防御性的兜底。
 - **干净的修改与重构**：进行 breaking change 后，无需对修改前的旧表、旧字段、旧接口等进行兼容。可以认为它们在前、后端均不再使用。
 - **bug修复使用最小修改**：对于bug修复，尽量保证最小修改，同时应保证遵循上述其余原则。
-- **持续更新本文档**：当开发或排错过程中出现重要或常见的的通用性问题未在此文件说明的情况，随时更新此文档。可以包括项目信息、常用命令、踩坑记录等。
+- **持续更新本文档**：当开发或排错过程中出现重要或常见的的通用性问题未在此文件说明的情况，随时更新此文档。可以包括项目信息、常用命令、踩坑记录等。不要写入一次性排错过程或可从单处代码直接读出的细节。
 
+## 架构与边界
 
-## Docker
+- `web.py` 是 FastAPI/Uvicorn 入口，`config.py` 管理启动级配置；环境变量优先于硬编码默认值，安全边界配置不得由用户数据库设置覆盖。
+- `CODEBUDDY_DATA_DIR` 的相对路径以 `config.py` 所在的应用根目录为基准。SQLite 和凭证路径必须由解析后的绝对数据目录派生，不能依赖进程工作目录。
+- 管理台设置、API Key、凭证、模型缓存和统计都按系统用户隔离。新增管理端缓存时，隔离维度必须包含用户名；涉及凭证的数据还必须使用稳定的 `credential_id`，不得依赖列表下标。
+- 管理 API 位于 `/api/admin/*`。外部协议入口遵循 `/<协议>/v1/*`，仅接受 API Key；管理台测试入口遵循 `/api/admin/playground/<协议>/v1/*`，仅接受会话 Cookie。两者复用协议处理逻辑，但不能互相接受对方的认证方式。
+- `/docs`、`/redoc` 和 `/openapi.json` 只接受管理台会话 Cookie，API Key 不能替代；管理台 playground 路由不得暴露在 OpenAPI schema 中。
 
-- 容器入口以 root 完成挂载目录准备，将宿主 `users.txt` 复制为 `/run/codebuddy2api/users.txt` 的 `appuser` 私有只读副本，再使用 `gosu` 以非 root 用户 `appuser`（UID 1001）运行服务；不要通过 Compose `user` 或 `docker run --user` 跳过启动准备。
-- 挂载卷：`./data`、`./secrets:ro`；SQLite 和 CodeBuddy 凭证统一保存在 `data/`。Compose 默认使用 `ghcr.io/iceean/codebuddy2api:latest` 发布镜像，`.env` 为可选覆盖文件。Compose 和 `entrypoint.sh` 强制 `CODEBUDDY_DATA_DIR=/app/data`，入口脚本同时强制 `CODEBUDDY_USERS_FILE=/run/codebuddy2api/users.txt`。
-- 用户文件通过同目录临时文件原子替换，自动补齐缺失的末尾换行并保留或收紧 UID/GID 与 POSIX 权限；不支持符号链接、非普通文件和多硬链接，不保证保留 ACL、扩展属性或自定义安全标签。重复用户名会删除全部旧记录后写入新密码；并发写入不提供锁。服务运行后修改用户文件需执行 `docker compose restart codebuddy2api` 刷新运行时副本。
-- Dockerfile 固定使用 Node 24.11.1 构建前端，再将 `frontend/dist/` 与明确列出的后端运行文件复制到 Python 3.12 运行时镜像；镜像内提供 `hash-password` 和 `add-user` 辅助命令。
-- 容器 CMD 为 `uvicorn web:app --host 0.0.0.0 --port 8001 --no-access-log`；入口脚本会追加 `CODEBUDDY_LOG_LEVEL` 对应的 `--log-level` 与 `--no-server-header`。
-- Release workflow 只发布 `v数字.数字.数字` 稳定 tag。发布标签必须等于 `v{web.py 的 APP_VERSION}`，且 `frontend/package.json` 版本必须与 `APP_VERSION` 相同；三方不一致时在构建前快速失败。发布前必须在 `CHANGELOG.md` 添加对应版本二级标题及非空说明；workflow 会先跑后端和前端验证，再按 digest 推送一次包含 `linux/amd64`、`linux/arm64` 和 `linux/arm/v7` 的多架构镜像，并对同一 digest 的每个架构分别执行 Trivy 漏洞扫描，任一架构存在 `CRITICAL` 漏洞都会阻断发布。Trivy 默认扫描尚无修复版本的漏洞，手动发布可通过 `ignore_unfixed=true` 忽略。扫描通过后才为该 digest 添加版本 tag；仅最高稳定版本更新容器和 GitHub Release 的 `latest`。镜像构建时生成 SBOM/provenance，并使用 Cosign keyless signing 对镜像 digest 签名，最后创建或更新 GitHub Release。个人 GHCR 包首次推送后默认为 private，需在包出现后手动改为 Public；当前工作流全程使用认证访问，因此无需仅为可见性重跑。自动发布说明通过 `.github/release.yml` 将 PR 分为新功能、Bug 修复和其他变更；workflow 同时通过 GitHub API 排除有关联 PR 的 commit，再将独立提交按 `feat`、`fix` 和其他 Conventional Commit 前缀分类，并在各分类内从旧到新排列。最终变更记录依次显示“独立提交”和“合并的 PR”，空来源与空分类不显示，唯一的 `Full Changelog` 固定置底。独立提交中使用 `chore(release):` 或 `chore(release)!:` 前缀的发布提交不会进入变更记录；PR 发布不应用此过滤规则。
-- GitHub Release 本地运行包使用 tag commit 时间作为 `SOURCE_DATE_EPOCH`，tar.gz 与 zip 必须对成员顺序、时间、权限和 tar owner 元数据做确定性规范化。打包仅收录生产文件及前端构建产物，过滤 Python 缓存和常见系统杂物；输入路径的任一组件不得为符号链接，其他非普通文件必须快速失败。输出目录不得等于或位于任一发布输入目录内，避免临时 staging 或旧产物被递归打包。三个产物先在输出目录内的临时目录完整生成，再分别原子替换，checksum 最后发布；不提供跨三个文件的事务或断电级持久化保证。
+## HTTP、认证与浏览器安全
 
-## 安全边界
+- Web UI 使用 HttpOnly 滑动会话 Cookie；每个系统用户最多保留 10 个会话，超限时按创建时间淘汰最旧会话。外部 API 使用 `sk-...` Bearer Token；API Key 必须是 `sk-` 加 40 字节规范无填充 Base64URL，明文只在创建时返回，SQLite 仅保存带唯一索引的 SHA-256 摘要。
+- API Key 鉴权只计算一次 SHA-256 并按摘要索引查询。`last_used_at` 保存现实分钟起点的 Unix 时间戳，同一分钟最多实际更新一次，管理台仅显示到分钟。
+- Cookie 鉴权成功后的续期必须在最终 ASGI 响应层完成，以覆盖错误、重定向和流式响应。私有路由使用 `PrivateNoStoreRoute`；`Cache-Control: private, no-store` 由 `ServerErrorMiddleware` 外层的最终响应中间件统一覆盖，端点中注入的临时 `Response` 不能保证最终响应头。
+- 所有响应（包括 404 和未处理的 500）都由最外层 ASGI 中间件统一覆盖 CSP、`X-Frame-Options`、`X-Content-Type-Options` 和 `Referrer-Policy`，其中 `X-Frame-Options` 固定为 `DENY`。frame-ancestors 可由环境变量 `CODEBUDDY_CSP_FRAME_ANCESTORS` 配置，默认 `none`，仅允许由 `self` 和无路径的 HTTP(S) Origin 组成的列表；来源主机必须先规范化为 IDNA ASCII，再按合法 DNS 标签或 IPv6 字面量校验。CSP 来源必须在启动时严格校验，不能允许通配符、指令逃逸或不可编码的响应头字符；文档页所需的外部资源白名单与管理台同源策略分开维护。
+- 请求体限制是“应用实际处理字节数”限制：先检查 `Content-Length`，再累计下游实际读取的流；不要为了验证无声明长度且端点本来不读取的请求体而主动消费整个流。登录请求使用更小的独立上限。
+- `CODEBUDDY_MAX_CONCURRENT_REQUESTS=N` 表示用户可用容量 N；传给当前固定版本 Uvicorn 时必须经 `to_uvicorn_limit_concurrency()` 转成 N+1，以补偿 Uvicorn 判断时已计入当前连接的语义。
+- 前端只把同时带 `WWW-Authenticate: Bearer` 的 401 视为本系统会话失效；上游 CodeBuddy 401 不得触发管理台登出。
 
-- `CODEBUDDY_ALLOWED_API_ENDPOINTS` 是硬白名单；白名单为空、包含非法 URL 或 `CODEBUDDY_API_ENDPOINT` 不在其中时必须在启动阶段失败，禁止回退或自动补入其他站点。
-- `X-Domain` 请求头经过 `[A-Za-z0-9.-]+` 正则过滤，防止请求头注入。
-- 对不存在/无效的用户执行虚拟密码哈希验证，防止基于响应时间的用户枚举。
-- PBKDF2 密码哈希默认使用 600000 次迭代，只接受规范的 `pbkdf2_sha256$迭代数$盐$摘要`：迭代数范围 600000 至 1000000，盐固定 16 字节、摘要固定 32 字节，Base64URL 必须无填充且编码规范。
-- 前端仅将带 `WWW-Authenticate: Bearer` 的 401 视为本系统会话失效；CodeBuddy 上游凭证 401 不得触发管理会话注销。
-- 文档鉴权验收必须覆盖 `/docs`、`/redoc`、`/openapi.json` 的无会话 401、有效会话成功及 API Key 被拒绝，并断言 schema 的外部 Bearer 安全声明、Chat 请求体和隐藏入口。
+## 数据与文件安全
+
+- SQLite schema 创建/迁移与 `user_version` 必须在同一 `BEGIN IMMEDIATE` 事务中提交；每次连接都要确保 WAL 可用，失败即终止。
+- 数据目录不得是符号链接；数据库及其 `-wal`、`-shm`、`-journal` sidecar 必须是非符号链接普通文件。数据库和凭证文件权限为 0600。
+- 凭证写入使用 `O_NOFOLLOW`，加载时忽略凭证目录中的符号链接，所有文件名都必须防路径穿越。
+- `CODEBUDDY_ALLOWED_API_ENDPOINTS` 是硬白名单：为空、含非法 URL 或当前端点不在其中时必须在启动阶段失败，禁止自动补入或回退。`X-Domain` 只允许 `[A-Za-z0-9.-]+`。
+- 用户认证必须对不存在或无效用户执行虚拟密码哈希，避免时序枚举。密码文件只接受规范的 `pbkdf2_sha256$迭代数$盐$摘要`：默认迭代数为 600000，只允许 600000 至 1000000；盐固定 16 字节，摘要固定 32 字节，Base64URL 必须规范且无填充。修改格式时必须同步所有读写入口。
+
+## CodeBuddy 与 OpenAI 兼容层
+
+- CodeBuddy 上游只支持流式响应。即使客户端请求非流式，也必须用 `client.stream()` 增量消费 SSE，再由 `StreamResponseAggregator` 聚合；禁止先缓冲完整上游响应体。`RequestProcessor.prepare_request()` 必须强制注入 `stream=True`。
+- 上游响应采用宽松事件提取，不在事件模型层承担完整协议验证。流式与非流式路径共享首个 choice 语义；`OpenAIStreamNormalizer` 负责拆分混合的 reasoning/content delta，并在首块补 `role: assistant`。
+- 上游工具调用 ID 原样透传，只为 OpenAI 流式兼容补充缺失的 `index`，不要重新生成 ID。
+- 强制推理模型会覆盖为最大推理并启用 thinking，但 `clear_thinking` 等其他客户端 `thinking` 子项必须继续透传，不能用新对象整体替换；其他模型默认开启 thinking，但客户端显式禁用时必须尊重。`CODEBUDDY_FORCED_TEMPERATURE` 非空时覆盖客户端值；模型命名空间是否剥离由 `CODEBUDDY_STRIP_MODEL_NAMESPACE` 控制。修改请求转换时注意这些优先级。
+- 系统消息会通过 `src/keyword_replacer.py` 替换 Anthropic/Claude 品牌词；不要在其他层重复替换。
+- 全局上游 HTTP 客户端保持 `trust_env=False`，避免环境中的 SOCKS 代理在缺少 `socksio` 时破坏服务启动。
+
+## OAuth、凭证与模型缓存
+
+- `src/codebuddy_auth_router.py` 只负责路由；上游认证、auth state 所属关系及 token 解析/保存放在 `src/codebuddy_oauth.py`。
+- OAuth state 一旦取消或消费便不可轮询或重放。上游登录 URL 只允许带主机、无 userinfo/控制字符的绝对 HTTP(S) URL；校验通过前不得登记 state 或让前端导航。成功响应不能向浏览器返回 token 或用户信息；保存失败应返回 500，且不得恢复已消费 state。
+- 手动添加和 OAuth 保存必须共用 token 解析：`user_id` 优先取 JWT `sub`；失败或缺失时使用真实 CLI 兼容的 `anonymous_<token 后 8 位>`，不得读取 `ACC_USER_ID` 或 `ACC_USER_NICKNAME`。
+- 每个系统用户拥有独立凭证目录和 Token 管理器。凭证轮换开关是用户级设置，轮换频率必须为正整数。
+- CodeBuddy `/v3/config` URL、`Host` 和 `X-Domain` 必须由同一个当前 API endpoint 派生。
+- 模型缓存键至少包含系统用户与 `credential_id`。凭证过期、删除或失效时必须同时驱逐缓存并作废在途查询；旧请求结果不能写回，也不能被同 ID 的新凭证复用。过期值不得作为失败回退，并发未命中使用 per-key single-flight 合并。
+
+## 统计系统
+
+- 统计按系统用户隔离，区分外部 API、管理台 playground 和凭证测试。写入必须从 ASGI 事件循环卸载；写入失败不能影响聊天响应，但要记录日志并增加进程级 `dropped_events`。运行期数据库丢失必须快速失败，不能返回伪造的空统计。
+- 逐请求脱敏明细只保留 90 天，UTC 小时汇总永久保留；清理由启动任务和独立定时任务按索引分批执行，不能依赖后续写入触发。
+- 查询在同步 FastAPI 路由线程池中执行，并在 SQL 中有界聚合。浏览器 IANA 时区的非整点范围和本地日历边界，在保留期内用明细修正边界小时；过期历史只能按小时近似，必须通过 `boundary_precision` 明示。
+- 请求列表使用成对的 `snapshot_id`、`snapshot_time` 做稳定的页码分页；详情必须沿用列表快照。拒绝未来快照；清理水位越过快照可用下界后要求重新获取第一页。
+- 永久模型维度只采用配置或成功上游响应确认的规范模型，未确认值记为 `unknown`。缺失 usage 保持 `null`，不能当作 0；覆盖率以 `total_tokens` 是否已知计算。延迟超过直方图上限时进入显式 overflow 桶。
+- 永远不要保存提示词、回答、请求头、Bearer/CodeBuddy Token、工具参数、原始错误体或会话 ID。模型、错误类型、思考模式和结束原因写入前必须归一化到受控值。统计不承担 billing 套餐、余额或货币换算。
+
+## 前端约定
+
+- 管理数据的 Vue Query key 必须以 `['admin', username, ...]` 开头。登出、本地会话 401 或用户名变化时，同时清空 Query Cache 和 Mutation Cache。
+- 查询和 mutation 使用 `networkMode="always"`，查询禁用 `refetchOnReconnect`，保证离线时立即失败且联网后不补发。手动刷新和重试统一使用 `RefreshButton`；它需在 refetch 前检查离线状态，并独立维持最短加载反馈，不能只依赖 `isFetching`。
+- 主题动画只在根节点维护一个数值进度，所有动画语义色由该进度派生。不要为后代递归添加颜色 transition，也不要用 `dark:` 在两个动画语义变量间切换。需单调变化的颜色使用等效不透明端点，避免透明色插值泛白；连续主题切换必须从当前进度反向，路由切换期间禁止启动主题切换。
+- 内容哈希的静态资源长期 `immutable`，入口 HTML 为 `no-store`，未哈希资源必须重新验证。缺少 `frontend/dist/index.html` 时快速失败，不提供单文件回退。
+- 前端开发/构建要求 Node.js 24.11+。Vite 8/Rolldown 手动分包使用 `rollupOptions.output.codeSplitting.groups`，不要恢复对象形式 `manualChunks`；TypeScript 配置保留 `vite/client` 类型。
+
+## Docker 与发布
+
+- 容器入口必须先以 root 准备挂载目录和用户文件副本，再通过 `gosu` 切换到 UID 1001 的 `appuser`。不要用 Compose `user` 或 `docker run --user` 绕过入口准备。
+- 运行时挂载 `./data` 和只读 `./secrets`；入口固定数据目录为 `/app/data`，并将宿主 `users.txt` 复制成运行时私有只读文件。服务启动后修改用户文件必须重启容器才会生效。
+- 用户文件以同目录临时文件原子替换，不支持符号链接、非普通文件或多硬链接；重复用户名会替换全部旧记录，并发写入不提供锁。
+- 发布只接受稳定语义版本 tag。tag、`web.py` 的 `APP_VERSION`、`frontend/package.json` 版本及 `CHANGELOG.md` 对应版本必须一致。
+- 发布镜像必须同时支持 `linux/amd64`、`linux/arm64` 和 `linux/arm/v7`，构建时生成 SBOM/provenance，并使用 Cosign keyless signing 对最终镜像 digest 签名。发布顺序必须保持“完整验证 → 多架构按 digest 推送 → 每个架构漏洞扫描 → 对 digest 加版本/`latest` tag → 签名与 GitHub Release”；任一架构存在 `CRITICAL` 漏洞都应阻断发布。Trivy 默认包含尚无修复版本的漏洞，手动发布仅可通过 `ignore_unfixed=true` 忽略这类漏洞。只有最高稳定版本更新 `latest`。
+- 发布归档必须可复现：使用 tag commit 时间，规范成员顺序、时间、权限和 owner 元数据；只收录生产文件，拒绝输入路径中的符号链接及其他非普通文件。输出目录不能位于任何输入目录内，所有产物先在临时目录完整生成再原子替换，checksum 最后发布。
