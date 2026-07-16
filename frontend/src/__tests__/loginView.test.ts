@@ -110,6 +110,12 @@ describe('LoginView', () => {
     expect(wrapper.get('img.project-icon').attributes('src')).toBe('/assets/codebuddy2api.svg');
   });
 
+  it('密码校验提示与登录按钮之间保留固定间距', () => {
+    const wrapper = mountView();
+
+    expect(wrapper.get('button').classes()).toContain('mt-2');
+  });
+
   it('校验通过后登录并清空密码，不额外弹成功提示', async () => {
     loginMock.mockResolvedValue(undefined);
     const wrapper = mountView();

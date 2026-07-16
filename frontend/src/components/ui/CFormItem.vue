@@ -5,7 +5,6 @@ import {
   onBeforeUnmount,
   onMounted,
   provide,
-  ref,
   useId,
   useSlots,
   type ComputedRef,
@@ -19,12 +18,13 @@ interface FormContext {
   registerItem: (item: FormItemExpose) => void;
   unregisterItem: (item: FormItemExpose) => void;
   labelPlacement: ComputedRef<'left' | 'top'>;
+  errors: ComputedRef<Record<string, string>>;
+  setFieldError: (path: string, error: string | null) => void;
 }
 
 interface FormItemExpose {
   path: string;
   validate: () => Promise<string | null>;
-  restoreValidation: () => void;
 }
 
 interface Props {
@@ -47,7 +47,6 @@ if (!ctx) {
 
 const formCtx: FormContext = ctx;
 
-const error = ref<string | null>(null);
 const instanceId = useId().replace(/[^A-Za-z0-9_-]/g, '');
 const controlId = `c-form-control-${instanceId}`;
 const labelElementId = `c-form-label-${instanceId}`;
@@ -64,6 +63,7 @@ const hasLabel = computed(() => Boolean(props.label || slots.label));
 const labelId = computed(() => (hasLabel.value ? labelElementId : undefined));
 
 const labelPlacement = computed<'left' | 'top'>(() => formCtx.labelPlacement.value);
+const error = computed(() => formCtx.errors.value[props.path] ?? null);
 
 function applyRule(rule: FormRule, value: unknown): string | null {
   if (rule.required) {
@@ -90,11 +90,11 @@ async function validateRules(rulesToApply: FormRule[]): Promise<string | null> {
   for (const rule of rulesToApply) {
     const msg = applyRule(rule, value);
     if (msg) {
-      error.value = msg;
+      formCtx.setFieldError(props.path, msg);
       return msg;
     }
   }
-  error.value = null;
+  formCtx.setFieldError(props.path, null);
   return null;
 }
 
@@ -104,16 +104,11 @@ function validateForTrigger(trigger: 'input' | 'blur'): void {
   void validateRules(error.value ? rules.value : triggeredRules);
 }
 
-function restoreValidation(): void {
-  error.value = null;
-}
-
 const expose: FormItemExpose = {
   get path() {
     return props.path;
   },
   validate,
-  restoreValidation,
 };
 
 provide(formItemControlKey, {

@@ -627,6 +627,23 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await get_admin_settings(self.user))["settings"]["CODEBUDDY_MODELS"], "admin-only")
         self.assertEqual((await get_admin_settings(alice))["settings"]["CODEBUDDY_MODELS"], "alice-only")
 
+    async def test_settings_partial_update_preserves_omitted_rotation_count(self):
+        await save_admin_settings(
+            AdminSettingsUpdate(settings={
+                "CODEBUDDY_AUTO_ROTATION_ENABLED": True,
+                "CODEBUDDY_ROTATION_COUNT": 3,
+            }),
+            self.user,
+        )
+
+        result = await save_admin_settings(
+            AdminSettingsUpdate(settings={"CODEBUDDY_AUTO_ROTATION_ENABLED": False}),
+            self.user,
+        )
+
+        self.assertIs(result["settings"]["CODEBUDDY_AUTO_ROTATION_ENABLED"], False)
+        self.assertEqual(result["settings"]["CODEBUDDY_ROTATION_COUNT"], 3)
+
     async def test_settings_reject_log_level_and_zero_rotation_count(self):
         invalid_payloads = [
             {"CODEBUDDY_LOG_LEVEL": "DEBUG"},

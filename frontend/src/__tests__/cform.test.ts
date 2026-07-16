@@ -507,9 +507,18 @@ describe('CFormItem', () => {
       await formRef.validate();
     } catch {}
     await flushPromises();
+    expect(formRef.errors).toEqual({ name: '名称必填' });
+    expect(formRef.isValid).toBe(false);
+    expect(formRef.firstError).toBe('名称必填');
     const err = wrapper.find('.c-form-item-error');
     expect(err.exists()).toBe(true);
     expect(err.text()).toBe('名称必填');
+
+    formRef.restoreValidation();
+    await flushPromises();
+    expect(formRef.errors).toEqual({});
+    expect(formRef.isValid).toBe(true);
+    expect(formRef.firstError).toBeNull();
   });
 
   it('错误提示含 shake 动画 class', async () => {

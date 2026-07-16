@@ -121,6 +121,8 @@ describe('createSettingsFormController', () => {
     expect(controller.isDirty()).toBe(false);
     tagValues.tags = ['b', 'a'];
     expect(controller.isDirty()).toBe(true);
+    delete tagValues.tags;
+    expect(controller.isDirty()).toBe(true);
   });
 
   it('resetBaseline 接受前端规范化后的当前值', () => {

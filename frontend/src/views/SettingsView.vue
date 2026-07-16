@@ -10,7 +10,7 @@ import { useToast } from '../composables/useToast';
 import CCard from '../components/ui/CCard.vue';
 import CAlert from '../components/ui/CAlert.vue';
 import CSpin from '../components/ui/CSpin.vue';
-import CForm from '../components/ui/CForm.vue';
+import CForm, { type FormRules, type FormValidationError } from '../components/ui/CForm.vue';
 import CFormItem from '../components/ui/CFormItem.vue';
 import CSelect from '../components/ui/CSelect.vue';
 import CSwitch from '../components/ui/CSwitch.vue';
@@ -29,6 +29,7 @@ const queryKeys = adminQueryKeys(session.username);
 const toast = useToast();
 const form = reactive<Record<string, string | number | boolean | null>>({});
 const tagValues = reactive<Record<string, string[]>>({});
+const formRef = ref<InstanceType<typeof CForm> | null>(null);
 const AUTO_ROTATION_KEY = 'CODEBUDDY_AUTO_ROTATION_ENABLED';
 const ROTATION_COUNT_KEY = 'CODEBUDDY_ROTATION_COUNT';
 
@@ -58,7 +59,7 @@ watch(
   { immediate: true },
 );
 
-function parseRotationCount(value: string | number | boolean | null): number | null {
+function parseRotationCount(value: unknown): number | null {
   if (typeof value === 'number') {
     return Number.isInteger(value) && value >= 1 ? value : null;
   }
@@ -69,8 +70,7 @@ function parseRotationCount(value: string | number | boolean | null): number | n
   return null;
 }
 
-function validateNumberField(field: SettingField): string | null {
-  const value = form[field.key];
+function validateNumberField(field: SettingField, value: unknown = form[field.key]): string | null {
   if (field.key === ROTATION_COUNT_KEY) {
     return parseRotationCount(value) === null ? '轮换次数必须是大于或等于 1 的整数' : null;
   }
@@ -89,23 +89,21 @@ function validateNumberField(field: SettingField): string | null {
   return null;
 }
 
-const numberFieldErrors = computed<Record<string, string>>(() => {
-  const errors: Record<string, string> = {};
+const formRules = computed<FormRules>(() => {
+  const rules: FormRules = {};
   for (const field of fields.value) {
     if (field.type !== 'number') continue;
-    const error = validateNumberField(field);
-    if (error) errors[field.key] = error;
+    rules[field.key] = {
+      trigger: 'input',
+      validator: (value) => validateNumberField(field, value) ?? true,
+    };
   }
-  return errors;
+  return rules;
 });
-const rotationCountError = computed(() => numberFieldErrors.value[ROTATION_COUNT_KEY] ?? null);
-const formError = computed(() => Object.values(numberFieldErrors.value)[0] ?? null);
-const formInvalid = computed(() => formError.value !== null);
 const settingsLoaded = computed(() => Boolean(settingsQuery.data.value) && fields.value.length > 0);
 
 const saveMutation = useMutation({
   mutationFn: () => {
-    if (formError.value) throw new Error(formError.value);
     submittedEditVersion = settingsForm.getEditVersion();
     return adminApi.saveSettings(buildPayload());
   },
@@ -164,6 +162,7 @@ function applyServerSettings(data: SettingsResponse, force: boolean): void {
     form[ROTATION_COUNT_KEY] = parsedRotationCount;
     settingsForm.resetBaseline();
   }
+  formRef.value?.restoreValidation();
   baselineRevision.value += 1;
 }
 
@@ -182,6 +181,9 @@ watch(
 function buildPayload() {
   const payload: Record<string, unknown> = {};
   for (const field of fields.value) {
+    if (field.key === ROTATION_COUNT_KEY && form[AUTO_ROTATION_KEY] !== true) {
+      continue;
+    }
     if (field.type === 'tags') {
       payload[field.key] = (tagValues[field.key] || []).join(field.separator || ',');
       continue;
@@ -229,12 +231,14 @@ function updateTags(field: SettingField, value: string[]) {
   tagValues[field.key] = value;
 }
 
-function saveSettings(): void {
-  if (formError.value) {
-    toast.error(formError.value);
+async function saveSettings(): Promise<void> {
+  if (!settingsLoaded.value || !isDirty.value || saveMutation.isPending.value) return;
+  try {
+    await formRef.value!.validate();
+  } catch (errors) {
+    toast.error((errors as FormValidationError[])[0].message);
     return;
   }
-  if (!settingsLoaded.value || !isDirty.value || saveMutation.isPending.value) return;
   saveMutation.mutate();
 }
 
@@ -261,7 +265,7 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', handleBeforeUnl
         <CButton
           variant="primary"
           :loading="saveMutation.isPending.value"
-          :disabled="!settingsLoaded || !isDirty || formInvalid || saveMutation.isPending.value"
+          :disabled="!settingsLoaded || saveMutation.isPending.value"
           :class="{ 'animate-success': savedFlash }"
           @click="saveSettings"
         >
@@ -275,13 +279,13 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', handleBeforeUnl
 
     <CAlert v-if="settingsQuery.isError.value" type="error" :show-icon="true">
       <div class="toolbar flex items-center gap-2">
-        <span>加载配置失败</span>
+        <span>{{ settingsLoaded ? '刷新配置失败，当前显示已有配置' : '加载配置失败' }}</span>
         <RefreshButton :query="settingsQuery" label="重试" size="sm" />
       </div>
     </CAlert>
 
     <CAlert
-      v-else-if="!settingsQuery.isLoading.value && fields.length === 0"
+      v-if="!settingsQuery.isError.value && !settingsQuery.isLoading.value && fields.length === 0"
       type="info"
       :show-icon="false"
     >
@@ -289,14 +293,20 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', handleBeforeUnl
     </CAlert>
 
     <div
-      v-else-if="settingsQuery.isLoading.value"
+      v-else-if="settingsQuery.isLoading.value && !settingsLoaded"
       class="settings-loading grid min-h-24 place-items-center"
     >
       <CSpin size="lg" />
     </div>
 
-    <div v-else>
-      <CForm :model="form" label-placement="left" label-width="fit-content(14rem)">
+    <div v-else-if="settingsLoaded">
+      <CForm
+        ref="formRef"
+        :model="form"
+        :rules="formRules"
+        label-placement="left"
+        label-width="fit-content(14rem)"
+      >
         <CFormItem
           v-for="field in visibleFields"
           :key="field.key"
@@ -340,16 +350,8 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', handleBeforeUnl
               :max="field.max"
               :step="field.step || 1"
               :clearable="field.key !== ROTATION_COUNT_KEY"
-              :aria-invalid="Boolean(numberFieldErrors[field.key])"
               @update:model-value="updateNumberField(field, $event)"
             />
-            <p
-              v-if="numberFieldErrors[field.key]"
-              class="mt-1 text-xs text-tone-error"
-              role="alert"
-            >
-              {{ numberFieldErrors[field.key] }}
-            </p>
           </div>
           <CDynamicTags
             v-else-if="field.type === 'tags'"

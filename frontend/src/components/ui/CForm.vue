@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, provide, shallowRef } from 'vue';
+import { computed, provide, ref, shallowRef } from 'vue';
 
 export interface FormRule {
   required?: boolean;
@@ -15,10 +15,14 @@ export interface FormRule {
 
 export type FormRules = Record<string, FormRule | FormRule[]>;
 
+export interface FormValidationError {
+  field: string;
+  message: string;
+}
+
 interface FormItemExpose {
   path: string;
   validate: () => Promise<string | null>;
-  restoreValidation: () => void;
 }
 
 interface Props {
@@ -37,6 +41,19 @@ const props = withDefaults(defineProps<Props>(), {
 });
 
 const items = shallowRef<FormItemExpose[]>([]);
+const errors = ref<Record<string, string>>({});
+const isValid = computed(() => Object.keys(errors.value).length === 0);
+const firstError = computed(() => Object.values(errors.value)[0] ?? null);
+
+function setFieldError(path: string, error: string | null): void {
+  const nextErrors = { ...errors.value };
+  if (error === null) {
+    delete nextErrors[path];
+  } else {
+    nextErrors[path] = error;
+  }
+  errors.value = nextErrors;
+}
 
 function registerItem(item: FormItemExpose): void {
   items.value = [...items.value, item];
@@ -44,6 +61,7 @@ function registerItem(item: FormItemExpose): void {
 
 function unregisterItem(item: FormItemExpose): void {
   items.value = items.value.filter((registered) => registered !== item);
+  setFieldError(item.path, null);
 }
 
 provide('c-form-context', {
@@ -53,28 +71,30 @@ provide('c-form-context', {
   registerItem,
   unregisterItem,
   labelPlacement: computed(() => props.labelPlacement),
+  errors: computed(() => errors.value),
+  setFieldError,
 });
 
 async function validate(): Promise<void> {
-  const errors: { field: string; message: string }[] = [];
+  const validationErrors: FormValidationError[] = [];
   await Promise.all(
     items.value.map(async (item) => {
       const msg = await item.validate();
       if (msg) {
-        errors.push({ field: item.path, message: msg });
+        validationErrors.push({ field: item.path, message: msg });
       }
     }),
   );
-  if (errors.length > 0) {
-    throw errors;
+  if (validationErrors.length > 0) {
+    throw validationErrors;
   }
 }
 
 function restoreValidation(): void {
-  items.value.forEach((item) => item.restoreValidation());
+  errors.value = {};
 }
 
-defineExpose({ validate, restoreValidation });
+defineExpose({ validate, restoreValidation, errors, isValid, firstError });
 </script>
 
 <template>

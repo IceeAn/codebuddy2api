@@ -81,6 +81,7 @@ async function handleSubmit() {
           />
         </CFormItem>
         <CButton
+          class="mt-2"
           variant="primary"
           size="lg"
           block

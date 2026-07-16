@@ -3,31 +3,41 @@ import { mount } from '@vue/test-utils';
 import { ref, type Ref } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
-const { query, mutationOptions, mutationStates, invalidateQueries, toastMock, routeLeaveGuards } =
-  vi.hoisted(() => ({
-    query: {
-      data: { __v_isRef: true, value: undefined as unknown },
-      error: { __v_isRef: true, value: undefined as unknown },
-      isError: { __v_isRef: true, value: false },
-      isLoading: { __v_isRef: true, value: false },
-      isFetching: { __v_isRef: true, value: false },
-      refetch: vi.fn<() => Promise<unknown>>(),
-    },
-    mutationOptions: [] as Array<Record<string, (...args: any[]) => any>>,
-    mutationStates: [] as Array<{
-      isPending: Ref<boolean>;
-      isSuccess: Ref<boolean>;
-      mutate: Mock<(variables?: unknown) => void>;
-    }>,
-    invalidateQueries: vi.fn<(filters?: unknown) => Promise<void>>(),
-    toastMock: {
-      success: vi.fn<(message: string, duration?: number) => void>(),
-      error: vi.fn<(message: string, duration?: number) => void>(),
-      warning: vi.fn<(message: string, duration?: number) => void>(),
-      info: vi.fn<(message: string, duration?: number) => void>(),
-    },
-    routeLeaveGuards: [] as Array<() => boolean | void>,
-  }));
+const {
+  query,
+  mutationOptions,
+  mutationStates,
+  invalidateQueries,
+  toastMock,
+  routeLeaveGuards,
+  formValidateMock,
+  formRestoreValidationMock,
+} = vi.hoisted(() => ({
+  query: {
+    data: { __v_isRef: true, value: undefined as unknown },
+    error: { __v_isRef: true, value: undefined as unknown },
+    isError: { __v_isRef: true, value: false },
+    isLoading: { __v_isRef: true, value: false },
+    isFetching: { __v_isRef: true, value: false },
+    refetch: vi.fn<() => Promise<unknown>>(),
+  },
+  mutationOptions: [] as Array<Record<string, (...args: any[]) => any>>,
+  mutationStates: [] as Array<{
+    isPending: Ref<boolean>;
+    isSuccess: Ref<boolean>;
+    mutate: Mock<(variables?: unknown) => void>;
+  }>,
+  invalidateQueries: vi.fn<(filters?: unknown) => Promise<void>>(),
+  toastMock: {
+    success: vi.fn<(message: string, duration?: number) => void>(),
+    error: vi.fn<(message: string, duration?: number) => void>(),
+    warning: vi.fn<(message: string, duration?: number) => void>(),
+    info: vi.fn<(message: string, duration?: number) => void>(),
+  },
+  routeLeaveGuards: [] as Array<() => boolean | void>,
+  formValidateMock: vi.fn<() => Promise<void>>(),
+  formRestoreValidationMock: vi.fn<() => void>(),
+}));
 
 // 提供给 vi.mock 工厂使用的 ref 工厂（工厂内无法直接 import vue）
 const createRef = ref;
@@ -97,7 +107,8 @@ const SpinStub = defineComponent({
 const FormStub = defineComponent({
   name: 'CForm',
   props: { labelPlacement: String, labelWidth: String },
-  setup(props, { slots }) {
+  setup(props, { expose, slots }) {
+    expose({ validate: formValidateMock, restoreValidation: formRestoreValidationMock });
     return () =>
       h(
         'form',
@@ -260,28 +271,29 @@ const TooltipStub = defineComponent({
 
 const mountedWrappers: ReturnType<typeof mount>[] = [];
 
-function mountView() {
+function mountView({ useRealNumberForm = false } = {}) {
   mutationOptions.length = 0;
   mutationStates.length = 0;
+  const stubs = {
+    CCard: CardStub,
+    CAlert: AlertStub,
+    CSpin: SpinStub,
+    CForm: useRealNumberForm ? false : FormStub,
+    CFormItem: useRealNumberForm ? false : FormItemStub,
+    CSelect: SelectStub,
+    CSwitch: SwitchStub,
+    CInputNumber: useRealNumberForm ? false : InputNumberStub,
+    CDynamicTags: DynamicTagsStub,
+    CInput: InputStub,
+    CButton: ButtonStub,
+    CTooltip: TooltipStub,
+    RefreshButton: RefreshButtonStub,
+    Save: true,
+    CircleHelp: true,
+  };
   const wrapper = mount(SettingsView, {
     global: {
-      stubs: {
-        CCard: CardStub,
-        CAlert: AlertStub,
-        CSpin: SpinStub,
-        CForm: FormStub,
-        CFormItem: FormItemStub,
-        CSelect: SelectStub,
-        CSwitch: SwitchStub,
-        CInputNumber: InputNumberStub,
-        CDynamicTags: DynamicTagsStub,
-        CInput: InputStub,
-        CButton: ButtonStub,
-        CTooltip: TooltipStub,
-        RefreshButton: RefreshButtonStub,
-        Save: true,
-        CircleHelp: true,
-      },
+      stubs,
     },
   });
   mountedWrappers.push(wrapper);
@@ -305,6 +317,9 @@ describe('SettingsView', () => {
     toastMock.error.mockReset();
     toastMock.warning.mockReset();
     toastMock.info.mockReset();
+    formValidateMock.mockReset();
+    formValidateMock.mockResolvedValue(undefined);
+    formRestoreValidationMock.mockReset();
     routeLeaveGuards.length = 0;
     vi.spyOn(window, 'confirm').mockReturnValue(true);
   });
@@ -550,6 +565,36 @@ describe('SettingsView', () => {
     expect((wrapper.vm.$ as any).setupState.form.text).toBe('server-refresh');
   });
 
+  it('显式刷新恢复服务端合法值后清除遗留的表单校验错误', async () => {
+    query.data.value = {
+      settings: { count: 2 },
+      fields: [{ key: 'count', label: '次数', type: 'number', min: 1 }],
+    };
+    query.refetch.mockResolvedValue({
+      isError: false,
+      data: {
+        settings: { count: 3 },
+        fields: [{ key: 'count', label: '次数', type: 'number', min: 1 }],
+      },
+    });
+    const wrapper = mountView({ useRealNumberForm: true });
+    const numberInput = wrapper.get('input[type="number"]');
+
+    await numberInput.setValue('0');
+    expect(wrapper.get('.c-form-item-error').text()).toBe('次数不能小于 1');
+    expect(numberInput.attributes('aria-invalid')).toBe('true');
+
+    const refreshButton = wrapper
+      .findAll('button')
+      .find((button) => button.text().includes('刷新'))!;
+    await refreshButton.trigger('click');
+    await wrapper.vm.$nextTick();
+
+    expect((wrapper.vm.$ as any).setupState.form.count).toBe(3);
+    expect(wrapper.find('.c-form-item-error').exists()).toBe(false);
+    expect(numberInput.attributes('aria-invalid')).toBeUndefined();
+  });
+
   it('dirty 状态下取消确认不会发起显式刷新', async () => {
     query.data.value = {
       settings: { text: 'old' },
@@ -624,7 +669,7 @@ describe('SettingsView', () => {
 
     const state = (wrapper.vm.$ as any).setupState;
     expect(state.form.CODEBUDDY_ROTATION_COUNT).toBe(0);
-    expect(state.rotationCountError).toBe('轮换次数必须是大于或等于 1 的整数');
+    expect(state.validateNumberField(state.fields[1])).toBe('轮换次数必须是大于或等于 1 的整数');
   });
 
   it('保存成功时保存按钮短暂应用 animate-success 动效', async () => {
@@ -711,16 +756,13 @@ describe('SettingsView', () => {
     expect(state.visibleFields.map((field: any) => field.key)).toEqual([
       'CODEBUDDY_AUTO_ROTATION_ENABLED',
     ]);
-    expect(state.buildPayload()).toEqual({
-      CODEBUDDY_AUTO_ROTATION_ENABLED: false,
-      CODEBUDDY_ROTATION_COUNT: 0,
-    });
+    expect(state.buildPayload()).toEqual({ CODEBUDDY_AUTO_ROTATION_ENABLED: false });
 
     state.updateBooleanField(state.fields[0], true);
     await wrapper.vm.$nextTick();
 
     expect(state.form.CODEBUDDY_ROTATION_COUNT).toBe(0);
-    expect(state.rotationCountError).toBe('轮换次数必须是大于或等于 1 的整数');
+    expect(state.validateNumberField(state.fields[1])).toBe('轮换次数必须是大于或等于 1 的整数');
     expect(state.visibleFields.map((field: any) => field.key)).toEqual([
       'CODEBUDDY_AUTO_ROTATION_ENABLED',
       'CODEBUDDY_ROTATION_COUNT',
@@ -729,11 +771,41 @@ describe('SettingsView', () => {
     state.updateNumberField(state.fields[1], 0);
     expect(state.form.CODEBUDDY_ROTATION_COUNT).toBe(0);
     state.updateNumberField(state.fields[1], 4);
-    expect(state.rotationCountError).toBeNull();
+    expect(state.validateNumberField(state.fields[1])).toBeNull();
     expect(state.buildPayload()).toMatchObject({ CODEBUDDY_ROTATION_COUNT: 4 });
     state.form.CODEBUDDY_ROTATION_COUNT = null;
     expect(state.buildPayload()).toMatchObject({ CODEBUDDY_ROTATION_COUNT: null });
-    expect(state.rotationCountError).toBe('轮换次数必须是大于或等于 1 的整数');
+    expect(state.validateNumberField(state.fields[1])).toBe('轮换次数必须是大于或等于 1 的整数');
+  });
+
+  it('隐藏轮换频率时清除字段错误并从提交载荷中省略非法草稿', async () => {
+    query.data.value = {
+      settings: { CODEBUDDY_AUTO_ROTATION_ENABLED: true, CODEBUDDY_ROTATION_COUNT: 3 },
+      fields: [
+        { key: 'CODEBUDDY_AUTO_ROTATION_ENABLED', label: '凭证轮换', type: 'boolean' },
+        { key: 'CODEBUDDY_ROTATION_COUNT', label: '轮换频率', type: 'number', min: 1 },
+      ],
+    };
+    const saveSpy = vi.spyOn(adminApi, 'saveSettings').mockResolvedValue({} as never);
+    const wrapper = mountView({ useRealNumberForm: true });
+    const state = (wrapper.vm.$ as any).setupState;
+
+    await wrapper.get('input[type="number"]').setValue('1.5');
+    expect(wrapper.get('.c-form-item-error').text()).toBe('轮换次数必须是大于或等于 1 的整数');
+
+    await wrapper.findComponent(SwitchStub).vm.$emit('update:modelValue', false);
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('input[type="number"]').exists()).toBe(false);
+    expect(wrapper.find('.c-form-item-error').exists()).toBe(false);
+    expect(state.buildPayload()).toEqual({ CODEBUDDY_AUTO_ROTATION_ENABLED: false });
+
+    const saveButton = wrapper.findAll('button').find((button) => button.text().includes('保存'))!;
+    expect(saveButton.attributes('disabled')).toBeUndefined();
+    await state.saveSettings();
+    expect(mutationStates[0].mutate).toHaveBeenCalledOnce();
+
+    await mutationOptions[0].mutationFn();
+    expect(saveSpy).toHaveBeenCalledWith({ CODEBUDDY_AUTO_ROTATION_ENABLED: false });
   });
 
   it('保留环境变量返回的字符串轮换频率', async () => {
@@ -755,10 +827,10 @@ describe('SettingsView', () => {
     expect(state.buildPayload()).toMatchObject({ CODEBUDDY_ROTATION_COUNT: 5 });
     state.form.CODEBUDDY_ROTATION_COUNT = 'bad';
     expect(state.buildPayload()).toMatchObject({ CODEBUDDY_ROTATION_COUNT: 'bad' });
-    expect(state.rotationCountError).toBe('轮换次数必须是大于或等于 1 的整数');
+    expect(state.validateNumberField(state.fields[1])).toBe('轮换次数必须是大于或等于 1 的整数');
   });
 
-  it('仅在数据已加载、真实 dirty、校验通过且未保存时启用保存', async () => {
+  it('仅在设置不可用或正在保存时禁用保存按钮', async () => {
     let wrapper = mountView();
     let state = (wrapper.vm.$ as any).setupState;
     let saveButton = wrapper.findAll('button').find((button) => button.text().includes('保存'))!;
@@ -774,27 +846,27 @@ describe('SettingsView', () => {
     wrapper = mountView();
     state = (wrapper.vm.$ as any).setupState;
     saveButton = wrapper.findAll('button').find((button) => button.text().includes('保存'))!;
-    expect(saveButton.attributes('disabled')).toBeDefined();
-    state.saveSettings();
+    expect(saveButton.attributes('disabled')).toBeUndefined();
+    await state.saveSettings();
     expect(mutationStates[0].mutate).not.toHaveBeenCalled();
 
     const input = wrapper.findComponent(InputStub);
     await input.vm.$emit('update:modelValue', 'new');
     expect(saveButton.attributes('disabled')).toBeUndefined();
-    state.saveSettings();
+    await state.saveSettings();
     expect(mutationStates[0].mutate).toHaveBeenCalledOnce();
     mutationStates[0].mutate.mockClear();
 
     await input.vm.$emit('update:modelValue', 'old');
-    expect(saveButton.attributes('disabled')).toBeDefined();
-    state.saveSettings();
+    expect(saveButton.attributes('disabled')).toBeUndefined();
+    await state.saveSettings();
     expect(mutationStates[0].mutate).not.toHaveBeenCalled();
 
     await input.vm.$emit('update:modelValue', 'newer');
     mutationStates[0].isPending.value = true;
     await wrapper.vm.$nextTick();
     expect(saveButton.attributes('disabled')).toBeDefined();
-    state.saveSettings();
+    await state.saveSettings();
     expect(mutationStates[0].mutate).not.toHaveBeenCalled();
   });
 
@@ -806,20 +878,30 @@ describe('SettingsView', () => {
         { key: 'CODEBUDDY_ROTATION_COUNT', label: '轮换频率', type: 'number', min: 1 },
       ],
     };
-    const wrapper = mountView();
+    const wrapper = mountView({ useRealNumberForm: true });
     const state = (wrapper.vm.$ as any).setupState;
+    const numberInput = wrapper.get('input[type="number"]');
 
-    state.updateNumberField(state.fields[1], 1.5);
+    await numberInput.setValue('1.5');
     await wrapper.vm.$nextTick();
     expect(state.form.CODEBUDDY_ROTATION_COUNT).toBe(1.5);
-    expect(wrapper.text()).toContain('轮换次数必须是大于或等于 1 的整数');
+    expect(wrapper.get('.c-form-item-error').text()).toBe('轮换次数必须是大于或等于 1 的整数');
+    expect(wrapper.find('.c-form-item-control-inner [role="alert"]').exists()).toBe(false);
+    const numberControl = wrapper.findAll('.c-form-item-control')[1];
+    expect(numberControl.find('[aria-hidden="true"]').exists()).toBe(false);
     const saveButton = wrapper.findAll('button').find((button) => button.text().includes('保存'))!;
-    expect(saveButton.attributes('disabled')).toBeDefined();
+    expect(saveButton.attributes('disabled')).toBeUndefined();
 
-    state.saveSettings();
+    await state.saveSettings();
     expect(mutationStates[0].mutate).not.toHaveBeenCalled();
     expect(toastMock.error).toHaveBeenCalledWith('轮换次数必须是大于或等于 1 的整数');
-    expect(() => mutationOptions[0].mutationFn()).toThrow('轮换次数必须是大于或等于 1 的整数');
+
+    await numberInput.setValue('4');
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('.c-form-item-error').exists()).toBe(false);
+    expect(numberControl.find('[aria-hidden="true"]').exists()).toBe(true);
+    await state.saveSettings();
+    expect(mutationStates[0].mutate).toHaveBeenCalledOnce();
   });
 
   it('所有数值字段都按 min、max 与 nullable 约束拦截非法保存', async () => {
@@ -843,27 +925,21 @@ describe('SettingsView', () => {
 
     state.updateNumberField(state.fields[0], -1);
     await wrapper.vm.$nextTick();
-    expect(state.numberFieldErrors.temperature).toBe('强制 temperature不能小于 0');
-    expect(wrapper.text()).toContain('强制 temperature不能小于 0');
-    expect(saveButton.attributes('disabled')).toBeDefined();
-    state.saveSettings();
-    expect(mutationStates[0].mutate).not.toHaveBeenCalled();
-    expect(toastMock.error).toHaveBeenCalledWith('强制 temperature不能小于 0');
-    expect(() => mutationOptions[0].mutationFn()).toThrow('强制 temperature不能小于 0');
+    expect(state.validateNumberField(state.fields[0])).toBe('强制 temperature不能小于 0');
+    expect(saveButton.attributes('disabled')).toBeUndefined();
 
     state.updateNumberField(state.fields[0], 3);
-    expect(state.numberFieldErrors.temperature).toBe('强制 temperature不能大于 2');
+    expect(state.validateNumberField(state.fields[0])).toBe('强制 temperature不能大于 2');
 
     state.updateNumberField(state.fields[0], null);
-    expect(state.numberFieldErrors.temperature).toBeUndefined();
+    expect(state.validateNumberField(state.fields[0])).toBeNull();
 
     state.updateNumberField(state.fields[1], null);
-    expect(state.numberFieldErrors.required).toBe('必填数值不能为空');
+    expect(state.validateNumberField(state.fields[1])).toBe('必填数值不能为空');
     state.form.required = Number.NaN;
-    expect(state.numberFieldErrors.required).toBe('必填数值必须是有效数字');
+    expect(state.validateNumberField(state.fields[1])).toBe('必填数值必须是有效数字');
     state.updateNumberField(state.fields[1], 4);
-    expect(state.numberFieldErrors.required).toBeUndefined();
-    expect(state.formInvalid).toBe(false);
+    expect(state.validateNumberField(state.fields[1])).toBeNull();
   });
 
   it('离页与关闭页面时仅对真实 dirty 设置进行确认', async () => {
@@ -902,6 +978,29 @@ describe('SettingsView', () => {
     const retry = wrapper.findAll('button').find((button) => button.text().includes('重试'));
     await retry?.trigger('click');
     expect(query.refetch).toHaveBeenCalledOnce();
+  });
+
+  it('刷新失败且存在缓存时保留未保存表单并允许保存', async () => {
+    query.data.value = {
+      settings: { text: 'old' },
+      fields: [{ key: 'text', label: '文本', type: 'text' }],
+    };
+    const wrapper = mountView();
+    await wrapper.findComponent(InputStub).vm.$emit('update:modelValue', 'new');
+
+    query.isError.value = true;
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.text()).toContain('刷新配置失败，当前显示已有配置');
+    expect(wrapper.findComponent(FormStub).exists()).toBe(true);
+    expect(wrapper.findComponent(InputStub).props('modelValue')).toBe('new');
+
+    const saveButton = wrapper.findAll('button').find((button) => button.text().includes('保存'))!;
+    await saveButton.trigger('click');
+    await Promise.resolve();
+
+    expect(formValidateMock).toHaveBeenCalledOnce();
+    expect(mutationStates[0].mutate).toHaveBeenCalledOnce();
   });
 
   it('使用自建卡片与表单控件组件', async () => {
