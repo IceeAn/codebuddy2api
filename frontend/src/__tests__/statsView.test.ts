@@ -816,6 +816,108 @@ describe('StatsView', () => {
     expect(wrapper.text()).toContain('ellipsis-page');
   });
 
+  it('移动端分页使用内联页码输入，并在回车或失焦时规范化后跳页', async () => {
+    queries[1].data.value = {
+      items: [firstRequest],
+      page: 1,
+      page_size: 20,
+      total: 95,
+      total_pages: 5,
+      snapshot_id: 100,
+      snapshot_time: 1_767_225_700,
+    };
+    statsRequestsMock.mockResolvedValueOnce({
+      items: [{ ...firstRequest, id: 5, requested_model: 'mobile-clamped' }],
+      page: 5,
+      page_size: 20,
+      total: 95,
+      total_pages: 5,
+      snapshot_id: 100,
+      snapshot_time: 1_767_225_700,
+    });
+    const wrapper = mountView();
+    const state = (wrapper.vm.$ as any).setupState;
+
+    expect(wrapper.get('.request-pagination-desktop').classes()).toContain('hidden');
+    expect(wrapper.get('.request-pagination-mobile').classes()).toContain('md:hidden');
+    const mobileButtons = wrapper.findAll('.request-pagination-mobile button');
+    expect(mobileButtons.map((button) => button.attributes('aria-label'))).toEqual([
+      '首页',
+      '上一页',
+      '下一页',
+      '末页',
+    ]);
+    expect(mobileButtons.every((button) => button.classes().includes('!h-8'))).toBe(true);
+    expect(wrapper.get('.request-pagination-mobile-total').text()).toBe('/ 5 页');
+
+    const mobileInput = wrapper.get('.request-pagination-mobile-input');
+    expect(mobileInput.attributes('enterkeyhint')).toBe('done');
+    expect(mobileInput.attributes('inputmode')).toBe('numeric');
+    expect((mobileInput.element as HTMLInputElement).value).toBe('1');
+    expect(state.normalizeRequestMobileJumpInput('abc')).toBe(1);
+
+    await mobileInput.setValue('7');
+    await mobileInput.trigger('blur');
+
+    expect(statsRequestsMock).toHaveBeenCalledWith(expect.objectContaining({ page: 5 }));
+    expect(wrapper.text()).toContain('mobile-clamped');
+    expect(state.currentRequestPage).toBe(5);
+    expect((mobileInput.element as HTMLInputElement).value).toBe('5');
+
+    const blurSpy = vi.spyOn(mobileInput.element as HTMLInputElement, 'blur');
+    await mobileInput.setValue('4');
+    await mobileInput.trigger('keyup.enter');
+    expect(blurSpy).toHaveBeenCalledOnce();
+
+    await wrapper.get('.request-pagination-mobile button[aria-label="首页"]').trigger('click');
+    expect(state.currentRequestPage).toBe(1);
+    expect(wrapper.text()).toContain('provider/glm');
+
+    statsRequestsMock.mockResolvedValueOnce({
+      ...queries[1].data.value,
+      items: [{ ...firstRequest, id: 2, requested_model: 'mobile-next' }],
+      page: 2,
+    });
+    await wrapper.get('.request-pagination-mobile button[aria-label="下一页"]').trigger('click');
+    expect(statsRequestsMock).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2 }));
+    expect(wrapper.text()).toContain('mobile-next');
+
+    await wrapper.get('.request-pagination-mobile button[aria-label="上一页"]').trigger('click');
+    expect(state.currentRequestPage).toBe(1);
+
+    statsRequestsMock.mockResolvedValueOnce({
+      ...queries[1].data.value,
+      items: [{ ...firstRequest, id: 5, requested_model: 'mobile-last' }],
+      page: 5,
+    });
+    await wrapper.get('.request-pagination-mobile button[aria-label="末页"]').trigger('click');
+    expect(statsRequestsMock).toHaveBeenLastCalledWith(expect.objectContaining({ page: 5 }));
+    expect(wrapper.text()).toContain('mobile-last');
+  });
+
+  it('移动端无分页数据时禁用内联页码输入并显示 0/0', async () => {
+    queries[1].data.value = {
+      items: [],
+      page: 1,
+      page_size: 20,
+      total: 0,
+      total_pages: 0,
+      snapshot_id: 100,
+      snapshot_time: 1_767_225_700,
+    };
+    const wrapper = mountView();
+    const state = (wrapper.vm.$ as any).setupState;
+    const mobileInput = wrapper.get('.request-pagination-mobile-input');
+
+    expect((mobileInput.element as HTMLInputElement).value).toBe('0');
+    expect(mobileInput.attributes('disabled')).toBeDefined();
+    expect(wrapper.get('.request-pagination-mobile-total').text()).toBe('/ 0 页');
+    expect(state.normalizeRequestMobileJumpInput('2')).toBe(0);
+    await state.applyRequestMobileJumpInput();
+    expect(state.requestJumpPage).toBe(0);
+    expect(statsRequestsMock).not.toHaveBeenCalled();
+  });
+
   it('分页失败保留当前页，切换分页大小后重置快照和页码', async () => {
     queries[1].data.value = {
       items: [firstRequest],
@@ -1010,6 +1112,17 @@ describe('StatsView', () => {
     expect(wrapper.text()).toContain('积分');
     expect(wrapper.text()).toContain('首个 SSE 事件');
     expect(wrapper.text()).toContain('外部 API');
+    const detailLists = wrapper.findAll('.stats-request-detail-list');
+    expect(detailLists).toHaveLength(4);
+    for (const list of detailLists) {
+      expect(list.classes()).toEqual(
+        expect.arrayContaining([
+          'grid-cols-1',
+          'sm:grid-cols-[minmax(8rem,0.8fr)_minmax(0,1.2fr)]',
+          '[&_dd]:break-words',
+        ]),
+      );
+    }
 
     statsDetailMock.mockResolvedValueOnce({ ...firstRequest, client_stream: false });
     await row.trigger('keyup.enter');

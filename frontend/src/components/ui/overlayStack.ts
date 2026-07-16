@@ -17,6 +17,7 @@ interface ElementState {
 const entries: OverlayEntry[] = [];
 const isolatedElements = new Map<HTMLElement, ElementState>();
 let originalBodyOverflow: string | null = null;
+let originalBodyPaddingRight = '';
 
 const focusableSelector = [
   'a[href]',
@@ -49,12 +50,24 @@ function syncPageState(): void {
   if (modalIndex < 0) {
     if (originalBodyOverflow !== null) {
       document.body.style.overflow = originalBodyOverflow;
+      document.body.style.paddingRight = originalBodyPaddingRight;
       originalBodyOverflow = null;
+      originalBodyPaddingRight = '';
     }
     return;
   }
 
-  if (originalBodyOverflow === null) originalBodyOverflow = document.body.style.overflow;
+  if (originalBodyOverflow === null) {
+    originalBodyOverflow = document.body.style.overflow;
+    originalBodyPaddingRight = document.body.style.paddingRight;
+    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+    if (scrollbarWidth > 0) {
+      const currentPaddingRight = Number.parseFloat(
+        window.getComputedStyle(document.body).paddingRight,
+      );
+      document.body.style.paddingRight = `${(currentPaddingRight || 0) + scrollbarWidth}px`;
+    }
+  }
   document.body.style.overflow = 'hidden';
   const allowedElements = entries.slice(modalIndex).flatMap((entry) => entry.elements);
   Array.from(document.body.children).forEach((child) => {

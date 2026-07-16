@@ -667,6 +667,44 @@ button:disabled {
   animation: success-pulse 0.6s ease;
 }
 
+/* 抽屉遮罩淡入，面板从对应屏幕边缘滑入。 */
+.c-drawer-mask-enter-active,
+.c-drawer-mask-leave-active {
+  transition: opacity var(--duration-base) var(--ease-out-quad);
+}
+
+.c-drawer-mask-leave-active {
+  pointer-events: none;
+}
+
+.c-drawer-mask-enter-from,
+.c-drawer-mask-leave-to {
+  opacity: 0;
+}
+
+.c-drawer-panel-left-enter-active,
+.c-drawer-panel-left-leave-active,
+.c-drawer-panel-right-enter-active,
+.c-drawer-panel-right-leave-active {
+  transition: transform var(--duration-slow) var(--ease-out-quad);
+  will-change: transform;
+}
+
+.c-drawer-panel-left-leave-active,
+.c-drawer-panel-right-leave-active {
+  pointer-events: none;
+}
+
+.c-drawer-panel-left-enter-from,
+.c-drawer-panel-left-leave-to {
+  transform: translate3d(-100%, 0, 0);
+}
+
+.c-drawer-panel-right-enter-from,
+.c-drawer-panel-right-leave-to {
+  transform: translate3d(100%, 0, 0);
+}
+
 /* prefers-reduced-motion 降级 */
 @media (prefers-reduced-motion: reduce) {
   *,

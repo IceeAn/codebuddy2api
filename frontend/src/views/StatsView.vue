@@ -123,6 +123,7 @@ const requestPageData = ref<StatsRequestsResponse | null>(null);
 const requestSnapshot = ref<RequestPaginationSnapshot | null>(null);
 const requestParamsSnapshot = ref<StatsOverviewQuery | null>(null);
 const requestJumpPage = ref<number | null>(1);
+const requestMobileJumpInput = ref('1');
 const requestPageLoading = ref(false);
 const requestPageError = ref('');
 let requestPageGeneration = 0;
@@ -205,6 +206,14 @@ const requestTotalPages = computed(() => activeRequestPage.value?.total_pages ??
 const requestPaginationItems = computed(() =>
   buildPaginationItems(currentRequestPage.value, requestTotalPages.value),
 );
+
+function syncRequestMobileJumpInput(): void {
+  requestMobileJumpInput.value = String(
+    requestTotalPages.value === 0 ? 0 : currentRequestPage.value,
+  );
+}
+
+watch([currentRequestPage, requestTotalPages], syncRequestMobileJumpInput, { immediate: true });
 
 const selectedMetric = ref<StatsMetric>('request_count');
 const metricOptions: StatsMetric[] = [
@@ -440,6 +449,32 @@ async function goToRequestPage(targetPage: number): Promise<void> {
 async function jumpToRequestPage(): Promise<void> {
   if (requestJumpPage.value === null) return;
   await goToRequestPage(requestJumpPage.value);
+}
+
+function normalizeRequestMobileJumpInput(rawValue: string): number {
+  const totalPages = requestTotalPages.value;
+  if (totalPages === 0) return 0;
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed)) return currentRequestPage.value;
+  return Math.min(totalPages, Math.max(1, Math.trunc(parsed)));
+}
+
+function updateRequestMobileJumpInput(event: Event): void {
+  requestMobileJumpInput.value = (event.target as HTMLInputElement).value;
+}
+
+async function applyRequestMobileJumpInput(): Promise<void> {
+  const targetPage = normalizeRequestMobileJumpInput(requestMobileJumpInput.value);
+  requestMobileJumpInput.value = String(targetPage);
+  requestJumpPage.value = targetPage;
+  if (targetPage === 0) return;
+  await goToRequestPage(targetPage);
+  syncRequestMobileJumpInput();
+}
+
+function confirmRequestMobileJumpInput(event: KeyboardEvent): void {
+  event.preventDefault();
+  (event.target as HTMLInputElement).blur();
 }
 
 function changeRequestPageSize(value: string | number): void {
@@ -1011,20 +1046,124 @@ function breakdownRows(kind: 'models' | 'api_keys' | 'credentials'): RankingRow[
             暂无请求明细
           </div>
         </div>
-        <div class="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm">
-          <span class="text-muted">共 {{ requestTotal }} 条</span>
-          <div class="flex flex-wrap items-center justify-end gap-1.5">
-            <div class="w-28">
-              <CSelect
-                :model-value="requestPageSize"
-                :options="requestPageSizeOptions"
-                size="sm"
-                :disabled="requestPageLoading"
-                @update:model-value="changeRequestPageSize"
-              />
+        <div class="mt-4 space-y-3 text-sm">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="flex flex-wrap items-center gap-3">
+              <span class="text-muted">共 {{ requestTotal }} 条</span>
+              <div class="w-28">
+                <CSelect
+                  :model-value="requestPageSize"
+                  :options="requestPageSizeOptions"
+                  size="sm"
+                  :disabled="requestPageLoading"
+                  @update:model-value="changeRequestPageSize"
+                />
+              </div>
             </div>
+            <div
+              class="request-pagination-desktop hidden flex-wrap items-center justify-end gap-1.5 md:flex"
+            >
+              <CButton
+                class="request-pagination-nav w-8 !px-0"
+                size="sm"
+                variant="secondary"
+                aria-label="首页"
+                title="首页"
+                :disabled="currentRequestPage <= 1 || requestPageLoading"
+                @click="goToRequestPage(1)"
+              >
+                <template #icon><ChevronsLeft :size="18" /></template>
+              </CButton>
+              <CButton
+                class="request-pagination-nav w-8 !px-0"
+                size="sm"
+                variant="secondary"
+                aria-label="上一页"
+                title="上一页"
+                :disabled="currentRequestPage <= 1 || requestPageLoading"
+                @click="goToRequestPage(currentRequestPage - 1)"
+              >
+                <template #icon><ChevronLeft :size="18" /></template>
+              </CButton>
+              <template
+                v-for="item in requestPaginationItems"
+                :key="typeof item === 'number' ? item : `ellipsis-${item.page}`"
+              >
+                <CButton
+                  v-if="typeof item !== 'number'"
+                  class="w-8 !px-0"
+                  size="sm"
+                  variant="secondary"
+                  :aria-label="`跳转到第 ${item.page} 页`"
+                  :title="`跳转到第 ${item.page} 页`"
+                  :disabled="requestPageLoading"
+                  @click="goToRequestPage(item.page)"
+                >
+                  …
+                </CButton>
+                <CButton
+                  v-else
+                  class="w-8 !px-0 tabular-nums"
+                  size="sm"
+                  :variant="item === currentRequestPage ? 'primary' : 'secondary'"
+                  :aria-label="`第 ${item} 页`"
+                  :aria-current="item === currentRequestPage ? 'page' : undefined"
+                  :disabled="requestPageLoading"
+                  @click="goToRequestPage(item)"
+                >
+                  {{ item }}
+                </CButton>
+              </template>
+              <CButton
+                class="request-pagination-nav w-8 !px-0"
+                size="sm"
+                variant="secondary"
+                aria-label="下一页"
+                title="下一页"
+                :disabled="currentRequestPage >= requestTotalPages || requestPageLoading"
+                @click="goToRequestPage(currentRequestPage + 1)"
+              >
+                <template #icon><ChevronRight :size="18" /></template>
+              </CButton>
+              <CButton
+                class="request-pagination-nav w-8 !px-0"
+                size="sm"
+                variant="secondary"
+                aria-label="末页"
+                title="末页"
+                :disabled="currentRequestPage >= requestTotalPages || requestPageLoading"
+                @click="goToRequestPage(requestTotalPages)"
+              >
+                <template #icon><ChevronsRight :size="18" /></template>
+              </CButton>
+              <span class="text-muted">跳至</span>
+              <div class="w-20">
+                <CInputNumber
+                  v-model="requestJumpPage"
+                  size="sm"
+                  :min="requestTotalPages === 0 ? 0 : 1"
+                  :max="requestTotalPages"
+                  :disabled="requestTotalPages === 0 || requestPageLoading"
+                  @keyup.enter="jumpToRequestPage"
+                />
+              </div>
+              <CButton
+                size="sm"
+                variant="secondary"
+                aria-label="跳转"
+                :disabled="requestTotalPages === 0 || requestPageLoading"
+                @click="jumpToRequestPage"
+              >
+                跳转
+              </CButton>
+            </div>
+          </div>
+
+          <div
+            class="request-pagination-mobile flex min-w-0 items-center justify-center gap-1 md:hidden"
+          >
             <CButton
-              class="request-pagination-nav w-8 !px-0"
+              class="!h-8 !w-8 !px-0"
               size="sm"
               variant="secondary"
               aria-label="首页"
@@ -1032,10 +1171,10 @@ function breakdownRows(kind: 'models' | 'api_keys' | 'credentials'): RankingRow[
               :disabled="currentRequestPage <= 1 || requestPageLoading"
               @click="goToRequestPage(1)"
             >
-              <template #icon><ChevronsLeft :size="18" /></template>
+              <template #icon><ChevronsLeft :size="15" /></template>
             </CButton>
             <CButton
-              class="request-pagination-nav w-8 !px-0"
+              class="!h-8 !w-8 !px-0"
               size="sm"
               variant="secondary"
               aria-label="上一页"
@@ -1043,39 +1182,30 @@ function breakdownRows(kind: 'models' | 'api_keys' | 'credentials'): RankingRow[
               :disabled="currentRequestPage <= 1 || requestPageLoading"
               @click="goToRequestPage(currentRequestPage - 1)"
             >
-              <template #icon><ChevronLeft :size="18" /></template>
+              <template #icon><ChevronLeft :size="15" /></template>
             </CButton>
-            <template
-              v-for="item in requestPaginationItems"
-              :key="typeof item === 'number' ? item : `ellipsis-${item.page}`"
+            <label
+              class="inline-flex h-8 min-w-0 flex-1 items-center justify-center gap-1 rounded-md border border-border bg-surface px-2 text-[13px] whitespace-nowrap text-text shadow-[var(--shadow-xs)]"
             >
-              <CButton
-                v-if="typeof item !== 'number'"
-                class="w-8 !px-0"
-                size="sm"
-                variant="secondary"
-                :aria-label="`跳转到第 ${item.page} 页`"
-                :title="`跳转到第 ${item.page} 页`"
-                :disabled="requestPageLoading"
-                @click="goToRequestPage(item.page)"
-              >
-                …
-              </CButton>
-              <CButton
-                v-else
-                class="w-8 !px-0 tabular-nums"
-                size="sm"
-                :variant="item === currentRequestPage ? 'primary' : 'secondary'"
-                :aria-label="`第 ${item} 页`"
-                :aria-current="item === currentRequestPage ? 'page' : undefined"
-                :disabled="requestPageLoading"
-                @click="goToRequestPage(item)"
-              >
-                {{ item }}
-              </CButton>
-            </template>
+              <span>第</span>
+              <input
+                class="request-pagination-mobile-input c-control-focus h-6 w-12 rounded border border-border bg-surface-2 px-1 text-center text-[13px] text-text tabular-nums disabled:bg-surface-3 disabled:text-muted/60"
+                type="number"
+                inputmode="numeric"
+                enterkeyhint="done"
+                :value="requestMobileJumpInput"
+                :min="requestTotalPages === 0 ? 0 : 1"
+                :max="requestTotalPages"
+                :disabled="requestTotalPages === 0 || requestPageLoading"
+                aria-label="页码"
+                @input="updateRequestMobileJumpInput"
+                @blur="applyRequestMobileJumpInput"
+                @keyup.enter="confirmRequestMobileJumpInput"
+              />
+              <span class="request-pagination-mobile-total"> / {{ requestTotalPages }} 页 </span>
+            </label>
             <CButton
-              class="request-pagination-nav w-8 !px-0"
+              class="!h-8 !w-8 !px-0"
               size="sm"
               variant="secondary"
               aria-label="下一页"
@@ -1083,10 +1213,10 @@ function breakdownRows(kind: 'models' | 'api_keys' | 'credentials'): RankingRow[
               :disabled="currentRequestPage >= requestTotalPages || requestPageLoading"
               @click="goToRequestPage(currentRequestPage + 1)"
             >
-              <template #icon><ChevronRight :size="18" /></template>
+              <template #icon><ChevronRight :size="15" /></template>
             </CButton>
             <CButton
-              class="request-pagination-nav w-8 !px-0"
+              class="!h-8 !w-8 !px-0"
               size="sm"
               variant="secondary"
               aria-label="末页"
@@ -1094,30 +1224,11 @@ function breakdownRows(kind: 'models' | 'api_keys' | 'credentials'): RankingRow[
               :disabled="currentRequestPage >= requestTotalPages || requestPageLoading"
               @click="goToRequestPage(requestTotalPages)"
             >
-              <template #icon><ChevronsRight :size="18" /></template>
-            </CButton>
-            <span class="text-muted">跳至</span>
-            <div class="w-20">
-              <CInputNumber
-                v-model="requestJumpPage"
-                size="sm"
-                :min="requestTotalPages === 0 ? 0 : 1"
-                :max="requestTotalPages"
-                :disabled="requestTotalPages === 0 || requestPageLoading"
-                @keyup.enter="jumpToRequestPage"
-              />
-            </div>
-            <CButton
-              size="sm"
-              variant="secondary"
-              aria-label="跳转"
-              :disabled="requestTotalPages === 0 || requestPageLoading"
-              @click="jumpToRequestPage"
-            >
-              跳转
+              <template #icon><ChevronsRight :size="15" /></template>
             </CButton>
           </div>
-          <span v-if="requestPageError" class="w-full text-right text-sm text-error-600">
+
+          <span v-if="requestPageError" class="block text-sm text-error-600 md:text-right">
             {{ requestPageError }}
           </span>
         </div>
@@ -1153,7 +1264,9 @@ function breakdownRows(kind: 'models' | 'api_keys' | 'credentials'): RankingRow[
 
         <section>
           <h3 class="mb-2 text-sm font-semibold text-text-strong">请求</h3>
-          <dl class="grid grid-cols-[minmax(8rem,0.8fr)_minmax(0,1.2fr)] gap-x-3 gap-y-2 text-sm">
+          <dl
+            class="stats-request-detail-list grid grid-cols-1 gap-x-3 gap-y-1.5 text-sm sm:grid-cols-[minmax(8rem,0.8fr)_minmax(0,1.2fr)] sm:gap-y-2 [&_dd]:min-w-0 [&_dd]:break-words"
+          >
             <dt class="text-muted">ID</dt>
             <dd class="font-mono break-all">{{ detail.id }}</dd>
             <dt class="text-muted">时间</dt>
@@ -1177,7 +1290,9 @@ function breakdownRows(kind: 'models' | 'api_keys' | 'credentials'): RankingRow[
 
         <section>
           <h3 class="mb-2 text-sm font-semibold text-text-strong">结果</h3>
-          <dl class="grid grid-cols-[minmax(8rem,0.8fr)_minmax(0,1.2fr)] gap-x-3 gap-y-2 text-sm">
+          <dl
+            class="stats-request-detail-list grid grid-cols-1 gap-x-3 gap-y-1.5 text-sm sm:grid-cols-[minmax(8rem,0.8fr)_minmax(0,1.2fr)] sm:gap-y-2 [&_dd]:min-w-0 [&_dd]:break-words"
+          >
             <dt class="text-muted">结果</dt>
             <dd>{{ outcomeLabel(detail.outcome) }}</dd>
             <dt class="text-muted">HTTP 状态</dt>
@@ -1205,7 +1320,9 @@ function breakdownRows(kind: 'models' | 'api_keys' | 'credentials'): RankingRow[
 
         <section>
           <h3 class="mb-2 text-sm font-semibold text-text-strong">用量</h3>
-          <dl class="grid grid-cols-[minmax(8rem,0.8fr)_minmax(0,1.2fr)] gap-x-3 gap-y-2 text-sm">
+          <dl
+            class="stats-request-detail-list grid grid-cols-1 gap-x-3 gap-y-1.5 text-sm sm:grid-cols-[minmax(8rem,0.8fr)_minmax(0,1.2fr)] sm:gap-y-2 [&_dd]:min-w-0 [&_dd]:break-words"
+          >
             <dt class="text-muted">输入 Token</dt>
             <dd>{{ formatTokenNumber(detail.input_tokens) }}</dd>
             <dt class="text-muted">输出 Token</dt>
@@ -1227,7 +1344,9 @@ function breakdownRows(kind: 'models' | 'api_keys' | 'credentials'): RankingRow[
 
         <section>
           <h3 class="mb-2 text-sm font-semibold text-text-strong">性能</h3>
-          <dl class="grid grid-cols-[minmax(8rem,0.8fr)_minmax(0,1.2fr)] gap-x-3 gap-y-2 text-sm">
+          <dl
+            class="stats-request-detail-list grid grid-cols-1 gap-x-3 gap-y-1.5 text-sm sm:grid-cols-[minmax(8rem,0.8fr)_minmax(0,1.2fr)] sm:gap-y-2 [&_dd]:min-w-0 [&_dd]:break-words"
+          >
             <dt class="text-muted">总耗时</dt>
             <dd>{{ formatDurationMs(detail.duration_ms) }}</dd>
             <dt class="text-muted">首个 SSE 事件</dt>

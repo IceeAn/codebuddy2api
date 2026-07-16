@@ -1,6 +1,10 @@
 import { describe, expect, it, afterEach } from 'vitest';
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import CDrawer from '../components/ui/CDrawer.vue';
+
+const stylesCss = readFileSync(resolve(process.cwd(), 'src/styles.css'), 'utf-8');
 
 const attach = (): HTMLElement => {
   const el = document.createElement('div');
@@ -75,6 +79,7 @@ describe('CDrawer', () => {
     );
     const panel = document.body.querySelector('.c-drawer-panel') as HTMLElement;
     expect(panel.style.width).toBe('400px');
+    expect(panel.style.maxWidth).toBe('100vw');
   });
 
   it('默认 width=296', () => {
@@ -87,6 +92,7 @@ describe('CDrawer', () => {
     );
     const panel = document.body.querySelector('.c-drawer-panel') as HTMLElement;
     expect(panel.style.width).toBe('296px');
+    expect(panel.style.maxWidth).toBe('100vw');
   });
 
   it('title prop 渲染 header 标题', () => {
@@ -220,7 +226,7 @@ describe('CDrawer', () => {
     expect(document.body.style.overflow).toBe('hidden');
   });
 
-  it('open 从 true→false 时 body 移除 overflow-hidden', async () => {
+  it('open 从 true→false 时等待面板离场结束再解除 body 滚动锁', async () => {
     const wrapper = mount(
       {
         components: { CDrawer },
@@ -235,6 +241,12 @@ describe('CDrawer', () => {
     expect(document.body.style.overflow).toBe('hidden');
     (wrapper.vm as any).open = false;
     await flushPromises();
+    expect(document.body.style.overflow).toBe('hidden');
+
+    const panelTransition = wrapper.findAllComponents({ name: 'Transition' })[1];
+    const afterLeave = panelTransition?.props('onAfterLeave');
+    expect(afterLeave).toBeTypeOf('function');
+    (afterLeave as () => void)();
     expect(document.body.style.overflow).toBe('');
   });
 
@@ -364,5 +376,43 @@ describe('CDrawer', () => {
     await flushPromises();
     expect(document.body.querySelector('.c-drawer-panel')).toBeTruthy();
     expect(document.body.style.overflow).toBe('hidden');
+  });
+
+  it('离场期间重新打开时保持滚动锁且不重复注册浮层', async () => {
+    const wrapper = mount(CDrawer, {
+      props: { open: true },
+      attachTo: attach(),
+    });
+    await flushPromises();
+    const panelTransition = wrapper.findAllComponents({ name: 'Transition' })[1];
+    const afterLeave = panelTransition?.props('onAfterLeave') as (() => void) | undefined;
+    expect(afterLeave).toBeTypeOf('function');
+
+    await wrapper.setProps({ open: false });
+    await wrapper.setProps({ open: true });
+    afterLeave?.();
+    expect(document.body.style.overflow).toBe('hidden');
+
+    await wrapper.setProps({ open: false });
+    afterLeave?.();
+    expect(document.body.style.overflow).toBe('');
+  });
+
+  it('为遮罩和左右面板定义进出场动画', () => {
+    expect(stylesCss).toMatch(
+      /\.c-drawer-mask-enter-active,\s*\.c-drawer-mask-leave-active\s*{[^}]*transition:\s*opacity var\(--duration-base\)/s,
+    );
+    expect(stylesCss).toMatch(
+      /\.c-drawer-mask-enter-from,\s*\.c-drawer-mask-leave-to\s*{[^}]*opacity:\s*0/s,
+    );
+    expect(stylesCss).toMatch(
+      /\.c-drawer-panel-left-enter-active,[^{]*\.c-drawer-panel-right-leave-active\s*{[^}]*transition:\s*transform var\(--duration-slow\)/s,
+    );
+    expect(stylesCss).toMatch(
+      /\.c-drawer-panel-left-enter-from,\s*\.c-drawer-panel-left-leave-to\s*{[^}]*translate3d\(-100%,\s*0,\s*0\)/s,
+    );
+    expect(stylesCss).toMatch(
+      /\.c-drawer-panel-right-enter-from,\s*\.c-drawer-panel-right-leave-to\s*{[^}]*translate3d\(100%,\s*0,\s*0\)/s,
+    );
   });
 });

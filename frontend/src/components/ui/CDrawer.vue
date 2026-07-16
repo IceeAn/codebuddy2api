@@ -43,6 +43,7 @@ function deactivateOverlay(): void {
 }
 
 function activateOverlay(): void {
+  if (unregisterOverlay) return;
   const mask = maskRef.value!;
   const panel = panelRef.value!;
   unregisterOverlay = registerOverlay({
@@ -53,11 +54,14 @@ function activateOverlay(): void {
   });
 }
 
+function finishLeave(): void {
+  if (!props.open) deactivateOverlay();
+}
+
 watch(
   () => props.open,
   (open) => {
     if (open) activateOverlay();
-    else deactivateOverlay();
   },
   { flush: 'post' },
 );
@@ -80,6 +84,10 @@ const placementClass = computed(() => placementClasses[currentPlacement.value]);
 const transitionName = computed(() =>
   currentPlacement.value === 'left' ? 'c-drawer-panel-left' : 'c-drawer-panel-right',
 );
+const panelStyle = computed(() => ({
+  width: `${props.width}px`,
+  maxWidth: '100vw',
+}));
 </script>
 
 <template>
@@ -92,7 +100,7 @@ const transitionName = computed(() =>
         @click="close"
       />
     </Transition>
-    <Transition :name="transitionName">
+    <Transition :name="transitionName" @after-leave="finishLeave">
       <div
         v-if="open"
         ref="panelRef"
@@ -100,7 +108,7 @@ const transitionName = computed(() =>
           'c-drawer-panel fixed top-0 bottom-0 z-50 flex flex-col bg-surface shadow-2xl',
           placementClass,
         ]"
-        :style="{ width: width + 'px' }"
+        :style="panelStyle"
         role="dialog"
         aria-modal="true"
         :aria-labelledby="title ? titleId : undefined"
