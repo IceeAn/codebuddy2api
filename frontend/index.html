@@ -5,13 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CodeBuddy2API 管理台</title>
     <link rel="icon" href="/assets/codebuddy2api.svg" type="image/svg+xml" />
-    <script>
-      // 同步设置主题，避免首次渲染先亮后暗。
-      (function () {
-        const theme = localStorage.getItem('admin-theme') || 'light';
-        if (theme === 'dark') document.documentElement.classList.add('dark');
-      })();
-    </script>
+    <script src="/assets/theme-init.js"></script>
   </head>
   <body>
     <div id="app"></div>

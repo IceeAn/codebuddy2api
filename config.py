@@ -10,8 +10,10 @@ Startup configuration priority:
 User settings are persisted by username in data/codebuddy2api.sqlite3.
 Users without saved settings inherit the startup defaults.
 """
-import os
+import ipaddress
 import logging
+import os
+import re
 import threading
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -26,6 +28,8 @@ from src.user_settings_schema import (
 from src.user_settings_store import UserSettingsStore
 
 logger = logging.getLogger(__name__)
+
+_DNS_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 
 # 相对运行数据路径始终以应用根目录为基准，不受进程工作目录影响。
 _APPLICATION_ROOT = Path(__file__).resolve().parent
@@ -54,6 +58,7 @@ _DEFAULT_CONFIG = {
     "CODEBUDDY_DATA_DIR": "data",
     "CODEBUDDY_ALLOWED_HOSTS": "localhost,127.0.0.1",
     "CODEBUDDY_ALLOWED_ORIGINS": "",
+    "CODEBUDDY_CSP_FRAME_ANCESTORS": "none",
     "CODEBUDDY_MAX_REQUEST_BODY_BYTES": 16 * 1024 * 1024,
     "CODEBUDDY_LOGIN_RATE_WINDOW_SECONDS": 60,
     "CODEBUDDY_LOGIN_GLOBAL_MAX_ATTEMPTS": 60,
@@ -307,6 +312,64 @@ def get_allowed_hosts() -> list:
     return _parse_csv(_get_config_value("CODEBUDDY_ALLOWED_HOSTS"))
 
 
+def get_csp_frame_ancestors() -> str:
+    """校验并规范化 CSP frame-ancestors 来源列表。"""
+    key = "CODEBUDDY_CSP_FRAME_ANCESTORS"
+    raw_value = str(_get_config_value(key))
+    if any(ord(character) < 32 or ord(character) == 127 for character in raw_value):
+        raise ValueError(f"{key} must contain only safe ancestor sources")
+
+    tokens = raw_value.split()
+    if len(tokens) == 1 and tokens[0].lower() in {"none", "'none'"}:
+        return "'none'"
+    if not tokens or any(token.lower() in {"none", "'none'"} for token in tokens):
+        raise ValueError(f"{key} must be none, self, or HTTP/HTTPS origins")
+
+    normalized_sources = []
+    for token in tokens:
+        if token.lower() in {"self", "'self'"}:
+            normalized_sources.append("'self'")
+            continue
+        try:
+            parsed = urlsplit(token)
+            hostname = parsed.hostname
+            port = parsed.port
+        except ValueError as error:
+            raise ValueError(f"{key} contains an invalid origin") from error
+        if (
+            parsed.scheme.lower() not in {"http", "https"}
+            or not hostname
+            or "*" in hostname
+            or parsed.username is not None
+            or parsed.path not in {"", "/"}
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError(f"{key} contains an invalid origin")
+        if ":" in hostname or parsed.netloc.startswith("["):
+            try:
+                if "%" in hostname:
+                    raise ValueError("scoped IPv6 addresses are not valid CSP host sources")
+                host = f"[{ipaddress.IPv6Address(hostname).compressed}]"
+            except ValueError as error:
+                raise ValueError(f"{key} contains an invalid origin") from error
+        else:
+            try:
+                host = hostname.encode("idna").decode("ascii").lower()
+            except UnicodeError as error:
+                raise ValueError(f"{key} contains an invalid origin") from error
+            if (
+                len(host) > 253
+                or any(not _DNS_LABEL.fullmatch(label) for label in host.split("."))
+            ):
+                raise ValueError(f"{key} contains an invalid origin")
+        if port is not None:
+            host = f"{host}:{port}"
+        normalized_sources.append(f"{parsed.scheme.lower()}://{host}")
+
+    return " ".join(dict.fromkeys(normalized_sources))
+
+
 def get_max_request_body_bytes() -> int:
     return _to_positive_int(
         _get_config_value("CODEBUDDY_MAX_REQUEST_BODY_BYTES"),
@@ -425,6 +488,7 @@ def _validate_startup_config() -> None:
     get_login_username_max_attempts()
     get_login_max_concurrency()
     get_max_concurrent_requests()
+    get_csp_frame_ancestors()
 
 # --- Public Setter for Hot-Reload ---
 

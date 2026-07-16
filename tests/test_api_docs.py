@@ -52,6 +52,11 @@ class ApiDocumentationTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.assertIn('spec-url="/openapi.json"', redoc.text)
         self.assertEqual(schema.status_code, 200)
         self.assertEqual(schema.json()["info"]["title"], "CodeBuddy2API")
+        self.assertIn("https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/", docs.text)
+        self.assertIn("https://fastapi.tiangolo.com/img/favicon.png", docs.text)
+        self.assertIn("https://cdn.jsdelivr.net/npm/redoc@2/", redoc.text)
+        self.assertIn("https://fonts.googleapis.com/", redoc.text)
+        self.assertIn("https://fastapi.tiangolo.com/img/favicon.png", redoc.text)
         for response in (docs, redoc, schema):
             with self.subTest(content_type=response.headers["Content-Type"]):
                 self.assertEqual(response.headers["Cache-Control"], "private, no-store")

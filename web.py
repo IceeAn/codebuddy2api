@@ -33,6 +33,7 @@ from config import (
     get_max_request_body_bytes,
     get_server_host,
     get_server_port,
+    get_csp_frame_ancestors,
     initialize_database,
 )
 
@@ -72,6 +73,7 @@ app = PrivateNoStoreFastAPI(
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
+    frame_ancestors=get_csp_frame_ancestors(),
 )
 app.add_middleware(
     RequestBodyLimitMiddleware,

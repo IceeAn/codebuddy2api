@@ -216,6 +216,51 @@ class ConfigTests(ConfigIsolationMixin, unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "CODEBUDDY_LOG_LEVEL"):
             config.get_log_level()
 
+        frame_ancestor_cases = (
+            ("none", "'none'"),
+            ("'none'", "'none'"),
+            ("self", "'self'"),
+            ("https://example.com", "https://example.com"),
+            ("http://localhost:8080 self self", "http://localhost:8080 'self'"),
+            ("'self' https://PORTAL.Example.com:8443/", "'self' https://portal.example.com:8443"),
+            ("https://例子.测试", "https://xn--fsqu00a.xn--0zwm56d"),
+            ("https://[2001:DB8::1]:8443", "https://[2001:db8::1]:8443"),
+        )
+        for value, expected in frame_ancestor_cases:
+            with self.subTest(frame_ancestors=value):
+                config._config_cache["CODEBUDDY_CSP_FRAME_ANCESTORS"] = value
+                normalized = config.get_csp_frame_ancestors()
+                self.assertEqual(normalized, expected)
+                self.assertTrue(normalized.isascii())
+        for value in (
+            "",
+            "none self",
+            "*",
+            "https:",
+            "ftp://example.com",
+            "https://[invalid",
+            "https://*.example.com",
+            "https://portal.example;script-src-elem self https://evil.example",
+            "https://[v1.foo]",
+            "https://[fe80::1%25eth0]",
+            "https://bad_host.example",
+            "https://-leading.example",
+            "https://trailing-.example",
+            f"https://{'a' * 64}.example",
+            f"https://{'.'.join(['a' * 63] * 4)}",
+            "https://\ud800.example",
+            "https://user@example.com",
+            "https://example.com/path",
+            "https://example.com?query=1",
+            "https://example.com#fragment",
+            "https://example.com\r\nX-Test: injected",
+            "https://example.com:invalid",
+        ):
+            with self.subTest(frame_ancestors=value):
+                config._config_cache["CODEBUDDY_CSP_FRAME_ANCESTORS"] = value
+                with self.assertRaisesRegex(ValueError, "CODEBUDDY_CSP_FRAME_ANCESTORS"):
+                    config.get_csp_frame_ancestors()
+
         for value, expected in (("1", 1), (8001, 8001), ("65535", 65535)):
             with self.subTest(port=value):
                 config._config_cache["CODEBUDDY_PORT"] = value

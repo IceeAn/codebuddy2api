@@ -265,6 +265,7 @@ OpenAPI 文档会展示外部 `/openai/v1/*` 的 Bearer API Key 鉴权和 Chat C
 | `CODEBUDDY_DATA_DIR`              | `data`                        | 运行数据目录，包含 SQLite 和 `credentials/`；相对路径以应用根目录为基准，Docker 固定为 `/app/data` |
 | `CODEBUDDY_ALLOWED_HOSTS`         | `localhost,127.0.0.1`         | 允许访问本服务的 Host 头                                                                           |
 | `CODEBUDDY_ALLOWED_ORIGINS`       | 空                            | 允许跨域访问的浏览器 Origin；空表示不启用 CORS                                                     |
+| `CODEBUDDY_CSP_FRAME_ANCESTORS`   | `none`                        | CSP 页面嵌入来源；支持 `self` 与空格分隔的 HTTP/HTTPS Origin                                      |
 | `CODEBUDDY_MAX_REQUEST_BODY_BYTES` | `16777216`                   | 全局 HTTP 请求体上限；登录接口另有固定 8 KiB 上限                                                  |
 | `CODEBUDDY_LOGIN_RATE_WINDOW_SECONDS` | `60`                       | 登录全局、IP、用户名三个独立速率桶共用的滑动窗口秒数                                               |
 | `CODEBUDDY_LOGIN_GLOBAL_MAX_ATTEMPTS` | `60`                      | 每个登录限流窗口允许的进程全局尝试数                                                               |

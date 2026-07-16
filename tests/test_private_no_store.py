@@ -7,7 +7,11 @@ from fastapi.responses import StreamingResponse
 
 from src.api_key_store import api_key_store
 from src.auth_types import SESSION_COOKIE_NAME
-from src.private_response import PrivateNoStoreMiddleware, _is_secure_scope
+from src.private_response import (
+    PrivateNoStoreMiddleware,
+    SecurityResponseHeadersMiddleware,
+    _is_secure_scope,
+)
 from src.session_store import session_store
 from tests.helpers import TempConfigMixin, configure_users_file
 from web import app
@@ -216,6 +220,10 @@ class PrivateNoStoreResponseTests(TempConfigMixin, unittest.IsolatedAsyncioTestC
 
         self.assertEqual(response.status_code, 500)
         self.assertEqual(response.headers["Cache-Control"], "private, no-store")
+        self.assertEqual(response.headers["X-Frame-Options"], "DENY")
+        self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+        self.assertEqual(response.headers["Referrer-Policy"], "no-referrer")
+        self.assertIn("frame-ancestors 'none'", response.headers["Content-Security-Policy"])
         self.assertIn("Max-Age=604800", response.headers["Set-Cookie"])
 
     async def test_public_health_response_is_not_forced_to_no_store(self):
@@ -223,6 +231,48 @@ class PrivateNoStoreResponseTests(TempConfigMixin, unittest.IsolatedAsyncioTestC
 
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("Cache-Control", response.headers)
+
+    async def test_all_http_responses_receive_browser_security_headers(self):
+        responses = (
+            await self._request("GET", "/health"),
+            await self._request("GET", "/missing"),
+        )
+
+        for response in responses:
+            with self.subTest(status=response.status_code):
+                self.assertEqual(response.headers["X-Frame-Options"], "DENY")
+                self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+                self.assertEqual(response.headers["Referrer-Policy"], "no-referrer")
+                policy = response.headers["Content-Security-Policy"]
+                self.assertIn("frame-ancestors 'none'", policy)
+                self.assertIn("script-src 'self'", policy)
+                self.assertNotIn("'unsafe-eval'", policy)
+                self.assertNotIn("script-src 'self' 'unsafe-inline'", policy)
+
+    async def test_documentation_csp_allows_only_required_remote_assets(self):
+        for path in ("/docs", "/redoc"):
+            with self.subTest(path=path):
+                response = await self._request("GET", path)
+                policy = response.headers["Content-Security-Policy"]
+                self.assertIn(
+                    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+                    policy,
+                )
+                self.assertIn(
+                    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com",
+                    policy,
+                )
+                self.assertIn("font-src 'self' https://fonts.gstatic.com", policy)
+                self.assertIn(
+                    "img-src 'self' data: https://fastapi.tiangolo.com",
+                    policy,
+                )
+
+        schema = await self._request("GET", "/openapi.json")
+        self.assertNotIn(
+            "cdn.jsdelivr.net",
+            schema.headers["Content-Security-Policy"],
+        )
 
     async def test_only_private_slash_redirect_is_private_no_store(self):
         private_redirect = await self._request(
@@ -284,6 +334,60 @@ class PrivateNoStoreMiddlewareTests(unittest.IsolatedAsyncioTestCase):
         middleware = PrivateNoStoreMiddleware(downstream)
 
         await middleware(scope, receive, send)
+
+        self.assertEqual(received_scopes, [scope])
+
+
+class SecurityResponseHeadersMiddlewareTests(unittest.IsolatedAsyncioTestCase):
+    async def test_configurable_csp_ancestors_do_not_change_fixed_x_frame_options(self):
+        messages = []
+
+        async def downstream(_scope, _receive, send):
+            await send({
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [
+                    (b"x-frame-options", b"ALLOWALL"),
+                    (b"content-security-policy", b"default-src *"),
+                ],
+            })
+            await send({"type": "http.response.body", "body": b""})
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message):
+            messages.append(message)
+
+        middleware = SecurityResponseHeadersMiddleware(
+            downstream,
+            "'self' https://portal.example.com",
+        )
+        await middleware(
+            {"type": "http", "scheme": "http", "headers": []},
+            receive,
+            send,
+        )
+
+        headers = httpx.Headers(messages[0]["headers"])
+        self.assertEqual(headers["X-Frame-Options"], "DENY")
+        self.assertIn(
+            "frame-ancestors 'self' https://portal.example.com",
+            headers["Content-Security-Policy"],
+        )
+
+    async def test_non_http_scope_passes_through_unchanged(self):
+        received_scopes = []
+
+        async def downstream(scope, _receive, _send):
+            received_scopes.append(scope)
+
+        async def receive():
+            return {"type": "lifespan.startup"}
+
+        middleware = SecurityResponseHeadersMiddleware(downstream, "'none'")
+        scope = {"type": "lifespan"}
+        await middleware(scope, receive, mock.AsyncMock())
 
         self.assertEqual(received_scopes, [scope])
 

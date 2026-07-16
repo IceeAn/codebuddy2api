@@ -10,7 +10,11 @@ from src.usage_stats_middleware import (
     UsageStatsMiddleware,
     dropped_completion_events,
 )
-from src.private_response import PrivateNoStoreFastAPI, PrivateNoStoreMiddleware
+from src.private_response import (
+    PrivateNoStoreFastAPI,
+    PrivateNoStoreMiddleware,
+    SecurityResponseHeadersMiddleware,
+)
 
 
 class RecordingContext:
@@ -277,11 +281,12 @@ class UsageStatsMiddlewareTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(finished.is_set())
 
-    def test_private_fastapi_wraps_complete_stack_with_stats_then_no_store(self):
+    def test_private_fastapi_wraps_complete_stack_with_security_stats_and_no_store(self):
         stack = PrivateNoStoreFastAPI().build_middleware_stack()
 
-        self.assertIsInstance(stack, PrivateNoStoreMiddleware)
-        self.assertIsInstance(stack.app, UsageStatsMiddleware)
+        self.assertIsInstance(stack, SecurityResponseHeadersMiddleware)
+        self.assertIsInstance(stack.app, PrivateNoStoreMiddleware)
+        self.assertIsInstance(stack.app.app, UsageStatsMiddleware)
 
     @staticmethod
     def _scope():
