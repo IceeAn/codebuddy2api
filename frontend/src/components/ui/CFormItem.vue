@@ -166,7 +166,12 @@ onBeforeUnmount(() => {
     </template>
 
     <div class="c-form-item-control min-w-0">
-      <div class="c-form-item-control-inner flex min-h-[38px] min-w-0 items-center">
+      <div
+        :class="[
+          'c-form-item-control-inner flex min-w-0 items-center',
+          labelPlacement === 'left' ? 'mt-1.5 min-h-0 md:mt-0 md:min-h-[38px]' : 'min-h-[38px]',
+        ]"
+      >
         <slot />
       </div>
       <div

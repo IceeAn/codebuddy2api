@@ -443,7 +443,7 @@ describe('CFormItem', () => {
     expect(labelText.classes()).not.toContain('truncate');
   });
 
-  it('表单项控制区使用固定控件行高承载插槽内容', () => {
+  it('表单项控制区在移动端取消最小高度并使用统一上间距', () => {
     const wrapper = mount(
       {
         components: { CForm, CFormItem, CInput },
@@ -460,7 +460,11 @@ describe('CFormItem', () => {
     );
     const controlInnerClasses = wrapper.find('.c-form-item-control-inner').classes();
     expect(controlInnerClasses).toContain('flex');
-    expect(controlInnerClasses).toContain('min-h-[38px]');
+    expect(controlInnerClasses).toContain('min-h-0');
+    expect(controlInnerClasses).toContain('mt-1.5');
+    expect(controlInnerClasses).toContain('md:min-h-[38px]');
+    expect(controlInnerClasses).toContain('md:mt-0');
+    expect(controlInnerClasses).not.toContain('min-h-[38px]');
     expect(controlInnerClasses).toContain('items-center');
   });
 
