@@ -322,9 +322,10 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', handleBeforeUnl
               }}</span>
               <CTooltip :content="field.description" placement="top">
                 <span
-                  class="setting-help-trigger inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted transition-colors duration-(--duration-fast) hover:text-text"
+                  class="setting-help-trigger inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted transition-[color] duration-(--duration-fast) hover:text-text"
                   :aria-label="`${field.label}说明`"
                   role="img"
+                  tabindex="0"
                 >
                   <CircleHelp :size="15" />
                 </span>

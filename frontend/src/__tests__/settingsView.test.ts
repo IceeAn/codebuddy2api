@@ -399,7 +399,10 @@ describe('SettingsView', () => {
     const trigger = wrapper.find('.setting-help-trigger');
     expect(wrapper.findAll('.setting-help-trigger')).toHaveLength(1);
     expect(trigger.attributes('aria-label')).toBe('有说明说明');
+    expect(trigger.attributes('tabindex')).toBe('0');
     expect(trigger.classes()).not.toContain('mt-0.5');
+    expect(trigger.classes()).toContain('transition-[color]');
+    expect(trigger.classes()).not.toContain('transition-colors');
     const labelContent = wrapper.find('.form-item-label > span');
     expect(labelContent.classes()).toContain('justify-start');
     expect(labelContent.classes()).toContain('md:justify-end');

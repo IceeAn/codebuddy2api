@@ -223,7 +223,7 @@ const tableRows = computed(() => rows.value as unknown as Record<string, unknown
               生成
             </CButton>
           </CInputGroup>
-          <div class="mt-1 text-right text-xs text-muted">{{ nameLength }}/80</div>
+          <div class="me-1 mt-1 text-right text-xs text-muted">{{ nameLength }}/80</div>
         </div>
 
         <CAlert

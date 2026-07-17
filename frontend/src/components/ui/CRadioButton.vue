@@ -50,7 +50,7 @@ onBeforeUnmount(() => {
     :aria-checked="isSelected"
     :tabindex="groupCtx.tabIndex(value)"
     :class="[
-      'c-radio-button relative z-10 h-7 rounded-sm px-3 text-xs font-medium transition-colors',
+      'c-radio-button relative z-10 h-7 rounded-sm px-3 text-xs font-medium transition-[color]',
       isSelected ? 'text-text-strong' : 'text-muted',
     ]"
     @click="handleClick"

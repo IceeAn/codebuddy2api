@@ -286,6 +286,8 @@ describe('CRadioButton', () => {
     expect(btn.classes()).toContain('font-medium');
     expect(btn.classes()).toContain('rounded-sm');
     expect(btn.classes()).not.toContain('cursor-pointer');
+    expect(btn.classes()).toContain('transition-[color]');
+    expect(btn.classes()).not.toContain('transition-colors');
   });
 
   it('未选中时含 text-muted', () => {

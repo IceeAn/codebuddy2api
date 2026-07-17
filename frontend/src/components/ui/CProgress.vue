@@ -8,6 +8,7 @@ interface Props {
   thresholdColors?: boolean;
   variant?: 'credential' | 'success-rate' | 'cache-hit';
   label?: string;
+  ariaLabel?: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -17,6 +18,7 @@ const props = withDefaults(defineProps<Props>(), {
   thresholdColors: true,
   variant: 'credential',
   label: undefined,
+  ariaLabel: '进度',
 });
 
 const clampedPercentage = computed(() => {
@@ -62,7 +64,7 @@ const textClass = computed(() => (props.size < 64 ? 'text-[13px]' : 'text-[18px]
     :viewBox="`0 0 ${size} ${size}`"
     :style="{ transform: 'rotate(-90deg)' }"
     role="progressbar"
-    aria-label="进度"
+    :aria-label="ariaLabel"
     aria-valuemin="0"
     aria-valuemax="100"
     :aria-valuenow="clampedPercentage"

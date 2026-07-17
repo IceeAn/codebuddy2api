@@ -221,6 +221,7 @@ describe('CDynamicTags', () => {
     });
     const btn = wrapper.find('.c-dynamic-tags-remove');
     expect(btn.attributes('aria-label')).toBe('删除标签 tag1');
+    expect(btn.classes()).toEqual(expect.arrayContaining(['h-3.5', 'w-3.5', 'rounded-full']));
   });
 
   it('输入框含 placeholder 样式 class', () => {

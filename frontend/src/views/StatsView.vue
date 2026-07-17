@@ -812,11 +812,15 @@ function breakdownRows(kind: 'models' | 'api_keys' | 'credentials'): RankingRow[
           <template #corner>
             <CTooltip :content="successRateTooltip">
               <CProgress
+                class="rounded-full"
                 :percentage="successRatePercentage ?? 0"
                 :label="successRatePercentage === null ? '-' : undefined"
                 variant="success-rate"
                 :stroke-width="5"
                 :size="52"
+                aria-label="成功率"
+                :aria-valuetext="successRatePercentage === null ? '暂无数据' : undefined"
+                tabindex="0"
               />
             </CTooltip>
           </template>
@@ -832,11 +836,15 @@ function breakdownRows(kind: 'models' | 'api_keys' | 'credentials'): RankingRow[
           <template #corner>
             <CTooltip :content="inputCacheTooltip">
               <CProgress
+                class="rounded-full"
                 :percentage="inputCacheHitPercentage ?? 0"
                 :label="inputCacheHitPercentage === null ? '-' : undefined"
                 variant="cache-hit"
                 :stroke-width="5"
                 :size="52"
+                aria-label="缓存命中率"
+                :aria-valuetext="inputCacheHitPercentage === null ? '暂无数据' : undefined"
+                tabindex="0"
               />
             </CTooltip>
           </template>

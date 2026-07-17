@@ -368,6 +368,20 @@ describe('StatsView', () => {
     expect(tiles.find((tile) => tile.props('label') === '输出 Token')!.props('icon')).toBe(
       BotMessageSquare,
     );
+    const successRateProgress = tiles
+      .find((tile) => tile.props('label') === '请求数')!
+      .findComponent(CProgress);
+    const cacheHitProgress = tiles
+      .find((tile) => tile.props('label') === '输入 Token')!
+      .findComponent(CProgress);
+    [successRateProgress, cacheHitProgress].forEach((progress) => {
+      expect(progress.classes()).toContain('rounded-full');
+      expect(progress.attributes('tabindex')).toBe('0');
+    });
+    expect(successRateProgress.attributes('aria-label')).toBe('成功率');
+    expect(cacheHitProgress.attributes('aria-label')).toBe('缓存命中率');
+    expect(successRateProgress.attributes('aria-valuetext')).toBeUndefined();
+    expect(cacheHitProgress.attributes('aria-valuetext')).toBeUndefined();
     expect(tiles.find((tile) => tile.props('label') === '输入 Token')!.classes()).toEqual(
       expect.arrayContaining(['sm:order-3', 'xl:order-2']),
     );
@@ -473,8 +487,10 @@ describe('StatsView', () => {
     expect(progressRings).toHaveLength(2);
     expect(progressRings[0]!.props('percentage')).toBe(0);
     expect(progressRings[0]!.props('label')).toBe('-');
+    expect(progressRings[0]!.attributes('aria-valuetext')).toBe('暂无数据');
     expect(progressRings[1]!.props('percentage')).toBe(0);
     expect(progressRings[1]!.props('label')).toBe('-');
+    expect(progressRings[1]!.attributes('aria-valuetext')).toBe('暂无数据');
     expect(wrapper.text()).toContain('暂无缓存命中数据');
   });
 

@@ -101,6 +101,7 @@ docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:
 
 - 管理数据的 Vue Query key 必须以 `['admin', username, ...]` 开头。登出、本地会话 401 或用户名变化时，同时清空 Query Cache 和 Mutation Cache。
 - 查询和 mutation 使用 `networkMode="always"`，查询禁用 `refetchOnReconnect`，保证离线时立即失败且联网后不补发。手动刷新和重试统一使用 `RefreshButton`；它需在 refetch 前检查离线状态，并独立维持最短加载反馈，不能只依赖 `isFetching`。
+- 可聚焦元素不要使用 Tailwind `transition-colors`；它会一并过渡 `outline-color`，使暗色模式的键盘焦点轮廓从浏览器默认浅色短暂闪烁。应使用 `transition-[color]` 或 `transition-[color,background-color]` 等明确的过渡属性。
 - 主题动画只在根节点维护一个数值进度，所有动画语义色由该进度派生。不要为后代递归添加颜色 transition，也不要用 `dark:` 在两个动画语义变量间切换。需单调变化的颜色使用等效不透明端点，避免透明色插值泛白；连续主题切换必须从当前进度反向，路由切换期间禁止启动主题切换。
 - 内容哈希的静态资源长期 `immutable`，入口 HTML 为 `no-store`，未哈希资源必须重新验证。缺少 `frontend/dist/index.html` 时快速失败，不提供单文件回退。
 - 前端开发/构建要求 Node.js 24.11+。Vite 8/Rolldown 手动分包使用 `rollupOptions.output.codeSplitting.groups`，不要恢复对象形式 `manualChunks`；TypeScript 配置保留 `vite/client` 类型。
