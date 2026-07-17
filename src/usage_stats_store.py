@@ -727,7 +727,7 @@ class UsageStatsStore:
             "total_credit": (
                 row["credit_sum"]
                 if row["credit_known_count"]
-                else (0 if empty_sums_zero and not request_count else None)
+                else 0
             ),
             "p95_first_output_ms": first_output.value_ms,
             "p95_first_output_ms_overflow": first_output.overflow,
