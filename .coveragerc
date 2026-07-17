@@ -12,5 +12,6 @@ show_missing = True
 skip_covered = False
 include =
     config.py
+    release_runtime_lock.py
     src/*.py
     web.py

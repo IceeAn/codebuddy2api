@@ -31,7 +31,7 @@ COPY requirements.txt ./
 RUN python3 -m pip install --no-cache-dir -r requirements.txt
 
 COPY LICENSE LICENSING.md ./
-COPY config.py web.py ./
+COPY config.py release_runtime_lock.py web.py ./
 COPY src ./src
 COPY scripts/hash_password.py ./scripts/hash_password.py
 COPY frontend/public ./frontend/public

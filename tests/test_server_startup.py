@@ -119,7 +119,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("FROM python:${PYTHON_VERSION}-slim AS runtime", dockerfile)
         self.assertNotIn("COPY . .", dockerfile)
         for runtime_copy in (
-            "COPY config.py web.py ./",
+            "COPY config.py release_runtime_lock.py web.py ./",
             "COPY src ./src",
             "COPY scripts/hash_password.py ./scripts/hash_password.py",
             "COPY frontend/public ./frontend/public",
@@ -139,7 +139,10 @@ class RepositoryConfigurationTests(unittest.TestCase):
 
         self.assertEqual(coverage_config.get("run", "source").split(), ["."])
         included = set(coverage_config.get("report", "include").split())
-        self.assertEqual(included, {"config.py", "src/*.py", "web.py"})
+        self.assertEqual(
+            included,
+            {"config.py", "release_runtime_lock.py", "src/*.py", "web.py"},
+        )
 
     def test_frontend_package_uses_application_version(self):
         package = json.loads(
@@ -160,6 +163,18 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("Node.js 24.11+", readme)
         self.assertIn("pnpm 10.29+", readme)
         self.assertIn("python3 -m pip install openai", readme)
+        self.assertIn("#### 使用更新脚本更新", readme)
+        self.assertIn("#### 手动更新", readme)
+        self.assertIn("`--yes`", readme)
+        self.assertNotIn("--confirm-stopped", readme)
+
+    def test_release_lock_is_acquired_before_application_imports(self):
+        entrypoint = (self.repository_root / "web.py").read_text(encoding="utf-8")
+
+        lock_call = entrypoint.index("acquire_runtime_lock(")
+        self.assertLess(lock_call, entrypoint.index("from fastapi import"))
+        self.assertLess(lock_call, entrypoint.index("from config import"))
+
 
 class ServerStartupTests(unittest.TestCase):
     def test_run_server_uses_uvicorn(self):

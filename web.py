@@ -1,6 +1,18 @@
 """
 Main Web Service for CodeBuddy2API
 """
+from pathlib import Path
+
+from release_runtime_lock import acquire_runtime_lock
+
+
+_PROJECT_ROOT = Path(__file__).resolve().parent
+_RELEASE_RUNTIME_LOCK = acquire_runtime_lock(
+    _PROJECT_ROOT,
+    required=False,
+    purpose="服务",
+)
+
 import logging
 from contextlib import asynccontextmanager
 

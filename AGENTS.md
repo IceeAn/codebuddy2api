@@ -35,7 +35,7 @@ docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:
 ## 开发规定
 
 - **测试驱动开发**：开发流程须完全遵循 TDD，保证单元测试100%覆盖、且尽可能覆盖真实用例。
-- **后端测试**：使用标准库 `unittest` 与 `coverage.py`；`venv/bin/python3 -m coverage report` 对 `config.py`、`web.py` 和 `src/` 生产代码强制执行行/分支综合 100% 覆盖率门槛。
+- **后端测试**：使用标准库 `unittest` 与 `coverage.py`；`venv/bin/python3 -m coverage report` 对 `config.py`、`release_runtime_lock.py`、`web.py` 和 `src/` 生产代码强制执行行/分支综合 100% 覆盖率门槛。
 - **前端测试**：Vitest 使用 jsdom 与 Vue Test Utils；`pnpm run test:coverage` 对 `src/` 生产代码强制执行 statements、branches、functions、lines 四项 100% 覆盖率门槛。
 - **前端修改后流程**：前端修改后依次执行格式检查、lint、构建和覆盖率测试；格式检查失败时先执行 `pnpm run format`。`pnpm run build` 已包含类型检查和生产构建。
 - **保证需求的正确性**：若我需要你实现的需求存在不明确的部分，请直接提问；若工作过程中出现重要的选择，停下来说明并等待回复。尽可能地不要自行推测意图和需求。
@@ -114,3 +114,4 @@ docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:
 - 发布只接受稳定语义版本 tag。tag、`web.py` 的 `APP_VERSION`、`frontend/package.json` 版本及 `CHANGELOG.md` 对应版本必须一致。
 - 发布镜像必须同时支持 `linux/amd64`、`linux/arm64` 和 `linux/arm/v7`，构建时生成 SBOM/provenance，并使用 Cosign keyless signing 对最终镜像 digest 签名。发布顺序必须保持“完整验证 → 多架构按 digest 推送 → 每个架构漏洞扫描 → 对 digest 加版本/`latest` tag → 签名与 GitHub Release”；任一架构存在 `CRITICAL` 漏洞都应阻断发布。Trivy 默认包含尚无修复版本的漏洞，手动发布仅可通过 `ignore_unfixed=true` 忽略这类漏洞。只有最高稳定版本更新 `latest`。
 - 发布归档必须可复现：使用 tag commit 时间，规范成员顺序、时间、权限和 owner 元数据；只收录生产文件，拒绝输入路径中的符号链接及其他非普通文件。输出目录不能位于任何输入目录内，所有产物先在临时目录完整生成再原子替换，checksum 最后发布。
+- 本地 Release 更新器必须从自身所在的 `scripts` 目录解析项目根目录，不能依赖调用时工作目录；只能在非 Git 的 Release 安装目录中由项目外系统 Python 执行。Release 服务与更新/回滚共用项目根目录的 `.codebuddy2api-runtime.lock` 独占锁，Git 开发环境和 Docker 不启用该锁；锁文件不得进入完整备份，也不得在部署或恢复时删除、替换。`--yes` 只能跳过交互确认，不能绕过锁。Release 清单必须与归档成员完全一致，本地包仅接受以 `codebuddy2api` 开头的 `.zip` 或 `.tar.gz`。完整备份固定为项目根目录下的 `.update-backups/latest`，正常完成更新或回滚后只能保留这一份完整备份，且备份时必须排除 `.update-backups` 自身。回滚提交后的残留备份清理失败不能反转事务结果或报告回滚失败；必须报告回滚已经成功、列出残留路径并提醒用户不要重试回滚。更新默认重建 `venv`；`--reuse-venv` 只接受 `pyvenv.cfg` 中唯一且明确设置 `include-system-site-packages = false` 的环境，必须确保 pip 至少为 23.0 并验证安装报告版本为稳定的 `1`，再用全新解析报告确定新版完整依赖闭包，只保留闭包和 `pip`、`setuptools`、`wheel`，清理其余包并通过 `pip check`，任何失败都必须触发完整快照恢复。

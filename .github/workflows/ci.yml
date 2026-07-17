@@ -46,6 +46,22 @@ jobs:
       - name: Check backend coverage
         run: venv/bin/python3 -m coverage report
 
+  release-lock-windows:
+    name: Release Lock (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Run Windows release lock tests
+        run: python -m unittest discover -s tests -p "test_release_runtime_lock.py"
+
   frontend:
     name: Frontend
     runs-on: ubuntu-latest

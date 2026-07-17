@@ -96,7 +96,131 @@ New-Item -ItemType Directory -Force data | Out-Null
 
 ### 更新
 
-本地运行更新时，下载新版 Release 包并解压到新目录，停止旧服务后，把旧目录中的 `data`、`secrets` 和 `.env` 复制或移动到新目录，再重新创建虚拟环境并执行 `python3 -m pip install -r requirements.txt` 后启动。确认新版运行正常后，再删除旧目录。
+#### 使用更新脚本更新（建议，需要当前未更新版本 >0.2.0）
+
+0.2.0 版本起，Release 包内置更新脚本。更新脚本会在当前项目目录就地更新，保留 `data`、`secrets`、`.env` 和 Release 管理目录之外的其他文件，默认重新创建 `venv`，并在 `.update-backups/latest` 保存一份完整的更新前备份。
+
+更新前必须退出项目虚拟环境。更新脚本会拒绝使用项目内 `venv` 的 Python 运行，避免 Windows 占用旧虚拟环境文件。Release 服务和更新器使用同一个运行锁；如果服务尚未停止，脚本会提示先停止服务，并在按下 Enter 后重新检测。检测通过后，脚本会再次询问是否开始操作。
+
+macOS / Linux：
+
+```bash
+# 退出项目虚拟环境；服务未停止时，更新器会提示停服后重试
+deactivate 2>/dev/null || true
+
+# 更新到最新稳定版
+python3 scripts/update_release.py update
+
+# 更新完成后重新启动
+source venv/bin/activate
+python3 web.py
+```
+
+Windows PowerShell：
+
+```powershell
+# 退出项目虚拟环境；服务未停止时，更新器会提示停服后重试
+deactivate
+
+# 必须使用项目外的 Python Launcher，而不是旧 venv 中的 python.exe
+py -3 scripts\update_release.py update
+
+# 更新完成后重新启动
+.\venv\Scripts\python.exe web.py
+```
+
+如果旧 `venv` 仍然有效，并且希望减少重复安装未变化依赖的时间，可以添加 `--reuse-venv`：
+
+```bash
+python3 scripts/update_release.py update --reuse-venv
+```
+
+```powershell
+py -3 scripts\update_release.py update --reuse-venv
+```
+
+快速模式会先解析新版的完整 Python 依赖闭包，增量升级所需依赖，再卸载闭包之外的旧包并执行 `pip check`。如果旧环境中的 pip 低于 23.0，脚本会先将其升级到当前 Python 支持的兼容版本；已经满足要求时不会重复升级。`pip`、`setuptools` 和 `wheel` 会作为虚拟环境基础工具保留；手动安装在该 `venv` 中的其他开发工具或插件会被清理。按本文档使用 `python3 -m venv venv` 或 `py -3 -m venv venv` 创建的环境默认不启用系统 site-packages，可以安全复用；显式使用 `--system-site-packages` 创建的环境会被拒绝，请去掉 `--reuse-venv` 使用默认重建模式。旧虚拟环境缺失、损坏、Python 版本低于 3.10，或任何依赖操作失败时，更新会失败并从完整备份恢复。更新脚本本身仍必须使用项目目录外的系统 Python 启动，不能使用待复用的 `venv` 运行。
+
+也可以指定一个更高的稳定版本，或使用已经下载到本机的 Release 文件：
+
+```bash
+python3 scripts/update_release.py update --tag v1.2.3
+python3 scripts/update_release.py update \
+  --release-file ../codebuddy2api-v1.2.3.tar.gz
+```
+
+```powershell
+py -3 scripts\update_release.py update --tag v1.2.3
+py -3 scripts\update_release.py update `
+  --release-file ..\codebuddy2api-v1.2.3.zip
+```
+
+本地文件名必须以 `codebuddy2api` 开头，并以 `.zip` 或 `.tar.gz` 结尾。更新脚本会严格检查压缩包目录、Release 清单和前后端版本，拒绝路径穿越、符号链接及异常文件；这种结构校验只能确认文件符合本项目 Release 格式，不能证明文件一定来自官方发布者。在线更新还会校验 Release 提供的 SHA-256 摘要。
+
+交互式运行默认需要输入确认。自动化环境可以添加 `--yes` 或 `-y` 跳过确认，但该选项不能绕过运行锁；检测到服务或另一个更新器仍在运行时，操作仍会失败。运行锁仅用于 Release 安装目录，Git 开发环境应通过 Git 更新，Docker 部署应通过停止并替换容器更新。
+
+更新脚本只保留最近一份完整备份。若回滚已经完成、但旧备份因权限或 I/O 错误未能清理，脚本会明确警告残留路径；此时不要重复执行回滚，应按提示手动清理残留。若新版启动异常，先再次停止服务并退出虚拟环境，再执行：
+
+```bash
+python3 scripts/update_release.py rollback
+```
+
+```powershell
+py -3 scripts\update_release.py rollback
+```
+
+回滚会完整恢复备份时点的代码、数据、配置和虚拟环境，并把回滚前的状态保存为新的 `.update-backups/latest`，因此可以再次执行同一命令撤销回滚。确认新版本长期运行正常后，可以手动删除 `.update-backups` 释放空间。
+
+#### 手动更新
+
+如果当前 Release 中还没有 `scripts/update_release.py`、当前目录是 Git 工作区，或者希望保留旧目录以便直接切换回旧版本，请使用手动更新。不建议把新版 Release 直接解压并覆盖旧目录，也不应把旧版本的 `venv`、程序文件或 `frontend/dist` 复制到新版目录。
+
+1. 从 [Releases](https://github.com/IceeAn/codebuddy2api/releases) 下载目标版本的 `.tar.gz` 或 `.zip`，解压到一个与旧目录分开的新目录。
+2. 停止旧服务并退出旧目录的虚拟环境。复制运行中的 SQLite 数据可能得到不一致的文件，因此必须在停止服务后再迁移数据。
+3. 将旧目录中的 `data`、`secrets` 和 `.env` 复制到新版目录；如果 `.env` 不存在，可以跳过。项目根目录中其他自行添加的文件不会自动迁移，请按需单独复制，但不要覆盖新版 Release 自带的文件。
+
+macOS / Linux：
+
+```bash
+cp -Rp /旧目录/codebuddy2api/data /新版目录/codebuddy2api/
+cp -Rp /旧目录/codebuddy2api/secrets /新版目录/codebuddy2api/
+cp -p /旧目录/codebuddy2api/.env /新版目录/codebuddy2api/  # .env 存在时执行
+```
+
+Windows PowerShell：
+
+```powershell
+Copy-Item C:\旧目录\codebuddy2api\data C:\新版目录\codebuddy2api\data -Recurse
+Copy-Item C:\旧目录\codebuddy2api\secrets C:\新版目录\codebuddy2api\secrets -Recurse
+if (Test-Path C:\旧目录\codebuddy2api\.env) {
+  Copy-Item C:\旧目录\codebuddy2api\.env C:\新版目录\codebuddy2api\.env
+}
+```
+
+4. 在新版目录中重新创建虚拟环境并安装依赖。
+
+macOS / Linux：
+
+```bash
+cd /新版目录/codebuddy2api
+python3 -m venv venv
+source venv/bin/activate
+python3 -m pip install -r requirements.txt
+python3 web.py
+```
+
+Windows PowerShell：
+
+```powershell
+Set-Location C:\新版目录\codebuddy2api
+py -3 -m venv venv
+.\venv\Scripts\python.exe -m pip install -r requirements.txt
+.\venv\Scripts\python.exe web.py
+```
+
+5. 登录管理台，确认原有用户、凭证、设置和统计数据可用，并实际发起一次请求。确认新版运行正常后，再删除旧目录。
+
+若新版启动或验证失败，先停止新版服务，再从旧目录重新启动旧版本。由于上述流程使用复制而不是移动来迁移数据，验证期间不要同时运行新旧两个版本，也不要让它们继续分别写入各自的数据；否则回到旧版本时，会丢失新版运行期间产生的变更。
 
 ## Docker 部署
 
