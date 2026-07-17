@@ -114,6 +114,18 @@ describe('StatsTrendChart', () => {
     expect(chartSource).toMatch(/box-shadow:/);
   });
 
+  it('数据点使用自定义焦点环时不叠加全局焦点样式', () => {
+    expect(chartSource).toMatch(
+      /\.stats-trend-point-trigger:focus-visible\s*\{[^}]*outline:\s*none[^}]*box-shadow:\s*none/s,
+    );
+  });
+
+  it('强制颜色模式下保留可见的键盘焦点轮廓', () => {
+    expect(chartSource).toMatch(
+      /@media\s*\(forced-colors:\s*active\)\s*\{[^}]*\.stats-trend-point-trigger:focus-visible\s*\{[^}]*outline:\s*2px solid Highlight[^}]*outline-offset:\s*2px/s,
+    );
+  });
+
   it('按数据点数量设置最小宽度并允许横向滚动', () => {
     const points = Array.from({ length: 20 }, (_, index) => ({
       period_start: 1_767_225_600 + index * 86_400,

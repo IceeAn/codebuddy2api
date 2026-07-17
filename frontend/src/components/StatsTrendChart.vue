@@ -156,4 +156,16 @@ function formatSeriesPointTime(point: StatsSeriesPoint): string {
     0 0 0 3px var(--focus-ring),
     0 0 10px var(--focus-ring);
 }
+
+.stats-trend-point-trigger:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+@media (forced-colors: active) {
+  .stats-trend-point-trigger:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+}
 </style>

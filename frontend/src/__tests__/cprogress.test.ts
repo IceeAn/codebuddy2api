@@ -7,6 +7,7 @@ describe('CProgress', () => {
     const wrapper = mount(CProgress);
     expect(wrapper.find('svg').exists()).toBe(true);
     expect(wrapper.findAll('circle')).toHaveLength(2);
+    expect(wrapper.get('svg').attributes('aria-label')).toBe('进度');
   });
 
   it('默认 size=80 strokeWidth=8', () => {

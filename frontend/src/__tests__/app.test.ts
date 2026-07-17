@@ -307,6 +307,44 @@ describe('App', () => {
     expect(navButton.classes()).toContain('text-rail-active-text');
   });
 
+  it('桌面侧边栏的活动背景对齐当前菜单项并启用滑动过渡', async () => {
+    vi.spyOn(HTMLElement.prototype, 'offsetTop', 'get').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.dataset.routeName === 'credentials' ? 100 : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.dataset.routeName === 'credentials' ? 40 : 0;
+    });
+    sessionMock.ready = true;
+    sessionMock.authenticated = true;
+    routeMock.name = 'credentials';
+
+    const { wrapper } = mountApp();
+    await wrapper.vm.$nextTick();
+
+    const indicator = wrapper.get('.sidebar-nav-indicator');
+    expect(indicator.attributes('style')).toContain('height: 40px');
+    expect(indicator.attributes('style')).toContain('transform: translateY(100px)');
+    expect(indicator.classes()).toEqual(
+      expect.arrayContaining([
+        'bg-rail-active',
+        'transition-transform',
+        'duration-(--duration-slow)',
+        'ease-out-quad',
+      ]),
+    );
+
+    const activeButton = wrapper.get('[data-route-name="credentials"]');
+    expect(activeButton.attributes('aria-current')).toBe('page');
+    expect(activeButton.classes()).toContain('text-rail-active-text');
+    expect(activeButton.classes()).not.toContain('bg-rail-active');
+    expect(activeButton.classes()).toContain('transition-[color,background-color]');
+    expect(activeButton.classes()).not.toContain('transition-colors');
+  });
+
   it('认证后布局允许内容撑高父容器，使 sticky 侧栏不受首屏高度限制', () => {
     sessionMock.ready = true;
     sessionMock.authenticated = true;
@@ -366,6 +404,8 @@ describe('App', () => {
     await vi.waitFor(() => expect(state.isMobile).toBe(true));
     expect(wrapper.find('.sidebar').exists()).toBe(false);
     expect(wrapper.find('.hamburger').exists()).toBe(true);
+    state.syncDesktopNavIndicator();
+    expect(state.desktopNavIndicatorVisible).toBe(false);
 
     await wrapper.get('.hamburger').trigger('click');
     expect(state.mobileNavOpen).toBe(true);
@@ -404,6 +444,11 @@ describe('App', () => {
 
     expect(state.isMobile).toBe(false);
     expect(state.mobileNavOpen).toBe(false);
+
+    changeHandler({ matches: false } as MediaQueryListEvent);
+    await wrapper.vm.$nextTick();
+    expect(state.isMobile).toBe(true);
+    expect(wrapper.find('.sidebar').exists()).toBe(false);
   });
 
   it('桌面导航点击跳转且未知路由回退为总览标题', async () => {

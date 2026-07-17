@@ -368,6 +368,18 @@ describe('StatsView', () => {
     expect(tiles.find((tile) => tile.props('label') === '输出 Token')!.props('icon')).toBe(
       BotMessageSquare,
     );
+    const successRateProgress = tiles
+      .find((tile) => tile.props('label') === '请求数')!
+      .findComponent(CProgress);
+    const cacheHitProgress = tiles
+      .find((tile) => tile.props('label') === '输入 Token')!
+      .findComponent(CProgress);
+    [successRateProgress, cacheHitProgress].forEach((progress) => {
+      expect(progress.classes()).toContain('rounded-full');
+      expect(progress.attributes('tabindex')).toBe('0');
+    });
+    expect(successRateProgress.attributes('aria-label')).toBe('成功率');
+    expect(cacheHitProgress.attributes('aria-label')).toBe('缓存命中率');
     expect(tiles.find((tile) => tile.props('label') === '输入 Token')!.classes()).toEqual(
       expect.arrayContaining(['sm:order-3', 'xl:order-2']),
     );

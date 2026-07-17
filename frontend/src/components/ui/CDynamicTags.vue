@@ -85,7 +85,7 @@ function removeAt(index: number): void {
       <span class="min-w-0 truncate">{{ tag }}</span>
       <button
         type="button"
-        class="c-dynamic-tags-remove -mr-0.5 inline-flex shrink-0 items-center justify-center text-muted hover:text-text"
+        class="c-dynamic-tags-remove -mr-0.5 inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full text-muted hover:text-text"
         :aria-label="`删除标签 ${tag}`"
         @click="removeAt(index)"
       >

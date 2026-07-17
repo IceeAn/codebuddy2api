@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { isNavigationFailure, NavigationFailureType, useRoute, useRouter } from 'vue-router';
 import { useQueryClient } from '@tanstack/vue-query';
 import {
@@ -53,8 +53,53 @@ const mobileNavOpen = ref(false);
 const isMobile = ref(false);
 const pageTransitioning = ref(false);
 const visibleThemeIconMode = ref<ThemeMode>(theme.mode);
+const desktopNav = ref<HTMLElement | null>(null);
+const desktopNavIndicatorVisible = ref(false);
+const desktopNavIndicatorStyle = reactive({
+  height: '0px',
+  transform: 'translateY(0px)',
+});
 let mediaQuery: MediaQueryList | null = null;
 let themeIconSwapTimer: number | undefined;
+
+function syncDesktopNavIndicator(): void {
+  const nav = desktopNav.value;
+  if (!nav) {
+    desktopNavIndicatorVisible.value = false;
+    return;
+  }
+
+  const activeButton = Array.from(
+    nav.querySelectorAll<HTMLButtonElement>('[data-route-name]'),
+  ).find((button) => button.dataset.routeName === activeRoute.value);
+  if (!activeButton) {
+    desktopNavIndicatorVisible.value = false;
+    return;
+  }
+
+  desktopNavIndicatorStyle.height = `${activeButton.offsetHeight}px`;
+  desktopNavIndicatorStyle.transform = `translateY(${activeButton.offsetTop}px)`;
+  desktopNavIndicatorVisible.value = true;
+}
+
+const desktopNavResizeObserver = new ResizeObserver(syncDesktopNavIndicator);
+
+watch(
+  desktopNav,
+  (nav) => {
+    desktopNavResizeObserver.disconnect();
+    if (nav) {
+      desktopNavResizeObserver.observe(nav);
+      nav
+        .querySelectorAll<HTMLElement>('[data-route-name]')
+        .forEach((button) => desktopNavResizeObserver.observe(button));
+    }
+    syncDesktopNavIndicator();
+  },
+  { flush: 'post' },
+);
+
+watch(activeRoute, syncDesktopNavIndicator, { flush: 'post' });
 
 function updateMobile(event: MediaQueryListEvent | MediaQueryList): void {
   isMobile.value = !event.matches;
@@ -92,6 +137,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.clearTimeout(themeIconSwapTimer);
+  desktopNavResizeObserver.disconnect();
   mediaQuery!.removeEventListener('change', updateMobile);
   setUnauthorizedHandler(null);
 });
@@ -172,23 +218,32 @@ function retrySessionRestore(): void {
         </div>
       </div>
 
-      <nav class="flex-1 space-y-1 overflow-y-auto p-3" aria-label="主导航">
-        <button
-          v-for="item in navItems"
-          :key="item.routeName"
-          :class="[
-            'flex h-10 w-full items-center gap-3 rounded-md px-3 text-sm transition-colors',
-            activeRoute === item.routeName
-              ? 'bg-rail-active text-rail-active-text shadow-[inset_3px_0_0_0_var(--color-rail-active-indicator)]'
-              : 'text-rail-text hover:bg-rail-hover hover:text-rail-text-strong',
-          ]"
-          :aria-current="activeRoute === item.routeName ? 'page' : undefined"
-          type="button"
-          @click="router.push({ name: item.routeName })"
-        >
-          <component :is="item.icon" :size="18" />
-          <span>{{ item.label }}</span>
-        </button>
+      <nav ref="desktopNav" class="relative flex-1 overflow-y-auto p-3" aria-label="主导航">
+        <span
+          v-show="desktopNavIndicatorVisible"
+          class="sidebar-nav-indicator pointer-events-none absolute top-0 right-3 left-3 rounded-md bg-rail-active shadow-[inset_3px_0_0_0_var(--color-rail-active-indicator)] transition-transform duration-(--duration-slow) ease-out-quad will-change-transform"
+          :style="desktopNavIndicatorStyle"
+          aria-hidden="true"
+        />
+        <div class="space-y-1">
+          <button
+            v-for="item in navItems"
+            :key="item.routeName"
+            :data-route-name="item.routeName"
+            :class="[
+              'relative z-10 flex h-10 w-full items-center gap-3 rounded-md px-3 text-sm transition-[color,background-color]',
+              activeRoute === item.routeName
+                ? 'text-rail-active-text'
+                : 'text-rail-text hover:bg-rail-hover hover:text-rail-text-strong',
+            ]"
+            :aria-current="activeRoute === item.routeName ? 'page' : undefined"
+            type="button"
+            @click="router.push({ name: item.routeName })"
+          >
+            <component :is="item.icon" :size="18" />
+            <span>{{ item.label }}</span>
+          </button>
+        </div>
       </nav>
     </aside>
 
@@ -260,7 +315,7 @@ function retrySessionRestore(): void {
           v-for="item in navItems"
           :key="item.routeName"
           :class="[
-            'flex h-10 w-full items-center gap-3 rounded-md px-3 text-sm transition-colors',
+            'flex h-10 w-full items-center gap-3 rounded-md px-3 text-sm transition-[color,background-color]',
             activeRoute === item.routeName
               ? 'bg-brand-500/12 text-tone-brand shadow-[inset_3px_0_0_0_var(--color-brand-400)]'
               : 'text-text hover:bg-surface-2 hover:text-text-strong',
