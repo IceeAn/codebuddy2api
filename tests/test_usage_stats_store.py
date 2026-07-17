@@ -422,6 +422,26 @@ class UsageStatsStoreTests(unittest.TestCase):
         self.assertIsNone(empty["success_rate"])
         self.assertIsNone(empty["p95_total_ms"])
 
+    def test_overview_returns_zero_for_unknown_credit_aggregates(self):
+        self.record(self.event(credit=None))
+
+        overview = self.store.get_overview("alice", StatsFilters(
+            start_time=self.now,
+            end_time=self.now + 3600,
+            timezone="UTC",
+            granularity="hour",
+        ))
+
+        self.assertEqual(overview["totals"]["total_credit"], 0)
+        self.assertEqual(overview["series"][0]["request_count"], 1)
+        self.assertEqual(overview["series"][0]["total_credit"], 0)
+        self.assertEqual(overview["breakdowns"]["models"][0]["total_credit"], 0)
+        self.assertEqual(overview["breakdowns"]["api_keys"][0]["total_credit"], 0)
+        self.assertEqual(
+            overview["breakdowns"]["credentials"][0]["total_credit"],
+            0,
+        )
+
     def test_overview_returns_all_default_dimensions_and_limits_rankings(self):
         for index in range(105):
             self.record(self.event(
@@ -1199,7 +1219,7 @@ class UsageStatsStoreTests(unittest.TestCase):
             "total_tokens": None,
             "cache_hit_tokens": None,
             "cache_miss_tokens": None,
-            "total_credit": None,
+            "total_credit": 0,
             "p95_first_output_ms": None,
             "p95_first_output_ms_overflow": False,
             "p95_total_ms": None,
