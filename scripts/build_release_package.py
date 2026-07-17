@@ -21,6 +21,9 @@ from pathlib import Path
 
 
 PACKAGE_ROOT_NAME = "codebuddy2api"
+RELEASE_MANIFEST_FILENAME = "RELEASE_MANIFEST.json"
+RELEASE_MANIFEST_SCHEMA_VERSION = 1
+REPLACE_DIRECTORIES = ("frontend", "scripts", "src")
 TAG_PATTERN = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+$")
 
 REQUIRED_FILES = (
@@ -31,8 +34,10 @@ REQUIRED_FILES = (
     ".env.example",
     "docker-compose.yml",
     "requirements.txt",
+    "release_runtime_lock.py",
     "config.py",
     "web.py",
+    "frontend/package.json",
     "secrets/users.txt.example",
 )
 
@@ -230,6 +235,22 @@ def stage_package(repository_root: Path, tag: str, staging_root: Path) -> Path:
 
     for relative_path, allowed_suffixes in REQUIRED_DIRS:
         _copy_dir(repository_root, package_root, relative_path, allowed_suffixes)
+
+    manifest_files = [
+        path.relative_to(package_root).as_posix()
+        for path in _archive_members(package_root)
+    ]
+    manifest_files.append(RELEASE_MANIFEST_FILENAME)
+    manifest = {
+        "schema_version": RELEASE_MANIFEST_SCHEMA_VERSION,
+        "version": tag,
+        "replace_directories": list(REPLACE_DIRECTORIES),
+        "files": sorted(manifest_files),
+    }
+    (package_root / RELEASE_MANIFEST_FILENAME).write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
     return package_root
 

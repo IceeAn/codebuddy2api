@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import struct
 import tarfile
@@ -39,6 +40,7 @@ class ReleasePackageTests(unittest.TestCase):
             ".env.example",
             "docker-compose.yml",
             "requirements.txt",
+            "release_runtime_lock.py",
             "config.py",
             "web.py",
             "frontend/package.json",
@@ -48,6 +50,7 @@ class ReleasePackageTests(unittest.TestCase):
             "secrets/users.txt.example",
             "src/router.py",
             "scripts/hash_password.py",
+            "scripts/update_release.py",
         ):
             if relative_path == "web.py":
                 self._write(relative_path, 'APP_VERSION = "1.2.3"\n')
@@ -88,7 +91,9 @@ class ReleasePackageTests(unittest.TestCase):
             tar_names = set(archive.getnames())
 
         self.assertIn("codebuddy2api/VERSION", tar_names)
+        self.assertIn("codebuddy2api/RELEASE_MANIFEST.json", tar_names)
         self.assertIn("codebuddy2api/web.py", tar_names)
+        self.assertIn("codebuddy2api/release_runtime_lock.py", tar_names)
         self.assertIn("codebuddy2api/src/router.py", tar_names)
         self.assertIn("codebuddy2api/scripts/hash_password.py", tar_names)
         self.assertIn("codebuddy2api/frontend/dist/index.html", tar_names)
@@ -105,6 +110,20 @@ class ReleasePackageTests(unittest.TestCase):
             zip_names = set(archive.namelist())
 
         self.assertEqual(tar_names, zip_names)
+        with zipfile.ZipFile(artifacts.zipfile) as archive:
+            manifest = json.loads(
+                archive.read("codebuddy2api/RELEASE_MANIFEST.json")
+            )
+        self.assertEqual(manifest["schema_version"], 1)
+        self.assertEqual(manifest["version"], "v1.2.3")
+        self.assertEqual(
+            manifest["replace_directories"],
+            ["frontend", "scripts", "src"],
+        )
+        self.assertEqual(
+            set(manifest["files"]),
+            {name.removeprefix("codebuddy2api/") for name in zip_names},
+        )
         checksums = artifacts.checksums.read_text(encoding="utf-8")
         self.assertIn("codebuddy2api.tar.gz", checksums)
         self.assertIn("codebuddy2api.zip", checksums)
