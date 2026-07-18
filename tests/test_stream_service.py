@@ -474,14 +474,29 @@ class StreamServiceErrorTests(unittest.IsolatedAsyncioTestCase):
         invalid_object_error = CodeBuddyStreamService._upstream_sse_error({
             "error": {"message": 1, "type": None},
         })
+        nested_object_error = CodeBuddyStreamService._upstream_sse_error({
+            "error": {
+                "data": {
+                    "message": "quota exhausted",
+                    "type": "rate_limit_error",
+                },
+            },
+        })
         invalid_value_error = CodeBuddyStreamService._upstream_sse_error({"error": []})
 
         self.assertEqual(string_error.error["message"], "plain failure")
         self.assertEqual(invalid_object_error.error, {
+            "message": '{"message":1,"type":null}',
+            "type": "upstream_error",
+        })
+        self.assertEqual(nested_object_error.error, {
+            "message": '{"data":{"message":"quota exhausted","type":"rate_limit_error"}}',
+            "type": "upstream_error",
+        })
+        self.assertEqual(invalid_value_error.error, {
             "message": "CodeBuddy upstream stream error",
             "type": "upstream_error",
         })
-        self.assertEqual(invalid_value_error.error, invalid_object_error.error)
 
     async def test_non_stream_response_maps_transport_errors_and_propagates_unexpected_errors(self):
         errors = [
@@ -1071,7 +1086,14 @@ class StreamServiceErrorTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.Event().wait()
 
         service = CodeBuddyStreamService(http_client_factory=factory, first_chunk_timeout=0.001)
-        with self.assertRaises(HTTPException) as raised:
+        with (
+            self.assertRaises(HTTPException) as raised,
+            mock.patch(
+                "src.stream_service.TimeoutError",
+                new=type("DifferentBuiltinTimeout", (Exception,), {}),
+                create=True,
+            ),
+        ):
             await self._prefetch_stream(service)
 
         self.assertEqual(raised.exception.status_code, 504)

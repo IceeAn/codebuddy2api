@@ -2,7 +2,7 @@
 import json
 from typing import Any, AsyncIterator
 
-SSE_DONE = object()
+from .codebuddy_events import SSE_DONE
 
 
 class SSEDataError(ValueError):

@@ -548,7 +548,14 @@ class CredentialQuotaManagerTests(ConfigIsolationMixin, unittest.IsolatedAsyncio
             manager._stop_event.set()
 
         manager.scan_once = scan_once
-        with self.assertLogs("src.credential_quota", level="ERROR"):
+        with (
+            self.assertLogs("src.credential_quota", level="ERROR"),
+            mock.patch(
+                "src.credential_quota.TimeoutError",
+                new=type("DifferentBuiltinTimeout", (Exception,), {}),
+                create=True,
+            ),
+        ):
             await manager.startup()
             with self.assertRaises(RuntimeError):
                 await manager.startup()

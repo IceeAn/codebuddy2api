@@ -146,7 +146,7 @@ class CodeBuddyTokenManager:
                 if 0 <= saved_current_index < len(self.credentials):
                     self.current_index = saved_current_index
 
-            logger.info(f"State loaded: auto_rotation={self._is_auto_rotation_enabled()}, current_index={self.current_index}")
+            logger.info("State loaded: current_index=%s", self.current_index)
         except Exception as e:
             logger.warning(f"Failed to load manager state: {e}")
 
@@ -219,6 +219,15 @@ class CodeBuddyTokenManager:
             self._credential_id_from_filename(filename),
             selection.credential_record["data"],
         )
+
+    def has_usable_credential(self) -> bool:
+        """无副作用检查当前快照中是否至少有一张可用于请求的凭证。"""
+        with self._lock:
+            return any(
+                bool(record["data"].get("bearer_token"))
+                and not self.token_expiry.is_expired(record["data"])
+                for record in self.credentials
+            )
 
     def get_all_credentials(self) -> List[Dict]:
         """获取所有凭证。"""

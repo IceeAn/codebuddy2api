@@ -4,7 +4,7 @@
 </h1>
 
 <p align="center">
-  将 CodeBuddy 上游服务封装为 OpenAI Chat Completions 兼容接口，并提供多用户管理台、API Key、上游凭证隔离和自动轮换能力。
+  将 CodeBuddy 上游服务封装为 OpenAI Chat Completions 与 Anthropic Messages 兼容接口，并提供多用户管理台、API Key、上游凭证隔离和自动轮换能力。
 </p>
 
 <p align="center">
@@ -20,8 +20,15 @@
 
 - `POST /openai/v1/chat/completions`：兼容 OpenAI Chat Completions，支持流式和非流式客户端请求。
 - `GET /openai/v1/models`：返回当前用户可用的模型列表。
+- `POST /anthropic/v1/messages`：兼容 Anthropic Messages wire protocol，支持流式、thinking 和客户端工具调用。
+- `GET /anthropic/v1/models`：返回供 Claude Code 发现的 `anthropic/codebuddy/<真实模型 ID>` 合成模型列表。
 - CodeBuddy 上游只提供流式响应；非流式客户端请求由本服务聚合后返回。
-- 暂未提供 Responses 等其他 OpenAI API，也未提供 Anthropic 兼容 API。
+- 暂未提供 Responses 等其他 OpenAI API。Anthropic 兼容面不实现 beta 能力、图片、文档、服务端工具、prompt cache、结构化输出或精确 token counting；`anthropic-beta`、`output_config` 和其他未知字段会被接受并忽略。
+
+Anthropic 模型发现只用于 `GET /anthropic/v1/models`。Messages 请求不查询或校验模型列表，也不区分真实 ID 与合成 ID；`model` 与 OpenAI 兼容接口共用 `CODEBUDDY_STRIP_MODEL_NAMESPACE` 策略，按配置截断最后一个 `/` 之前的命名空间或原样转发，并由 CodeBuddy 上游判断是否可用。
+
+> [!IMPORTANT]
+> Anthropic 兼容的是 Messages 网络协议，不是 Anthropic 原生模型。模型能力、token usage、限流和账单均来自 CodeBuddy；本服务生成的 `cb2a_` thinking 签名只用于回传完整性，不是 Anthropic 原生签名。
 
 ## 本地运行
 
@@ -354,11 +361,68 @@ for chunk in stream:
     print(chunk.choices[0].delta.content or "", end="")
 ```
 
+### Anthropic SDK 与 Claude Code
+
+Anthropic 请求必须携带 `anthropic-version: 2023-06-01`，并使用 `x-api-key` 或 `Authorization: Bearer`。两种认证头同时提供时值必须一致。
+
+CodeBuddy 无法报告命中的自定义停止序列，因此非空 `stop_sequences` 会返回 400，避免把截断错误表示为自然结束；缺省或空数组可以正常使用。工具没有输出时，`tool_result.content` 可以省略、传空字符串或空数组。模型列表中的 `created_at` 固定为 Unix epoch，表示网关无法获知 CodeBuddy 模型的真实发布时间。
+
+```bash
+curl "http://127.0.0.1:8001/anthropic/v1/messages" \
+  -H "x-api-key: sk-your_api_key" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "content-type: application/json" \
+  -d '{
+    "model": "anthropic/codebuddy/glm-5.2",
+    "max_tokens": 1024,
+    "messages": [{"role": "user", "content": "你好"}]
+  }'
+```
+
+官方 Python SDK 示例：
+
+```python
+import anthropic
+
+client = anthropic.Anthropic(
+    api_key="sk-your_api_key",
+    base_url="http://127.0.0.1:8001/anthropic",
+)
+message = client.messages.create(
+    model="anthropic/codebuddy/glm-5.2",
+    max_tokens=1024,
+    messages=[{"role": "user", "content": "你好"}],
+)
+print(message.content)
+```
+
+Claude Code 推荐配置如下。模型 ID 请以 `GET /anthropic/v1/models` 的实际结果为准：
+
+```bash
+export ANTHROPIC_BASE_URL="http://127.0.0.1:8001/anthropic"
+export ANTHROPIC_AUTH_TOKEN="sk-your-api-key"
+
+export ANTHROPIC_MODEL="anthropic/codebuddy/glm-5.2"
+export ANTHROPIC_DEFAULT_OPUS_MODEL="anthropic/codebuddy/glm-5.2"
+export ANTHROPIC_DEFAULT_SONNET_MODEL="anthropic/codebuddy/glm-5.2"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="anthropic/codebuddy/glm-5.2"
+export ANTHROPIC_DEFAULT_FABLE_MODEL="anthropic/codebuddy/glm-5.2"
+
+export CLAUDE_CODE_ATTRIBUTION_HEADER=0
+export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1
+```
+
+`POST /anthropic/v1/messages/count_tokens` 固定返回 404，让支持该行为的 Claude Code 版本回退到本地估算；该估算以及响应 usage 都不等同于 Anthropic tokenizer 或账单。CodeBuddy 的 `content_filter` 响应可能不带 usage，此时兼容层会返回零 usage 以正常结束 Claude Code 重试，该值不代表实际上游 token。Claude Code 会持续增加协议能力，本项目只承诺本文列出的稳定核心兼容面。
+
+> [!NOTE]
+> 为兼容 Claude Code 的协议演进，服务会接受并忽略 `anthropic-beta`、`output_config` 及其他未知字段；这只表示请求不会因此失败，不表示网关实现了对应 beta 或结构化输出能力。图片、文档、服务端工具、legacy `function_call` 等无法无损转换的内容仍会返回 400 或上游协议错误。
+
 ## 端点与鉴权边界
 
 | 调用方     | 路径                               | 鉴权方式                | 说明                             |
 | ---------- | ---------------------------------- | ----------------------- | -------------------------------- |
 | 外部客户端 | `/openai/v1/*`                     | `sk-...` Bearer API Key | 对外 OpenAI 兼容入口             |
+| 外部客户端 | `/anthropic/v1/*`                  | `x-api-key` 或 Bearer   | 对外 Anthropic Messages 兼容入口 |
 | Web 管理台 | `/auth/*`                          | 登录接口或会话 Cookie   | 登录、恢复会话、退出             |
 | Web 管理台 | `/api/admin/*`                     | 会话 Cookie             | 凭证、API Key、设置和状态管理    |
 | 开发文档   | `/docs`、`/redoc`、`/openapi.json` | 会话 Cookie             | Swagger、ReDoc 与 OpenAPI schema |
@@ -366,7 +430,7 @@ for chunk in stream:
 
 登录管理台后，可从“开发文档”页面的按钮在新标签页打开 `/docs`；也可以在保持登录会话的浏览器中直接访问 `/docs` 或 `/redoc`。未登录请求会返回 401，`sk-...` API Key 不能代替管理台会话访问文档。
 
-OpenAPI 文档会展示外部 `/openai/v1/*` 的 Bearer API Key 鉴权和 Chat Completions 请求体。使用 Swagger 调试外部接口时，仍需通过 Authorize 填写管理台生成的 `sk-...` API Key。管理台测试入口 `/api/admin/playground/openai/v1/*` 不会出现在 schema 中。
+OpenAPI 文档会展示外部 `/openai/v1/*` 和 `/anthropic/v1/*` 的请求体与鉴权。使用 Swagger 调试外部接口时，仍需通过 Authorize 填写管理台生成的 `sk-...` API Key。管理台测试入口 `/api/admin/playground/<协议>/v1/*` 不会出现在 schema 中。
 
 ## 统计与隐私
 
@@ -440,11 +504,11 @@ OpenAPI 文档会展示外部 `/openai/v1/*` 的 Bearer API Key 鉴权和 Chat C
 ## 架构概览
 
 ```text
-外部客户端 ── /openai/v1 + API Key ──────────────────┐
-                                                     ├─> OpenAI 兼容处理 ─> 请求预处理
-Web 管理台 ── /api/admin/playground/openai/v1 + Cookie ┘                       │
-                                                                              v
-CodeBuddy 上游 <─ 流式请求与响应转换 <─ 用户凭证选择与轮换
+OpenAI 客户端 ── /openai/v1 + API Key ──> OpenAI 请求/响应适配 ─┐
+                                                                ├─> 共享请求策略、凭证与上游流传输 ─> CodeBuddy
+Anthropic 客户端 ─ /anthropic/v1 + API Key ─> Messages 请求/响应适配 ┘
+
+管理台 playground 使用对应 `/api/admin/playground/<协议>/v1` 路径和会话 Cookie，复用同一执行流程。
 ```
 
 主要职责边界：
@@ -453,6 +517,8 @@ CodeBuddy 上游 <─ 流式请求与响应转换 <─ 用户凭证选择与轮�
 - `config.py`：启动配置、用户级设置及其持久化。
 - `src/auth_*.py`、`src/*_store.py`：系统用户、会话和 API Key。
 - `src/openai_router.py`、`src/openai_compat.py`：OpenAI 协议入口和响应兼容。
+- `src/anthropic_router.py`、`src/anthropic_compat.py`、`src/anthropic_response.py`：Anthropic 认证、请求转换与响应状态机。
+- `src/codebuddy_events.py`、`src/chat_execution.py`：协议中立的上游事件与共享聊天执行流程。
 - `src/codebuddy_*.py`、`src/credential_*.py`：CodeBuddy OAuth、凭证存储与轮换。
 - `src/stream_service.py`、`src/sse.py`：上游流式请求、SSE 解析和非流式聚合。
 - `src/usage_stats_*.py`、`src/stats_router.py`：脱敏统计采集、SQLite 持久化、聚合查询与管理接口。
@@ -477,7 +543,7 @@ python3 web.py
 
 前端开发和构建要求 Node.js 24.11+ 与 pnpm 10.29+。
 
-前端开发服务器会把 `/auth`、`/api`、`/codebuddy`、`/openai`、`/health`、`/docs`、`/redoc` 和 `/openapi.json` 代理到本地后端 `127.0.0.1:8001`。
+前端开发服务器会把 `/auth`、`/api`、`/codebuddy`、`/openai`、`/anthropic`、`/health`、`/docs`、`/redoc` 和 `/openapi.json` 代理到本地后端 `127.0.0.1:8001`。
 
 ```bash
 cd frontend
@@ -534,8 +600,13 @@ pnpm run test:coverage
 #### `Invalid authentication credentials`
 
 - 外部客户端必须请求 `/openai/v1/*` 并发送 `Authorization: Bearer sk-...`。
-- 管理台测试请求必须访问 `/api/admin/playground/openai/v1/*` 并携带有效会话 Cookie。
+- Anthropic 客户端必须请求 `/anthropic/v1/*`，发送 `x-api-key` 或 Bearer API Key，并带 `anthropic-version: 2023-06-01`。
+- 管理台测试请求必须访问 `/api/admin/playground/<协议>/v1/*` 并携带有效会话 Cookie。
 - API Key 所属系统用户从 `users.txt` 删除后，该 Key 也会失效。
+
+#### Claude Code 返回 attribution 相关错误
+
+设置 `CLAUDE_CODE_ATTRIBUTION_HEADER=0`，避免发送本服务无法转换的 Anthropic 专用 attribution 内容块。`anthropic-beta` 请求头本身可以发送，但对应实验能力不会生效。
 
 #### `凭证获取失败` 或没有可用模型
 

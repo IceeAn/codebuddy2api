@@ -544,7 +544,7 @@ class CredentialCheckinManager:
                     self._stop_event.wait(), timeout=max(0, target - now),
                 )
                 return
-            except TimeoutError:
+            except asyncio.TimeoutError:
                 try:
                     await self.run_daily_cycle(startup_compensation=False)
                 except Exception:

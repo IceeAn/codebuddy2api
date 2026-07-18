@@ -2122,7 +2122,7 @@ class UsageStatsRetentionManager:
             try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=delay)
                 return
-            except TimeoutError:
+            except asyncio.TimeoutError:
                 pass
             try:
                 await asyncio.to_thread(self._store.cleanup_old_events)

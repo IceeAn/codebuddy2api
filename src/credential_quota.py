@@ -180,7 +180,7 @@ class CredentialQuotaManager:
                     timeout=self._interval_seconds,
                 )
                 return
-            except TimeoutError:
+            except asyncio.TimeoutError:
                 pass
 
     async def scan_once(self) -> None:

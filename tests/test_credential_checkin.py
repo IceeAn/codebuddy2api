@@ -1001,13 +1001,18 @@ class CredentialCheckinManagerTests(ConfigIsolationMixin, unittest.IsolatedAsync
             waits += 1
             awaitable.close()
             if waits == 1:
-                raise TimeoutError
+                raise asyncio.TimeoutError
             manager._stop_event.set()
             return True
 
         with (
             self.assertLogs("src.credential_checkin", level="ERROR") as captured,
             mock.patch("src.credential_checkin.asyncio.wait_for", side_effect=immediate_wait),
+            mock.patch(
+                "src.credential_checkin.TimeoutError",
+                new=type("DifferentBuiltinTimeout", (Exception,), {}),
+                create=True,
+            ),
         ):
             await manager._run()
         self.assertIn("启动签到补偿失败", " ".join(captured.output))
@@ -1034,8 +1039,15 @@ class CredentialCheckinManagerTests(ConfigIsolationMixin, unittest.IsolatedAsync
             waits += 1
             awaitable.close()
             if waits == 1:
-                raise TimeoutError
+                raise asyncio.TimeoutError
             return True
 
-        with mock.patch("src.credential_checkin.asyncio.wait_for", side_effect=immediate_wait):
+        with (
+            mock.patch("src.credential_checkin.asyncio.wait_for", side_effect=immediate_wait),
+            mock.patch(
+                "src.credential_checkin.TimeoutError",
+                new=type("DifferentBuiltinTimeout", (Exception,), {}),
+                create=True,
+            ),
+        ):
             await manager._run()
