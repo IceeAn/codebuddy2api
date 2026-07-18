@@ -23,6 +23,13 @@ AUTH_MAX_ACTIVE_PER_USER = 3
 AUTH_MAX_START_ATTEMPTS = 5
 AUTH_START_WINDOW_SECONDS = 60
 
+AUTH_ERROR_DETAILS = {
+    12005: ("license_seat_limit", "企业许可证没有可用席位"),
+    11212: ("license_expired", "CodeBuddy 许可证已过期"),
+    11216: ("trial_expired", "CodeBuddy 试用授权已过期"),
+    10081: ("ip_restricted", "当前 IP 被 CodeBuddy 访问策略限制"),
+}
+
 
 class AuthStartLimitError(RuntimeError):
     """OAuth 启动并发或频率达到上限。"""
@@ -67,7 +74,7 @@ def get_auth_start_headers() -> Dict[str, str]:
         "X-No-User-Id": "true",
         "X-No-Enterprise-Id": "true",
         "X-No-Department-Info": "true",
-        "User-Agent": "CLI/1.0.8 CodeBuddy/1.0.8",
+        "User-Agent": "CLI/2.107.0 CodeBuddy/2.107.0",
         "X-Product": "SaaS",
         "X-Request-ID": request_id,
     }
@@ -95,7 +102,7 @@ def get_auth_poll_headers() -> Dict[str, str]:
         "X-No-Enterprise-Id": "true",
         "X-No-Department-Info": "true",
         "X-Domain": codebuddy_host,
-        "User-Agent": "CLI/1.0.8 CodeBuddy/1.0.8",
+        "User-Agent": "CLI/2.107.0 CodeBuddy/2.107.0",
         "X-Product": "SaaS",
     }
 
@@ -106,6 +113,14 @@ def get_codebuddy_auth_state_endpoint() -> str:
 
 def get_codebuddy_auth_token_endpoint() -> str:
     return f"{get_codebuddy_api_endpoint()}/v2/plugin/auth/token"
+
+
+def get_codebuddy_login_account_endpoint() -> str:
+    return f"{get_codebuddy_api_endpoint()}/v2/plugin/login/account"
+
+
+def get_codebuddy_accounts_endpoint() -> str:
+    return f"{get_codebuddy_api_endpoint()}/v2/plugin/accounts"
 
 
 class AuthStateStore:
@@ -175,6 +190,7 @@ class AuthStateStore:
             "username": user.username,
             "created_at": int(time.time()),
             "consumed_at": None,
+            "progress": None,
         }
         return True
 
@@ -196,7 +212,35 @@ class AuthStateStore:
             return False
         if state_info.get("username") != user.username or state_info.get("consumed_at") is not None:
             return False
+        state_info["progress"] = None
         state_info["consumed_at"] = int(time.time())
+        return True
+
+    def get_progress(self, auth_state: str, user: AuthenticatedUser) -> Optional[Dict[str, Any]]:
+        """读取当前用户 OAuth state 的服务端暂存进度。"""
+        self.cleanup_expired()
+        state_info = self._owners.get(auth_state)
+        if not state_info or state_info.get("username") != user.username:
+            return None
+        if state_info.get("consumed_at") is not None:
+            return None
+        progress = state_info.get("progress")
+        return progress.copy() if isinstance(progress, dict) else None
+
+    def set_progress(
+            self,
+            auth_state: str,
+            user: AuthenticatedUser,
+            progress: Dict[str, Any],
+    ) -> bool:
+        """仅为所属用户保存尚未完成的敏感 OAuth 进度。"""
+        self.cleanup_expired()
+        state_info = self._owners.get(auth_state)
+        if not state_info or state_info.get("username") != user.username:
+            return False
+        if state_info.get("consumed_at") is not None:
+            return False
+        state_info["progress"] = progress.copy()
         return True
 
     def cleanup_expired(self, current_time: Optional[int] = None):
@@ -291,9 +335,8 @@ class CodeBuddyAuthClient:
             }
 
     async def _request_state(self, client: httpx.AsyncClient, headers: Dict[str, str]) -> Dict[str, Optional[str]]:
-        nonce = secrets.token_hex(8)
-        state_url = f"{get_codebuddy_auth_state_endpoint()}?platform=CLI&nonce={nonce}"
-        response = await client.post(state_url, json={"nonce": nonce}, headers=headers, timeout=30)
+        state_url = f"{get_codebuddy_auth_state_endpoint()}?platform=CLI"
+        response = await client.post(state_url, json={}, headers=headers, timeout=30)
         if response.status_code != 200:
             return {"auth_state": None, "auth_url": None}
 
@@ -314,59 +357,143 @@ class CodeBuddyAuthClient:
 
         return {"auth_state": data.get("state"), "auth_url": auth_url}
 
-    async def poll_status(self, auth_state: str) -> Dict[str, Any]:
-        """轮询 CodeBuddy 认证状态。"""
+    @staticmethod
+    def _business_error(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        code = result.get("code")
+        detail = AUTH_ERROR_DETAILS.get(code)
+        if not detail:
+            return None
+        error, message = detail
+        return {
+            "status": "error",
+            "error": error,
+            "message": message,
+            "code": code,
+            "http_status": 403,
+        }
+
+    @staticmethod
+    def _auth_headers(token_data: Dict[str, Any]) -> Dict[str, str]:
+        headers = get_auth_poll_headers()
+        for header in (
+            "X-No-Authorization",
+            "X-No-User-Id",
+            "X-No-Enterprise-Id",
+            "X-No-Department-Info",
+        ):
+            headers.pop(header, None)
+        headers["Authorization"] = f"Bearer {token_data['access_token']}"
+        domain = token_data.get("domain")
+        if isinstance(domain, str) and domain:
+            headers["X-Domain"] = domain
+        return headers
+
+    @staticmethod
+    def _token_data(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        data = result.get("data")
+        if not isinstance(data, dict) or not isinstance(data.get("accessToken"), str):
+            return None
+        token_data = {
+            "access_token": data["accessToken"],
+            "bearer_token": data["accessToken"],
+            "token_type": data.get("tokenType", "Bearer"),
+            "expires_in": data.get("expiresIn"),
+            "expires_at": data.get("expiresAt"),
+            "refresh_token": data.get("refreshToken"),
+            "refresh_expires_in": data.get("refreshExpiresIn"),
+            "refresh_expires_at": data.get("refreshExpiresAt"),
+            "session_state": data.get("sessionState"),
+            "scope": data.get("scope"),
+            "domain": data.get("domain"),
+            "enterprise_id": data.get("enterprise_id") or data.get("enterpriseId"),
+            "upstream_responses": {"login_token": result},
+        }
+        return {key: value for key, value in token_data.items() if value is not None}
+
+    async def poll_status(
+            self,
+            auth_state: str,
+            progress: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """依次轮询 Token、当前账号和可用账号列表。"""
+        token_data = progress.copy() if isinstance(progress, dict) else None
         try:
-            headers = get_auth_poll_headers()
-            url = f"{get_codebuddy_auth_token_endpoint()}?state={auth_state}"
-
             client = await self._get_http_client()
-            response = await client.get(url, headers=headers, timeout=30)
+            if token_data is None:
+                response = await client.get(
+                    f"{get_codebuddy_auth_token_endpoint()}?state={auth_state}",
+                    headers=get_auth_poll_headers(),
+                    timeout=30,
+                )
+                if response.status_code != 200:
+                    return {"status": "error", "error": "auth_unavailable", "message": "认证服务暂时不可用", "http_status": 503}
+                result = response.json()
+                if not isinstance(result, dict):
+                    return {"status": "error", "error": "invalid_auth_response", "message": "认证服务返回无效响应", "http_status": 502}
+                business_error = self._business_error(result)
+                if business_error:
+                    return business_error
+                if result.get("code") == 11217:
+                    return {"status": "pending", "stage": "token", "message": "等待用户完成登录", "code": 11217}
+                if result.get("code") != 0:
+                    return {"status": "error", "error": "invalid_auth_response", "message": "认证服务返回未知状态", "code": result.get("code"), "http_status": 502}
+                token_data = self._token_data(result)
+                if token_data is None:
+                    return {"status": "error", "error": "invalid_auth_response", "message": "认证响应缺少访问令牌", "http_status": 502}
 
-            if response.status_code != 200:
-                return {
-                    "status": "error",
-                    "message": f"API请求失败，状态码: {response.status_code}",
-                }
+            headers = self._auth_headers(token_data)
+            account_response = await client.get(
+                f"{get_codebuddy_login_account_endpoint()}?state={auth_state}",
+                headers=headers,
+                timeout=30,
+            )
+            if account_response.status_code != 200:
+                return {"status": "error", "error": "auth_unavailable", "message": "账号服务暂时不可用", "http_status": 503, "progress": token_data}
+            account_result = account_response.json()
+            if not isinstance(account_result, dict):
+                return {"status": "error", "error": "invalid_auth_response", "message": "账号服务返回无效响应", "http_status": 502}
+            business_error = self._business_error(account_result)
+            if business_error:
+                return business_error
+            if account_result.get("code") == 12151:
+                return {"status": "pending", "stage": "account", "message": "等待账号信息准备完成", "code": 12151, "progress": token_data}
+            account = account_result.get("data")
+            if account_result.get("code") != 0 or not isinstance(account, dict) or not isinstance(account.get("uid"), str):
+                return {"status": "error", "error": "invalid_auth_response", "message": "账号服务返回无效账号", "http_status": 502}
 
-            result = response.json()
-            if result.get("code") == 11217:
-                return {
-                    "status": "pending",
-                    "message": "等待用户完成登录",
-                    "code": result.get("code"),
-                }
-
-            if result.get("code") == 0 and result.get("data") and result.get("data", {}).get("accessToken"):
-                data = result.get("data", {})
-                return {
-                    "status": "success",
-                    "message": "认证成功！",
-                    "token_data": {
-                        "access_token": data.get("accessToken"),
-                        "bearer_token": data.get("accessToken"),
-                        "token_type": data.get("tokenType", "Bearer"),
-                        "expires_in": data.get("expiresIn"),
-                        "refresh_token": data.get("refreshToken"),
-                        "session_state": data.get("sessionState"),
-                        "scope": data.get("scope"),
-                        "domain": data.get("domain"),
-                        "enterprise_id": data.get("enterprise_id") or data.get("enterpriseId"),
-                        "full_response": result,
-                    },
-                }
-
-            return {
-                "status": "unknown",
-                "message": "认证服务返回未知状态",
-                "code": result.get("code"),
-            }
+            accounts_response = await client.get(
+                get_codebuddy_accounts_endpoint(),
+                headers=headers,
+                timeout=30,
+            )
+            if accounts_response.status_code != 200:
+                return {"status": "pending", "stage": "accounts", "message": "等待账号列表准备完成", "progress": token_data}
+            accounts_result = accounts_response.json()
+            if not isinstance(accounts_result, dict):
+                return {"status": "error", "error": "invalid_auth_response", "message": "账号列表返回无效响应", "http_status": 502}
+            business_error = self._business_error(accounts_result)
+            if business_error:
+                return business_error
+            accounts_data = accounts_result.get("data")
+            accounts = accounts_data.get("accounts") if isinstance(accounts_data, dict) else None
+            if accounts_result.get("code") != 0 or not isinstance(accounts, list):
+                return {"status": "error", "error": "invalid_auth_response", "message": "账号列表返回无效数据", "http_status": 502}
+            enabled_accounts = [item for item in accounts if isinstance(item, dict) and item.get("pluginEnabled") is True]
+            upstream_responses = token_data.setdefault("upstream_responses", {})
+            upstream_responses["login_account"] = account_result
+            upstream_responses["accounts"] = accounts_result
+            token_data["account"] = account
+            token_data["accounts"] = enabled_accounts
+            return {"status": "success", "message": "认证成功", "token_data": token_data}
 
         except Exception as error:
             logger.error("轮询认证状态失败（%s）", type(error).__name__)
             return {
                 "status": "error",
+                "error": "auth_unavailable",
                 "message": "认证状态查询失败",
+                "http_status": 503,
+                **({"progress": token_data} if token_data else {}),
             }
 
 
@@ -374,31 +501,133 @@ class TokenParser:
     """从 CodeBuddy token 响应中提取凭证文件内容。"""
 
     @staticmethod
+    def _normalize_epoch(value: Any) -> Optional[int]:
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+            return None
+        normalized = int(value)
+        if normalized >= 100_000_000_000:
+            normalized //= 1000
+        return normalized
+
+    @staticmethod
+    def _site_type(api_endpoint: str) -> str:
+        if api_endpoint == "https://copilot.tencent.com":
+            return "china"
+        if api_endpoint == "https://www.codebuddy.ai":
+            return "international"
+        return "custom"
+
+    @staticmethod
+    def _account_id(account: Dict[str, Any]) -> str:
+        import hashlib
+
+        source = "\0".join((
+            str(account.get("type") or ""),
+            str(account.get("enterpriseId") or account.get("enterprise_id") or ""),
+            str(account.get("uid") or ""),
+        ))
+        return hashlib.sha256(source.encode("utf-8")).hexdigest()[:16]
+
+    @staticmethod
+    def _normalize_account(account: Any) -> Optional[Dict[str, Any]]:
+        if not isinstance(account, dict):
+            return None
+        uid = account.get("uid")
+        if not isinstance(uid, str) or not uid:
+            return None
+        normalized = {
+            "account_id": TokenParser._account_id(account),
+            "uid": uid,
+            "type": account.get("type"),
+            "nickname": account.get("nickname"),
+            "enterprise_id": account.get("enterpriseId") or account.get("enterprise_id"),
+            "enterprise_name": account.get("enterpriseName") or account.get("enterprise_name"),
+            "department_full_name": account.get("departmentFullName") or account.get("department_full_name"),
+            "idp": account.get("idp"),
+            "last_login": account.get("lastLogin") if "lastLogin" in account else account.get("last_login"),
+            "plugin_enabled": account.get("pluginEnabled") if "pluginEnabled" in account else account.get("plugin_enabled"),
+        }
+        return {key: value for key, value in normalized.items() if value is not None}
+
+    @staticmethod
     def build_credential_data(token_data: Dict[str, Any]) -> Dict[str, Any]:
-        created_at = int(time.time())
-        token_data["created_at"] = created_at
+        provided_created_at = token_data.get("created_at")
+        created_at = (
+            int(provided_created_at)
+            if isinstance(provided_created_at, (int, float))
+            and not isinstance(provided_created_at, bool)
+            and provided_created_at > 0
+            else int(time.time())
+        )
         bearer_token = token_data.get("access_token") or token_data.get("bearer_token")
         user_id, user_info = TokenParser._extract_user_info(bearer_token, token_data)
         domain = token_data.get("domain") or user_info.get("domain")
         enterprise_id = token_data.get("enterprise_id") or user_info.get("enterprise_id")
+        account = TokenParser._normalize_account(token_data.get("account"))
+        if account:
+            if account.get("type") == "personal":
+                enterprise_id = None
+            else:
+                enterprise_id = account.get("enterprise_id") or enterprise_id
         if domain:
             user_info["domain"] = domain
         if enterprise_id:
             user_info["enterprise_id"] = enterprise_id
+        else:
+            user_info.pop("enterprise_id", None)
+
+        api_endpoint = get_codebuddy_api_endpoint()
+        expires_in = token_data.get("expires_in")
+        expires_at = TokenParser._normalize_epoch(token_data.get("expires_at"))
+        if expires_at is None and isinstance(expires_in, (int, float)) and not isinstance(expires_in, bool):
+            expires_at = created_at + int(expires_in)
+        refresh_expires_in = token_data.get("refresh_expires_in")
+        refresh_expires_at = TokenParser._normalize_epoch(token_data.get("refresh_expires_at"))
+        if refresh_expires_at is None and isinstance(refresh_expires_in, (int, float)) and not isinstance(refresh_expires_in, bool):
+            refresh_expires_at = created_at + int(refresh_expires_in)
+        accounts = []
+        for item in token_data.get("accounts") or []:
+            normalized_account = TokenParser._normalize_account(item)
+            if normalized_account:
+                accounts.append(normalized_account)
+        upstream_responses = token_data.get("upstream_responses")
+        compatibility_data = None
+        if "full_response" in token_data:
+            compatibility_data = {"legacy_full_response": token_data.get("full_response")}
 
         credential_data = {
+            "credential_schema_version": 2,
             "bearer_token": bearer_token,
             "user_id": user_id,
             "created_at": created_at,
-            "expires_in": token_data.get("expires_in"),
+            "updated_at": token_data.get("updated_at", created_at),
+            "expires_in": expires_in,
+            "expires_at": expires_at,
             "refresh_token": token_data.get("refresh_token"),
+            "refresh_expires_in": refresh_expires_in,
+            "refresh_expires_at": refresh_expires_at,
+            "last_refresh_at": token_data.get("last_refresh_at"),
             "token_type": token_data.get("token_type", "Bearer"),
             "scope": token_data.get("scope"),
             "domain": domain,
             "enterprise_id": enterprise_id,
             "session_state": token_data.get("session_state"),
             "user_info": user_info,
-            "full_response": token_data,
+            "auth_source": "oauth" if account or upstream_responses else "manual",
+            "auth_platform": "CLI" if account or upstream_responses else None,
+            "auth_client_version": "2.107.0" if account or upstream_responses else None,
+            "api_endpoint": api_endpoint,
+            "site_type": TokenParser._site_type(api_endpoint),
+            "account_uid": account.get("uid") if account else None,
+            "account_id": account.get("account_id") if account else None,
+            "account_type": account.get("type") if account else None,
+            "nickname": account.get("nickname") if account else None,
+            "enterprise_name": account.get("enterprise_name") if account else None,
+            "department_full_name": account.get("department_full_name") if account else None,
+            "idp": account.get("idp") if account else None,
+            "accounts": accounts or None,
+            "upstream_responses": upstream_responses,
+            "compatibility_data": compatibility_data,
         }
         return {key: value for key, value in credential_data.items() if value is not None}
 
@@ -424,15 +653,23 @@ class TokenParser:
                     user_info = {
                         "sub": jwt_data.get("sub"),
                         "email": jwt_data.get("email"),
+                        "email_verified": jwt_data.get("email_verified"),
                         "preferred_username": jwt_data.get("preferred_username"),
                         "nickname": nickname,
                         "name": jwt_data.get("name"),
                         "given_name": jwt_data.get("given_name"),
                         "family_name": jwt_data.get("family_name"),
+                        "picture": jwt_data.get("picture"),
+                        "locale": jwt_data.get("locale"),
                         "iss": jwt_data.get("iss"),
+                        "aud": jwt_data.get("aud"),
+                        "azp": jwt_data.get("azp"),
                         "exp": jwt_data.get("exp"),
                         "iat": jwt_data.get("iat"),
+                        "nbf": jwt_data.get("nbf"),
+                        "auth_time": jwt_data.get("auth_time"),
                         "scope": jwt_data.get("scope"),
+                        "sid": jwt_data.get("sid"),
                         "session_state": jwt_data.get("sid"),
                         **issuer_info,
                     }
@@ -517,8 +754,16 @@ async def start_codebuddy_auth() -> Dict[str, Any]:
     return await codebuddy_auth_client.start_auth()
 
 
-async def poll_codebuddy_auth_status(auth_state: str) -> Dict[str, Any]:
-    return await codebuddy_auth_client.poll_status(auth_state)
+async def poll_codebuddy_auth_status(
+        auth_state: str,
+        owner_user: Optional[AuthenticatedUser] = None,
+) -> Dict[str, Any]:
+    progress = auth_state_store.get_progress(auth_state, owner_user) if owner_user else None
+    result = await codebuddy_auth_client.poll_status(auth_state, progress)
+    next_progress = result.get("progress")
+    if owner_user and isinstance(next_progress, dict):
+        auth_state_store.set_progress(auth_state, owner_user, next_progress)
+    return result
 
 
 async def save_codebuddy_token(token_data: Dict[str, Any], owner_user: AuthenticatedUser) -> bool:

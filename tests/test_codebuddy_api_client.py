@@ -1,6 +1,8 @@
 import unittest
 from unittest import mock
 
+import httpx
+
 from src.codebuddy_api_client import (
     CodeBuddyAPIClient,
     _safe_domain_header,
@@ -77,6 +79,41 @@ class CodeBuddyAPIClientTests(unittest.TestCase):
 
         self.assertEqual(headers["X-Enterprise-Id"], "enterprise-1")
         self.assertEqual(headers["X-Tenant-Id"], "enterprise-1")
+
+    def test_account_uid_overrides_manual_fallback_and_department_is_optional(self):
+        client = CodeBuddyAPIClient()
+
+        oauth_headers = client.generate_codebuddy_headers(
+            "token",
+            user_id="anonymous_12345678",
+            account_uid="official-account",
+            enterprise_id="enterprise-1",
+            department_full_name="研发部 / Platform",
+        )
+        manual_headers = client.generate_codebuddy_headers(
+            "token",
+            user_id="anonymous_12345678",
+        )
+
+        self.assertEqual(oauth_headers["X-User-Id"], "official-account")
+        self.assertEqual(
+            oauth_headers["X-Department-Info"],
+            "%E7%A0%94%E5%8F%91%E9%83%A8%20%2F%20Platform",
+        )
+        request = httpx.Request("GET", "https://example.com", headers=oauth_headers)
+        self.assertEqual(
+            request.headers["X-Department-Info"],
+            "%E7%A0%94%E5%8F%91%E9%83%A8%20%2F%20Platform",
+        )
+        self.assertEqual(manual_headers["X-User-Id"], "anonymous_12345678")
+        self.assertNotIn("X-Department-Info", manual_headers)
+
+        with self.assertRaisesRegex(ValueError, "department_full_name"):
+            client.generate_codebuddy_headers(
+                "token",
+                user_id="user",
+                department_full_name="invalid\nheader",
+            )
 
 
 if __name__ == "__main__":

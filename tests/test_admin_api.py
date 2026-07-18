@@ -26,14 +26,17 @@ from src.admin_router import (
     get_stream_service_factory,
     list_admin_api_keys,
     list_admin_credentials,
+    list_credential_accounts,
     save_admin_settings,
     select_admin_credential,
+    select_credential_account,
     test_admin_credential,
     test_admin_credential_route,
     toggle_admin_auto_rotation,
 )
 from src.auth_types import AuthenticatedUser
 from src.codebuddy_token_manager import CodeBuddyTokenManagerRegistry
+from src.credential_refresh import CredentialRefreshError
 
 from tests.helpers import TempConfigMixin, configure_users_file, make_request
 
@@ -135,6 +138,117 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         deleted = await delete_admin_credential(credential_id, self.user)
         self.assertTrue(deleted["deleted"])
         self.assertEqual((await list_admin_credentials(self.user))["credentials"], [])
+
+    async def test_manual_credential_has_no_switchable_accounts(self):
+        manager = self._manager()
+        self.assertTrue(manager.add_credential("opaque.12345678"))
+        credential_id = manager.get_credentials_info()[0]["credential_id"]
+
+        with mock.patch("src.admin_router.get_token_manager_for_user", return_value=manager):
+            response = await list_credential_accounts(credential_id, self.user)
+
+        self.assertEqual(response, {
+            "accounts": [],
+            "current_account_id": None,
+            "can_switch": False,
+        })
+
+    async def test_account_list_hides_internal_ids_and_switch_delegates_server_context(self):
+        manager = self._manager()
+        self.assertTrue(self._add_credential(
+            manager,
+            "oauth-token",
+            "jwt-sub",
+            "oauth.json",
+            refresh_token="refresh",
+            account_id="account-1",
+            accounts=[{
+                "account_id": "account-1",
+                "uid": "secret-uid",
+                "type": "ultimate",
+                "nickname": "Alice",
+                "enterprise_id": "secret-enterprise",
+                "enterprise_name": "Example Corp",
+                "department_full_name": "研发部",
+                "plugin_enabled": True,
+            }],
+        ))
+        credential_id = manager.get_credentials_info()[0]["credential_id"]
+
+        with mock.patch("src.admin_router.get_token_manager_for_user", return_value=manager):
+            listed = await list_credential_accounts(credential_id, self.user)
+
+        self.assertEqual(listed["accounts"], [{
+            "account_id": "account-1",
+            "type": "ultimate",
+            "nickname": "Alice",
+            "enterprise_name": "Example Corp",
+            "department_full_name": "研发部",
+            "is_current": True,
+        }])
+        self.assertNotIn("uid", listed["accounts"][0])
+        self.assertNotIn("enterprise_id", listed["accounts"][0])
+
+        with (
+            mock.patch("src.admin_router.get_token_manager_for_user", return_value=manager),
+            mock.patch(
+                "src.admin_router.credential_refresh_manager.switch_account",
+                new=mock.AsyncMock(return_value=True),
+            ) as switch,
+        ):
+            response = await select_credential_account(
+                credential_id,
+                "account-1",
+                self.user,
+            )
+
+        self.assertTrue(response["selected"])
+        switch.assert_awaited_once_with("admin", manager, credential_id, "account-1")
+
+    async def test_account_routes_handle_missing_invalid_and_upstream_failures(self):
+        manager = mock.Mock()
+        manager.get_credential_by_id.return_value = None
+        with mock.patch("src.admin_router.get_token_manager_for_user", return_value=manager):
+            with self.assertRaises(HTTPException) as missing_list:
+                await list_credential_accounts("missing", self.user)
+            with self.assertRaises(HTTPException) as missing_select:
+                await select_credential_account("missing", "account", self.user)
+        self.assertEqual(missing_list.exception.status_code, 404)
+        self.assertEqual(missing_select.exception.status_code, 404)
+
+        manager.get_credential_by_id.return_value = {
+            "refresh_token": "refresh",
+            "accounts": [None, {}, {"account_id": "valid"}, {"account_id": "second"}],
+        }
+        with mock.patch("src.admin_router.get_token_manager_for_user", return_value=manager):
+            listed = await list_credential_accounts("credential", self.user)
+        self.assertTrue(listed["can_switch"])
+        self.assertEqual(len(listed["accounts"]), 2)
+
+        expected_statuses = {
+            "credential_not_found": 404,
+            "account_not_found": 404,
+            "switch_unavailable": 409,
+            "account_invalid": 409,
+            "account_missing": 409,
+            "generation_conflict": 409,
+            "ip_restricted": 403,
+            "temporary": 503,
+            "shutting_down": 503,
+            "invalid_response": 502,
+        }
+        for reason, status_code in expected_statuses.items():
+            with self.subTest(reason=reason):
+                with (
+                    mock.patch("src.admin_router.get_token_manager_for_user", return_value=manager),
+                    mock.patch(
+                        "src.admin_router.credential_refresh_manager.switch_account",
+                        new=mock.AsyncMock(side_effect=CredentialRefreshError(reason)),
+                    ),
+                ):
+                    with self.assertRaises(HTTPException) as raised:
+                        await select_credential_account("credential", "account", self.user)
+                self.assertEqual(raised.exception.status_code, status_code)
 
     async def test_create_admin_credential_fails_when_new_credential_cannot_be_identified(self):
         manager = mock.Mock()

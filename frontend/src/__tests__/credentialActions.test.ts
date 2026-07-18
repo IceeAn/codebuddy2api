@@ -43,6 +43,7 @@ function mountActions(
     isDeleting: boolean;
     writeInProgress: boolean;
     hasActiveTests: boolean;
+    canSwitchAccount: boolean;
   }> = {},
 ) {
   return mount(CredentialActions, {
@@ -153,5 +154,32 @@ describe('CredentialActions', () => {
 
     await wrapper.setProps({ isSelecting: false, isDeleting: true });
     expect(wrapper.get('[aria-label="删除凭证"]').attributes('disabled')).toBeDefined();
+  });
+
+  it('仅对可切换的 OAuth 凭证显示账号切换操作', async () => {
+    const wrapper = mountActions({ canSwitchAccount: true });
+
+    expect(wrapper.findAllComponents(CTooltip).map((item) => item.props('content'))).toEqual([
+      '设为当前凭证',
+      '测试凭证',
+      '切换 CodeBuddy 账号',
+      '删除凭证',
+    ]);
+    await wrapper.get('[aria-label="切换 CodeBuddy 账号"]').trigger('click');
+    expect(wrapper.emitted('switchAccount')).toEqual([['cred-1']]);
+
+    await wrapper.setProps({ writeInProgress: true });
+    await wrapper.get('[aria-label="切换 CodeBuddy 账号"]').trigger('click');
+    const state = (wrapper.vm.$ as any).setupState;
+    state.switchAccount();
+    expect(wrapper.emitted('switchAccount')).toEqual([['cred-1']]);
+
+    await wrapper.setProps({ writeInProgress: false, hasActiveTests: true });
+    state.switchAccount();
+    expect(wrapper.emitted('switchAccount')).toEqual([['cred-1']]);
+
+    await wrapper.setProps({ hasActiveTests: false, canSwitchAccount: false });
+    state.switchAccount();
+    expect(wrapper.emitted('switchAccount')).toEqual([['cred-1']]);
   });
 });

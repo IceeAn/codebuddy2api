@@ -18,6 +18,7 @@ import { useOAuthPolling } from '../composables/useOAuthPolling';
 import { useClipboard } from '../composables/useClipboard';
 import { useToast } from '../composables/useToast';
 import CredentialActions from '../components/CredentialActions.vue';
+import CredentialAccountSwitcher from '../components/CredentialAccountSwitcher.vue';
 import RefreshButton from '../components/RefreshButton.vue';
 import { filterCredentials, type CredentialFilterTab } from '../utils/credentialsFilter';
 import { useSessionStore } from '../stores/session';
@@ -43,6 +44,8 @@ const credentialRules: FormRules = {
 const testingIds = reactive(new Set<string>());
 const selectingId = ref<string | null>(null);
 const deletingId = ref<string | null>(null);
+const accountSwitcherCredentialId = ref('');
+const accountSwitching = ref(false);
 
 const filterTab = ref<CredentialFilterTab>('all');
 const credentialFilterOrder: Record<CredentialFilterTab, number> = {
@@ -233,7 +236,8 @@ const writeInProgress = computed(
     selectingId.value !== null ||
     deletingId.value !== null ||
     createMutation.isPending.value ||
-    toggleRotationMutation.isPending.value,
+    toggleRotationMutation.isPending.value ||
+    accountSwitching.value,
 );
 
 async function invalidateCredentials() {
@@ -282,6 +286,15 @@ function toggleRotation(): void {
   toggleRotationMutation.mutate();
 }
 
+function openAccountSwitcher(credentialId: string): void {
+  if (writeInProgress.value || hasActiveTests.value) return;
+  accountSwitcherCredentialId.value = credentialId;
+}
+
+function closeAccountSwitcher(): void {
+  if (!accountSwitching.value) accountSwitcherCredentialId.value = '';
+}
+
 const columns: Column<CredentialRecord>[] = [
   {
     title: '状态',
@@ -301,14 +314,25 @@ const columns: Column<CredentialRecord>[] = [
       );
     },
   },
-  { title: '用户', key: 'email', minWidth: 180, render: (row) => row.email || row.user_id || '-' },
+  {
+    title: '用户',
+    key: 'email',
+    minWidth: 220,
+    render: (row) => {
+      const identity = row.name || row.email || row.user_id || '-';
+      const organization = [row.enterprise_name, row.department_full_name]
+        .filter(Boolean)
+        .join(' / ');
+      return organization ? `${identity} · ${organization}` : identity;
+    },
+  },
   { title: 'Token', key: 'token_display', minWidth: 180, className: 'mono' },
   { title: '剩余', key: 'time_remaining_str', width: 120 },
   { title: '文件', key: 'filename', minWidth: 180, ellipsis: { tooltip: true } },
   {
     title: '操作',
     key: 'actions',
-    width: 176,
+    width: 216,
     align: 'left',
     headerClassName: 'table-action-header',
     render: (row) =>
@@ -321,9 +345,11 @@ const columns: Column<CredentialRecord>[] = [
         isDeleting: deletingId.value === row.credential_id,
         writeInProgress: writeInProgress.value,
         hasActiveTests: hasActiveTests.value,
+        canSwitchAccount: Boolean(row.has_refresh_token && (row.account_count || 0) > 1),
         onSelect: selectCredential,
         onTest: testCredential,
         onDelete: deleteCredential,
+        onSwitchAccount: openAccountSwitcher,
       }),
   },
 ];
@@ -470,6 +496,12 @@ const tableRows = computed(() => rows.value as unknown as Record<string, unknown
       </div>
     </CCard>
   </div>
+  <CredentialAccountSwitcher
+    :open="Boolean(accountSwitcherCredentialId)"
+    :credential-id="accountSwitcherCredentialId"
+    @close="closeAccountSwitcher"
+    @switching="accountSwitching = $event"
+  />
 </template>
 
 <style scoped>

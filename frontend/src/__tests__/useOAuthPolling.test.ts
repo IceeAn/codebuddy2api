@@ -89,6 +89,33 @@ describe('useOAuthPolling', () => {
     expect(oauth.authState.value).toBe('');
   });
 
+  it('拒绝后端返回的非正整数 interval 或 expires_in', async () => {
+    const invalidValues = [
+      { interval: 0, expires_in: 600 },
+      { interval: 1.5, expires_in: 600 },
+      { interval: 5, expires_in: 0 },
+      { interval: 5, expires_in: 1.5 },
+    ];
+    for (const [index, values] of invalidValues.entries()) {
+      vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValueOnce({
+        verification_uri_complete: 'https://cb/auth',
+        auth_state: `invalid-timing-${index}`,
+        ...values,
+      });
+      if (index === invalidValues.length - 1) {
+        vi.mocked(codebuddyOAuthApi.cancelAuth).mockRejectedValueOnce(new Error('cancel failed'));
+      }
+      const oauth = useOAuthPolling();
+
+      await oauth.start();
+
+      expect(oauth.polling.value).toBe(false);
+      expect(oauth.authState.value).toBe('');
+      expect(codebuddyOAuthApi.cancelAuth).toHaveBeenCalledWith(`invalid-timing-${index}`);
+      expect(toastMock.error).toHaveBeenLastCalledWith('认证响应无效，请重新认证');
+    }
+  });
+
   it('点击开始时同步预打开窗口，拿到认证链接后自动跳转', async () => {
     const popup = {
       closed: false,
@@ -615,36 +642,37 @@ describe('useOAuthPolling', () => {
     oauth.reset();
   });
 
-  it('达到 maxAttempts 时停止并提示超时', async () => {
+  it('多次轮询仍只由后端 expires_in 终止', async () => {
     vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
       verification_uri_complete: 'https://cb/auth',
       auth_state: 'state-5',
+      interval: 1,
+      expires_in: 10,
     });
     const pending = new ApiError(400, 'pending', { error: 'authorization_pending' });
     vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockRejectedValue(pending);
 
-    const oauth = useOAuthPolling({ pollIntervalMs: 1000, maxAttempts: 2 });
+    const oauth = useOAuthPolling({ pollIntervalMs: 1000 });
     const startPromise = oauth.start();
-    // 立即执行的那次算 attempt 1
     await vi.advanceTimersByTimeAsync(0);
     expect(oauth.polling.value).toBe(true);
 
-    // 推进周期触发 attempt 2，仍 pending
     await vi.advanceTimersByTimeAsync(1000);
     expect(oauth.polling.value).toBe(true);
 
-    // 再推进触发 attempt 3 > maxAttempts，应超时停止
     await vi.advanceTimersByTimeAsync(1000);
-    expect(oauth.polling.value).toBe(false);
-    expect(toastMock.warning).toHaveBeenCalledWith('授权等待超时，请重试');
+    expect(oauth.polling.value).toBe(true);
+    expect(toastMock.warning).not.toHaveBeenCalled();
     oauth.reset();
     await startPromise;
   });
 
-  it('达到五分钟式时长上限时取消后端 state 并停止轮询', async () => {
+  it('达到后端 expires_in 时取消后端 state 并停止轮询', async () => {
     vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
       verification_uri_complete: 'https://cb/auth',
       auth_state: 'state-duration-limit',
+      interval: 1,
+      expires_in: 3,
     });
     vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockRejectedValue(
       new ApiError(400, 'pending', { error: 'authorization_pending' }),
@@ -653,7 +681,6 @@ describe('useOAuthPolling', () => {
     const oauth = useOAuthPolling({
       pollIntervalMs: 5000,
       maxDurationSeconds: 3,
-      maxAttempts: 100,
     });
 
     await oauth.start();
@@ -663,6 +690,51 @@ describe('useOAuthPolling', () => {
     expect(oauth.polling.value).toBe(false);
     expect(oauth.authState.value).toBe('');
     expect(toastMock.warning).toHaveBeenCalledWith('授权等待超时，请重试');
+  });
+
+  it('排定下次轮询时若已到后端截止时间则立即终止', async () => {
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
+      verification_uri_complete: 'https://cb/auth',
+      auth_state: 'state-expired-during-poll',
+      interval: 1,
+      expires_in: 2,
+    });
+    vi.spyOn(codebuddyOAuthApi, 'pollAuth').mockRejectedValue(
+      new ApiError(400, 'pending', { error: 'authorization_pending' }),
+    );
+    vi.spyOn(Date, 'now').mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(2000);
+
+    const oauth = useOAuthPolling();
+    await oauth.start();
+    await Promise.resolve();
+
+    expect(codebuddyOAuthApi.cancelAuth).toHaveBeenCalledWith('state-expired-during-poll');
+    expect(oauth.polling.value).toBe(false);
+    expect(toastMock.warning).toHaveBeenCalledWith('授权等待超时，请重试');
+  });
+
+  it('定时轮询触发时已到 expires_in 不再发起请求', async () => {
+    vi.spyOn(codebuddyOAuthApi, 'startAuth').mockResolvedValue({
+      verification_uri_complete: 'https://cb/auth',
+      auth_state: 'state-deadline-precheck',
+      interval: 3,
+      expires_in: 2,
+    });
+    const pollAuth = vi
+      .spyOn(codebuddyOAuthApi, 'pollAuth')
+      .mockRejectedValue(new ApiError(400, 'pending', { error: 'authorization_pending' }));
+    vi.spyOn(globalThis, 'setInterval').mockImplementation(
+      () => 999 as unknown as ReturnType<typeof setInterval>,
+    );
+
+    const oauth = useOAuthPolling();
+    await oauth.start();
+    expect(pollAuth).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(pollAuth).toHaveBeenCalledTimes(1);
+    expect(codebuddyOAuthApi.cancelAuth).toHaveBeenCalledWith('state-deadline-precheck');
+    expect(oauth.polling.value).toBe(false);
   });
 
   it('stop() 清理所有 timer 且不再继续轮询', async () => {

@@ -209,8 +209,10 @@ class ModelsManager:
         headers = codebuddy_api_client.generate_codebuddy_headers(
             bearer_token=bearer_token,
             user_id=credential.get("user_id"),
+            account_uid=credential.get("account_uid"),
             domain=credential.get("domain"),
             enterprise_id=credential.get("enterprise_id"),
+            department_full_name=credential.get("department_full_name"),
         )
         self._apply_config_api_headers(headers)
 

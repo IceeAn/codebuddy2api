@@ -2,7 +2,9 @@
 import hashlib
 import logging
 import os
+import threading
 import time
+from copy import deepcopy
 from typing import Any, Dict, List, Optional
 
 from .auth_types import AuthenticatedUser
@@ -31,6 +33,8 @@ class CodeBuddyTokenManager:
         self.current_index: int = 0
         self.usage_count: int = 0
         self.auto_rotation_enabled: bool = True
+        self._lock = threading.RLock()
+        self._generations: Dict[str, int] = {}
         self.load_all_tokens()
         self.load_state()
 
@@ -53,6 +57,27 @@ class CodeBuddyTokenManager:
         """加载所有 token 文件。"""
         current_filename = self._credential_filename(self.current_index)
         self.credentials = self.store.load_credentials()
+        from .codebuddy_oauth import TokenParser
+
+        for record in self.credentials:
+            data = record["data"]
+            if data.get("credential_schema_version") == 2 and data.get("user_id"):
+                continue
+            normalized = TokenParser.build_credential_data(data)
+            compatibility = normalized.setdefault("compatibility_data", {})
+            if "full_response" in data:
+                compatibility["legacy_full_response"] = data["full_response"]
+            record["data"] = {
+                **normalized,
+                **{key: value for key, value in data.items() if key != "full_response"},
+                "credential_schema_version": 2,
+            }
+        current_ids = {
+            self._credential_id_from_filename(os.path.basename(record["file_path"]))
+            for record in self.credentials
+        }
+        for credential_id in current_ids:
+            self._generations.setdefault(credential_id, 0)
 
         next_current_index = self._find_credential_index_by_filename(current_filename)
         if next_current_index is not None:
@@ -190,7 +215,10 @@ class CodeBuddyTokenManager:
             expires_at = None
             time_remaining = None
 
-            if data.get("created_at") and data.get("expires_in"):
+            if isinstance(data.get("expires_at"), (int, float)):
+                expires_at = int(data["expires_at"])
+                time_remaining = expires_at - int(time.time())
+            elif data.get("created_at") and data.get("expires_in"):
                 expires_at = data["created_at"] + data["expires_in"]
                 time_remaining = expires_at - int(time.time())
 
@@ -212,6 +240,12 @@ class CodeBuddyTokenManager:
                     "scope": data.get("scope"),
                     "domain": data.get("domain"),
                     "enterprise_id": data.get("enterprise_id"),
+                    "enterprise_name": data.get("enterprise_name"),
+                    "department_full_name": data.get("department_full_name"),
+                    "account_type": data.get("account_type"),
+                    "account_id": data.get("account_id"),
+                    "account_count": len(data.get("accounts") or []),
+                    "auth_source": data.get("auth_source", "manual"),
                     "has_refresh_token": bool(data.get("refresh_token")),
                     "session_state": data.get("session_state"),
                 }
@@ -225,6 +259,32 @@ class CodeBuddyTokenManager:
         if index is None:
             return None
         return self.credentials[index]["data"]
+
+    def snapshot_credential_by_id(self, credential_id: str) -> Optional[tuple[Dict, int]]:
+        """返回用于异步更新的凭证副本及当前 generation。"""
+        with self._lock:
+            index = self._find_credential_index_by_id(credential_id)
+            if index is None:
+                return None
+            return deepcopy(self.credentials[index]["data"]), self._generations.get(credential_id, 0)
+
+    def replace_credential_by_id(
+            self,
+            credential_id: str,
+            credential_data: Dict[str, Any],
+            *,
+            expected_generation: int,
+    ) -> bool:
+        """仅当凭证未被并发修改时原位原子更新。"""
+        with self._lock:
+            index = self._find_credential_index_by_id(credential_id)
+            if index is None or self._generations.get(credential_id, 0) != expected_generation:
+                return False
+            filename = os.path.basename(self.credentials[index]["file_path"])
+            self.store.replace_credential(credential_data, filename)
+            self.credentials[index]["data"] = deepcopy(credential_data)
+            self._generations[credential_id] = expected_generation + 1
+            return True
 
     def add_credential(self, bearer_token: str, filename: Optional[str] = None) -> bool:
         """添加新的凭证。"""
@@ -276,6 +336,8 @@ class CodeBuddyTokenManager:
 
             file_path = self.credentials[index]["file_path"]
             filename = os.path.basename(file_path)
+            credential_id = self._credential_id_from_filename(filename)
+            self._generations[credential_id] = self._generations.get(credential_id, 0) + 1
 
             if self.store.delete_credential_file(file_path):
                 logger.info(f"Deleted credential file: {filename}")

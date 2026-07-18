@@ -5,6 +5,8 @@ import json
 import logging
 import os
 import re
+import secrets
+import stat
 import time
 from typing import Any, Dict, List, Optional, TypedDict
 
@@ -100,6 +102,45 @@ class CodeBuddyCredentialStore:
         file_path = self.resolve_credential_path(safe_filename)
         self.ensure_directory()
         self.write_json_file(file_path, credential_data, indent=indent, create_new=create_new)
+        return safe_filename
+
+    def replace_credential(self, credential_data: Dict[str, Any], filename: str, indent: int = 4) -> str:
+        """在保持文件名不变的前提下原子替换现有凭证。"""
+        safe_filename = self.sanitize_filename(filename)
+        file_path = self.resolve_credential_path(safe_filename)
+        stat_result = os.lstat(file_path)
+        if stat.S_ISLNK(stat_result.st_mode) or not stat.S_ISREG(stat_result.st_mode):
+            raise ValueError("Credential target must be a regular non-symlink file")
+
+        temporary_path = os.path.join(
+            self.creds_dir,
+            f".{safe_filename}.{secrets.token_hex(8)}.tmp",
+        )
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        fd = os.open(temporary_path, flags, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as file_handle:
+                fd = None
+                json.dump(credential_data, file_handle, indent=indent, ensure_ascii=False)
+                file_handle.flush()
+                os.fsync(file_handle.fileno())
+            os.chmod(temporary_path, 0o600)
+            os.replace(temporary_path, file_path)
+            directory_fd = os.open(self.creds_dir, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except Exception:
+            if fd is not None:
+                os.close(fd)
+            try:
+                os.unlink(temporary_path)
+            except FileNotFoundError:
+                pass
+            raise
         return safe_filename
 
     def next_available_filename(self, filename: str) -> str:

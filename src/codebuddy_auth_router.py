@@ -96,7 +96,7 @@ async def poll_for_token(
         raise HTTPException(status_code=403, detail="Invalid or expired auth_state")
 
     logger.info("轮询 CodeBuddy 认证状态")
-    poll_result = await poll_codebuddy_auth_status(auth_state)
+    poll_result = await poll_codebuddy_auth_status(auth_state, _user)
 
     if poll_result.get("status") == "success":
         token_data = poll_result.get("token_data", {})
@@ -127,8 +127,28 @@ async def poll_for_token(
                 "error": "authorization_pending",
                 "error_description": poll_result.get("message", "等待用户登录..."),
                 "code": poll_result.get("code"),
+                "stage": poll_result.get("stage", "token"),
             },
             status_code=400,
+        )
+
+    if poll_result.get("status") == "error":
+        error_name = poll_result.get("error", "auth_error")
+        safe_descriptions = {
+            "license_seat_limit": "企业许可证没有可用席位",
+            "license_expired": "CodeBuddy 许可证已过期",
+            "trial_expired": "CodeBuddy 试用授权已过期",
+            "ip_restricted": "当前 IP 被 CodeBuddy 访问策略限制",
+            "invalid_auth_response": "认证服务返回无效响应",
+            "auth_unavailable": "认证服务暂时不可用",
+            "auth_error": "认证过程发生错误",
+        }
+        return JSONResponse(
+            content={
+                "error": error_name,
+                "error_description": safe_descriptions.get(error_name, "认证过程发生错误"),
+            },
+            status_code=int(poll_result.get("http_status", 502)),
         )
 
     return JSONResponse(

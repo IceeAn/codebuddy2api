@@ -126,8 +126,10 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
         generate_headers.assert_called_once_with(
             bearer_token="token",
             user_id="upstream-user",
+            account_uid=None,
             domain="codebuddy.example",
             enterprise_id="enterprise-1",
+            department_full_name=None,
             conversation_id="conversation",
             conversation_request_id="conversation-request",
             conversation_message_id="message",

@@ -6,6 +6,7 @@ import type {
   ChatCompletionRequest,
   CodeBuddyPollAuthResponse,
   CredentialRecord,
+  CredentialAccountsResponse,
   CredentialsResponse,
   CurrentCredential,
   DeleteCredentialResponse,
@@ -25,8 +26,9 @@ import { buildStatsSearchParams } from '../utils/stats';
 
 // 覆盖后端串行执行的 30 秒模型查询与 300 秒聊天请求，并预留响应处理时间。
 const CREDENTIAL_TEST_TIMEOUT_MS = 335_000;
+const ACCOUNT_SWITCH_TIMEOUT_MS = 70_000;
 const OAUTH_START_TIMEOUT_MS = 35_000;
-const OAUTH_POLL_TIMEOUT_MS = 35_000;
+const OAUTH_POLL_TIMEOUT_MS = 100_000;
 const MODEL_LIST_TIMEOUT_MS = 35_000;
 
 export const authApi = {
@@ -92,6 +94,15 @@ export const adminApi = {
       json: {},
       timeoutMs: CREDENTIAL_TEST_TIMEOUT_MS,
     }),
+  credentialAccounts: (credentialId: string) =>
+    apiRequest<CredentialAccountsResponse>(
+      `/api/admin/credentials/${encodeURIComponent(credentialId)}/accounts`,
+    ),
+  selectCredentialAccount: (credentialId: string, accountId: string) =>
+    apiRequest<{ selected: boolean; credential_id: string; account_id: string }>(
+      `/api/admin/credentials/${encodeURIComponent(credentialId)}/accounts/${encodeURIComponent(accountId)}/select`,
+      { method: 'POST', timeoutMs: ACCOUNT_SWITCH_TIMEOUT_MS },
+    ),
   toggleRotation: () =>
     apiRequest<{
       message?: string;
@@ -121,6 +132,8 @@ export const codebuddyOAuthApi = {
         auth_state?: string;
         success?: boolean;
         message?: string;
+        interval?: number;
+        expires_in?: number;
       }>(path, { method: 'POST', signal, timeoutMs: OAUTH_START_TIMEOUT_MS });
     }
     return apiRequest<{
@@ -128,6 +141,8 @@ export const codebuddyOAuthApi = {
       auth_state?: string;
       success?: boolean;
       message?: string;
+      interval?: number;
+      expires_in?: number;
     }>(path, { method: 'POST', timeoutMs: OAUTH_START_TIMEOUT_MS });
   },
   pollAuth: (authState: string, signal?: AbortSignal) => {

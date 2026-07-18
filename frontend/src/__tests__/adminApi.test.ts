@@ -47,6 +47,8 @@ describe('管理 API 封装', () => {
     await adminApi.credentials();
     await adminApi.createCredential('token');
     await adminApi.selectCredential('cred/id');
+    await adminApi.credentialAccounts('cred/id');
+    await adminApi.selectCredentialAccount('cred/id', 'account/id');
     await adminApi.deleteCredential('cred/id');
     await adminApi.testCredential('cred/id');
     await adminApi.toggleRotation();
@@ -83,6 +85,11 @@ describe('管理 API 封装', () => {
       ['/api/admin/credentials'],
       ['/api/admin/credentials', { method: 'POST', json: { bearer_token: 'token' } }],
       ['/api/admin/credentials/cred%2Fid/select', { method: 'POST' }],
+      ['/api/admin/credentials/cred%2Fid/accounts'],
+      [
+        '/api/admin/credentials/cred%2Fid/accounts/account%2Fid/select',
+        { method: 'POST', timeoutMs: 70000 },
+      ],
       ['/api/admin/credentials/cred%2Fid', { method: 'DELETE' }],
       ['/api/admin/credentials/cred%2Fid/test', { method: 'POST', json: {}, timeoutMs: 335000 }],
       ['/api/admin/credentials/rotation/toggle', { method: 'POST' }],
@@ -109,7 +116,10 @@ describe('管理 API 封装', () => {
 
     expect(apiRequestMock.mock.calls).toEqual([
       ['/codebuddy/auth/start', { method: 'POST', timeoutMs: 35000 }],
-      ['/codebuddy/auth/poll', { method: 'POST', json: { auth_state: 'state' }, timeoutMs: 35000 }],
+      [
+        '/codebuddy/auth/poll',
+        { method: 'POST', json: { auth_state: 'state' }, timeoutMs: 100000 },
+      ],
       ['/codebuddy/auth/cancel', { method: 'POST', json: { auth_state: 'state' } }],
       ['/api/admin/playground/openai/v1/models', { timeoutMs: 35000 }],
     ]);
@@ -138,7 +148,7 @@ describe('管理 API 封装', () => {
       method: 'POST',
       json: { auth_state: 'state' },
       signal: controller.signal,
-      timeoutMs: 35000,
+      timeoutMs: 100000,
     });
   });
 

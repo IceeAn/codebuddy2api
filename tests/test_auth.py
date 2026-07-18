@@ -127,6 +127,16 @@ class PasswordHashingTests(unittest.TestCase):
 
 
 class UsersFileStoreTests(TempConfigMixin, unittest.TestCase):
+    def test_list_usernames_returns_password_free_snapshot(self):
+        users_file = self.temp_path / "users.txt"
+        users_file.write_text(
+            f"alice:{create_password_hash('secret-password')}\n",
+            encoding="utf-8",
+        )
+        config._config_cache["CODEBUDDY_USERS_FILE"] = str(users_file)
+
+        self.assertEqual(UsersFileStore().list_usernames(), ("alice",))
+
     def test_users_file_store_verifies_pbkdf2_hashes(self):
         configure_users_file(self.temp_path)
 

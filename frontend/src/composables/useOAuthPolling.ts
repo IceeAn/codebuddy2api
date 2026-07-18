@@ -5,11 +5,9 @@ import { codebuddyOAuthApi } from '../api/admin';
 import { normalizeExternalHttpUrl } from '../utils/externalUrl';
 
 interface OAuthPollingOptions {
-  /** 轮询间隔，默认 5000ms */
+  /** 后端未返回 interval 时使用的兼容轮询间隔，默认 5000ms */
   pollIntervalMs?: number;
-  /** 最大轮询次数（含 start 时立即执行的那一次），默认 60（约 5 分钟） */
-  maxAttempts?: number;
-  /** 前端等待上限（秒），默认 300 秒 */
+  /** 后端未返回 expires_in 时使用的兼容等待上限，默认 600 秒 */
   maxDurationSeconds?: number;
   /** 认证成功回调，通常用于刷新凭证列表 */
   onSuccess?: () => void;
@@ -20,6 +18,8 @@ interface StartAuthResponse {
   auth_state?: string;
   success?: boolean;
   message?: string;
+  interval?: number;
+  expires_in?: number;
 }
 
 interface PollAuthResponse {
@@ -35,9 +35,8 @@ interface PollAuthResponse {
  */
 export function useOAuthPolling(options: OAuthPollingOptions = {}) {
   const toast = useToast();
-  const pollIntervalMs = options.pollIntervalMs ?? 5000;
-  const maxAttempts = options.maxAttempts ?? 60;
-  const maxDurationSeconds = options.maxDurationSeconds ?? 300;
+  const fallbackPollIntervalMs = options.pollIntervalMs ?? 5000;
+  const fallbackDurationSeconds = options.maxDurationSeconds ?? 600;
 
   const authUrl = ref('');
   const authState = ref('');
@@ -48,11 +47,13 @@ export function useOAuthPolling(options: OAuthPollingOptions = {}) {
 
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let elapsedTimer: ReturnType<typeof setInterval> | null = null;
-  let attemptCount = 0;
+  let startedAtMs = 0;
+  let deadlineMs = 0;
   let abortController: AbortController | null = null;
   let pollInFlight = false;
   let authWindow: Window | null = null;
   let transientFailureCount = 0;
+  let pollIntervalMs = fallbackPollIntervalMs;
   let nextPollDelayMs = pollIntervalMs;
 
   async function start(): Promise<void> {
@@ -74,6 +75,27 @@ export function useOAuthPolling(options: OAuthPollingOptions = {}) {
         return;
       }
 
+      const intervalSeconds = result.interval ?? fallbackPollIntervalMs / 1000;
+      const expiresInSeconds = result.expires_in ?? fallbackDurationSeconds;
+      if (
+        !Number.isInteger(intervalSeconds) ||
+        intervalSeconds <= 0 ||
+        !Number.isInteger(expiresInSeconds) ||
+        expiresInSeconds <= 0
+      ) {
+        const rejectedState = result.auth_state;
+        reset();
+        try {
+          await codebuddyOAuthApi.cancelAuth(rejectedState);
+        } catch {
+          // 后端仍会按 TTL 清理无法取消的 state。
+        }
+        toast.error('认证响应无效，请重新认证');
+        return;
+      }
+      pollIntervalMs = intervalSeconds * 1000;
+      nextPollDelayMs = pollIntervalMs;
+
       const safeAuthUrl = normalizeExternalHttpUrl(result.verification_uri_complete);
       if (!safeAuthUrl) {
         const rejectedState = result.auth_state;
@@ -91,12 +113,13 @@ export function useOAuthPolling(options: OAuthPollingOptions = {}) {
       authState.value = result.auth_state;
       polling.value = true;
       starting.value = false;
-      attemptCount = 0;
+      startedAtMs = Date.now();
+      deadlineMs = startedAtMs + expiresInSeconds * 1000;
       elapsedSeconds.value = 0;
       navigateAuthWindow(authUrl.value);
       elapsedTimer = setInterval(() => {
-        elapsedSeconds.value += 1;
-        if (elapsedSeconds.value >= maxDurationSeconds) {
+        elapsedSeconds.value = Math.floor((Date.now() - startedAtMs) / 1000);
+        if (Date.now() >= deadlineMs) {
           void expireAuthFlow();
           return;
         }
@@ -121,11 +144,8 @@ export function useOAuthPolling(options: OAuthPollingOptions = {}) {
     if (!authState.value || !polling.value || pollInFlight) return;
     const controller = abortController!;
     const currentAuthState = authState.value;
-    attemptCount++;
-
-    if (attemptCount > maxAttempts) {
-      await cancelAndReset(false);
-      toast.warning('授权等待超时，请重试');
+    if (deadlineMs > 0 && Date.now() >= deadlineMs) {
+      await expireAuthFlow();
       return;
     }
 
@@ -215,10 +235,18 @@ export function useOAuthPolling(options: OAuthPollingOptions = {}) {
   }
 
   function scheduleNextPoll(): void {
-    pollTimer = setTimeout(() => {
-      pollTimer = null;
-      void poll();
-    }, nextPollDelayMs);
+    const remainingMs = deadlineMs - Date.now();
+    if (remainingMs <= 0) {
+      void expireAuthFlow();
+      return;
+    }
+    pollTimer = setTimeout(
+      () => {
+        pollTimer = null;
+        void poll();
+      },
+      Math.min(nextPollDelayMs, remainingMs),
+    );
   }
 
   function resetTransientBackoff(): void {
@@ -277,7 +305,9 @@ export function useOAuthPolling(options: OAuthPollingOptions = {}) {
     authState.value = '';
     elapsedSeconds.value = 0;
     manualOpenRequired.value = false;
-    attemptCount = 0;
+    startedAtMs = 0;
+    deadlineMs = 0;
+    pollIntervalMs = fallbackPollIntervalMs;
     resetTransientBackoff();
   }
 
