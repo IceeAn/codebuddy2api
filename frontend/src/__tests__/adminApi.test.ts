@@ -13,7 +13,13 @@ vi.mock('../api/client', async (importOriginal) => {
   };
 });
 
-import { adminApi, authApi, codebuddyOAuthApi, openaiPlaygroundApi } from '../api/admin';
+import {
+  adminApi,
+  anthropicPlaygroundApi,
+  authApi,
+  codebuddyOAuthApi,
+  openaiPlaygroundApi,
+} from '../api/admin';
 import { ApiError, setUnauthorizedHandler } from '../api/client';
 
 describe('管理 API 封装', () => {
@@ -110,12 +116,17 @@ describe('管理 API 封装', () => {
     await codebuddyOAuthApi.pollAuth('state');
     await codebuddyOAuthApi.cancelAuth('state');
     await openaiPlaygroundApi.models();
+    await anthropicPlaygroundApi.models();
 
     expect(apiRequestMock.mock.calls).toEqual([
       ['/codebuddy/auth/start', { method: 'POST', timeoutMs: 35000 }],
       ['/codebuddy/auth/poll', { method: 'POST', json: { auth_state: 'state' }, timeoutMs: 35000 }],
       ['/codebuddy/auth/cancel', { method: 'POST', json: { auth_state: 'state' } }],
       ['/api/admin/playground/openai/v1/models', { timeoutMs: 35000 }],
+      [
+        '/api/admin/playground/anthropic/v1/models',
+        { headers: { 'anthropic-version': '2023-06-01' }, timeoutMs: 35000 },
+      ],
     ]);
   });
 
@@ -156,6 +167,24 @@ describe('管理 API 封装', () => {
       method: 'POST',
       json: { auth_state: 'state' },
       signal: controller.signal,
+    });
+  });
+
+  it('Playground 模型查询透传取消 signal', async () => {
+    apiRequestMock.mockResolvedValue({});
+    const controller = new AbortController();
+
+    await openaiPlaygroundApi.models(controller.signal);
+    await anthropicPlaygroundApi.models(controller.signal);
+
+    expect(apiRequestMock).toHaveBeenNthCalledWith(1, '/api/admin/playground/openai/v1/models', {
+      signal: controller.signal,
+      timeoutMs: 35000,
+    });
+    expect(apiRequestMock).toHaveBeenNthCalledWith(2, '/api/admin/playground/anthropic/v1/models', {
+      headers: { 'anthropic-version': '2023-06-01' },
+      signal: controller.signal,
+      timeoutMs: 35000,
     });
   });
 });
@@ -217,5 +246,59 @@ describe('OpenAI Playground chat 请求', () => {
 
     await expect(openaiPlaygroundApi.chat({ model: 'glm', messages: [] })).resolves.toBe(response);
     expect(unauthorizedHandler).not.toHaveBeenCalled();
+  });
+});
+
+describe('Anthropic Playground chat 请求', () => {
+  afterEach(() => {
+    setUnauthorizedHandler(null);
+    vi.unstubAllGlobals();
+  });
+
+  it('发送版本头、请求体和 signal', async () => {
+    const response = new Response('{}');
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(response);
+    vi.stubGlobal('fetch', fetchMock);
+    const controller = new AbortController();
+    const body = {
+      model: 'anthropic/codebuddy/glm',
+      max_tokens: 1024,
+      messages: [{ role: 'user' as const, content: 'hello' }],
+    };
+
+    await expect(anthropicPlaygroundApi.chat(body, controller.signal)).resolves.toBe(response);
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/admin/playground/anthropic/v1/messages',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'same-origin',
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      }),
+    );
+    const headers = new Headers(fetchMock.mock.calls[0]![1]!.headers);
+    expect(headers.get('Content-Type')).toBe('application/json');
+    expect(headers.get('anthropic-version')).toBe('2023-06-01');
+  });
+
+  it('只把带 Bearer challenge 的 401 识别为会话失效', async () => {
+    const unauthorizedHandler = vi.fn<() => void>();
+    setUnauthorizedHandler(unauthorizedHandler);
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(
+          new Response('', { status: 401, headers: { 'WWW-Authenticate': 'Bearer' } }),
+        )
+        .mockResolvedValueOnce(new Response('{"type":"error"}', { status: 401 })),
+    );
+    const body = { model: 'glm', max_tokens: 1, messages: [] };
+
+    await expect(anthropicPlaygroundApi.chat(body)).rejects.toEqual(
+      new ApiError(401, '认证过期，请重新登录'),
+    );
+    await expect(anthropicPlaygroundApi.chat(body)).resolves.toBeInstanceOf(Response);
+    expect(unauthorizedHandler).toHaveBeenCalledOnce();
   });
 });

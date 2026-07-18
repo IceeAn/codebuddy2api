@@ -185,6 +185,7 @@ async def get_admin_status(
         "source": _user.source,
         "uptime_seconds": _service_uptime_seconds(),
         "api_base_url": f"{base_url}/openai/v1",
+        "anthropic_api_base_url": f"{base_url}/anthropic",
         "credentials": {
             "total": len(credentials),
             "valid": valid_count,

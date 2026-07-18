@@ -1,6 +1,7 @@
 import { apiRequest, ApiError, handleUnauthorizedResponse } from './client';
 import type {
   AdminStatus,
+  AnthropicMessageRequest,
   ApiKeyCreateResponse,
   ApiKeyRecord,
   ChatCompletionRequest,
@@ -177,10 +178,13 @@ export const codebuddyOAuthApi = {
 };
 
 export const openaiPlaygroundApi = {
-  models: () =>
-    apiRequest<ModelListResponse>('/api/admin/playground/openai/v1/models', {
+  models: (signal?: AbortSignal) => {
+    const options: { timeoutMs: number; signal?: AbortSignal } = {
       timeoutMs: MODEL_LIST_TIMEOUT_MS,
-    }),
+    };
+    if (signal) options.signal = signal;
+    return apiRequest<ModelListResponse>('/api/admin/playground/openai/v1/models', options);
+  },
   /**
    * 直接使用 fetch，避免 apiRequest 先消费 body；调用方需要自行读取流式响应。
    * 仅将带 Bearer challenge 的 401 识别为本系统会话失效；上游凭证 401 交给调用方处理。
@@ -188,6 +192,39 @@ export const openaiPlaygroundApi = {
   chat: (body: ChatCompletionRequest, signal?: AbortSignal) => {
     const headers = new Headers({ 'Content-Type': 'application/json' });
     return fetch('/api/admin/playground/openai/v1/chat/completions', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers,
+      body: JSON.stringify(body),
+      signal,
+    }).then((response) => {
+      if (handleUnauthorizedResponse(response)) {
+        throw new ApiError(401, '认证过期，请重新登录');
+      }
+      return response;
+    });
+  },
+};
+
+export const anthropicPlaygroundApi = {
+  models: (signal?: AbortSignal) => {
+    const options: {
+      headers: { 'anthropic-version': string };
+      timeoutMs: number;
+      signal?: AbortSignal;
+    } = {
+      headers: { 'anthropic-version': '2023-06-01' },
+      timeoutMs: MODEL_LIST_TIMEOUT_MS,
+    };
+    if (signal) options.signal = signal;
+    return apiRequest<ModelListResponse>('/api/admin/playground/anthropic/v1/models', options);
+  },
+  chat: (body: AnthropicMessageRequest, signal?: AbortSignal) => {
+    const headers = new Headers({
+      'Content-Type': 'application/json',
+      'anthropic-version': '2023-06-01',
+    });
+    return fetch('/api/admin/playground/anthropic/v1/messages', {
       method: 'POST',
       credentials: 'same-origin',
       headers,

@@ -11,6 +11,7 @@ from src.openai_router import (
     list_v1_models,
 )
 from src.request_processor import PreparedCodeBuddyRequest
+from src.stream_service import UpstreamAPIError
 
 
 class FakeChatRequest:
@@ -224,64 +225,6 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
         )
         service.handle_stream_response.assert_not_awaited()
 
-    async def test_chat_completion_attributes_usage_to_atomically_selected_credential(self):
-        request_body = {
-            "model": "model",
-            "messages": [{"role": "user", "content": "hello"}],
-        }
-
-        class AtomicManager:
-            def select_next_credential(self):
-                return "selected-id", {
-                    **self_credential,
-                    "user_id": "selected-user",
-                }
-
-            def get_credential_info_by_id(self, credential_id):
-                self.requested_credential_id = credential_id
-                return {
-                    "credential_id": credential_id,
-                    "filename": "selected.json",
-                }
-
-            def get_current_credential_info(self):
-                raise AssertionError("原子选择后不应重新读取当前凭证")
-
-        self_credential = self.credential
-        token_manager = AtomicManager()
-        service = mock.Mock()
-        service.handle_non_stream_response = mock.AsyncMock(return_value={"ok": True})
-        stats_context = mock.Mock()
-
-        with (
-            mock.patch("src.openai_router.get_token_manager_for_user", return_value=token_manager),
-            mock.patch(
-                "src.openai_router.codebuddy_api_client.generate_codebuddy_headers",
-                return_value={},
-            ),
-            mock.patch(
-                "src.openai_router.RequestProcessor.prepare_request",
-                return_value=PreparedCodeBuddyRequest(
-                    payload={"model": "model", "stream": True},
-                    client_wants_stream=False,
-                    response_model="model",
-                ),
-            ),
-            mock.patch("src.openai_router.CodeBuddyStreamService", return_value=service),
-        ):
-            result = await chat_completions(
-                FakeChatRequest(request_body),
-                _user=self.user,
-                stats_context=stats_context,
-            )
-
-        self.assertEqual(result, {"ok": True})
-        self.assertEqual(token_manager.requested_credential_id, "selected-id")
-        stats_context.capture_credential.assert_called_once_with(
-            "selected-id",
-            "selected.json",
-        )
-
     async def test_chat_completion_rejects_invalid_json(self):
         stats_context = mock.Mock()
         with self.assertRaises(HTTPException) as raised:
@@ -373,6 +316,30 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
                     _user=self.user,
                 )
         self.assertEqual(without_stats.exception.status_code, 401)
+
+    async def test_chat_completion_does_not_classify_upstream_401_as_missing_credential(self):
+        stats_context = mock.Mock()
+        upstream_error = UpstreamAPIError(
+            status_code=401,
+            message="upstream rejected credential",
+            error_type="authentication_error",
+            upstream_status_code=401,
+        )
+        with mock.patch(
+            "src.openai_router.execute_codebuddy_chat",
+            new=mock.AsyncMock(side_effect=upstream_error),
+        ):
+            with self.assertRaises(UpstreamAPIError):
+                await chat_completions(
+                    FakeChatRequest({
+                        "model": "model",
+                        "messages": [{"role": "user", "content": "hello"}],
+                    }),
+                    _user=self.user,
+                    stats_context=stats_context,
+                )
+
+        stats_context.mark_failure.assert_not_called()
 
     async def test_chat_completion_succeeds_without_optional_stats_context(self):
         request_body = {

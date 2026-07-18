@@ -1,8 +1,8 @@
 import json
 import unittest
 
+from src.codebuddy_events import SSE_DONE
 from src.sse import (
-    SSE_DONE,
     SSEDataError,
     format_sse_done,
     format_sse_error,

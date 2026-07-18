@@ -70,7 +70,7 @@ docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:
 - `CODEBUDDY_ALLOWED_API_ENDPOINTS` 是硬白名单：为空、含非法 URL 或当前端点不在其中时必须在启动阶段失败，禁止自动补入或回退。`X-Domain` 只允许 `[A-Za-z0-9.-]+`。
 - 用户认证必须对不存在或无效用户执行虚拟密码哈希，避免时序枚举。密码文件只接受规范的 `pbkdf2_sha256$迭代数$盐$摘要`：默认迭代数为 600000，只允许 600000 至 1000000；盐固定 16 字节，摘要固定 32 字节，Base64URL 必须规范且无填充。修改格式时必须同步所有读写入口。
 
-## CodeBuddy 与 OpenAI 兼容层
+## CodeBuddy 与下游协议兼容层
 
 - CodeBuddy 上游只支持流式响应。即使客户端请求非流式，也必须用 `client.stream()` 增量消费 SSE，再由 `StreamResponseAggregator` 聚合；禁止先缓冲完整上游响应体。`RequestProcessor.prepare_request()` 必须强制注入 `stream=True`。
 - 上游响应采用宽松事件提取，不在事件模型层承担完整协议验证。流式与非流式路径共享首个 choice 语义；`OpenAIStreamNormalizer` 负责拆分混合的 reasoning/content delta，并在首块补 `role: assistant`。
@@ -78,6 +78,12 @@ docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:
 - 强制推理模型会覆盖为最大推理并启用 thinking，但 `clear_thinking` 等其他客户端 `thinking` 子项必须继续透传，不能用新对象整体替换；其他模型默认开启 thinking，但客户端显式禁用时必须尊重。`CODEBUDDY_FORCED_TEMPERATURE` 非空时覆盖客户端值；模型命名空间是否剥离由 `CODEBUDDY_STRIP_MODEL_NAMESPACE` 控制。修改请求转换时注意这些优先级。
 - 系统消息会通过 `src/keyword_replacer.py` 替换 Anthropic/Claude 品牌词；不要在其他层重复替换。
 - 全局上游 HTTP 客户端保持 `trust_env=False`，避免环境中的 SOCKS 代理在缺少 `socksio` 时破坏服务启动。
+- Anthropic 兼容面是 `/anthropic/v1/*` 下的 Messages wire protocol，不是 Anthropic 原生模型或 provider；不得增加 root `/v1/*`、伪造 Anthropic 计费/限流/cache 字段或把运行时改成多 provider 网关。模型、token usage 和账单语义始终来自 CodeBuddy。
+- Anthropic 第一版只承诺文本、流式、thinking、自定义客户端工具和模型发现。请求转换以兼容为先：`anthropic-beta`、`output_config` 和未知字段必须接受并忽略，不能转发或记录；媒体、服务端工具、Anthropic 原生 thinking signature 等无法无损转换的语义仍需失败。`messages/count_tokens` 固定 404 以触发客户端本地回退。
+- CodeBuddy 原始 SSE 必须只解析一次为 `codebuddy_events` 中的协议中立事件，再由 OpenAI/Anthropic 下游适配器消费。OpenAI 继续以 `[DONE]` 结束；Anthropic 必须按 Messages SSE 状态机以 `message_stop` 结束且不发送 `[DONE]`。
+- Anthropic 响应 usage 以 CodeBuddy 观测为准；正常完成缺失 usage 仍是协议错误，但 `content_filter` 已知可能不带 usage，为避免 Claude Code 无限重试可返回零 usage，且必须在文档中声明该值不是实际上游 token。
+- Anthropic 外部路由接受 `x-api-key` 或 Bearer API Key，两者并存时必须一致且只验证一次摘要；只接受 `anthropic-version: 2023-06-01`。playground 仅接受会话 Cookie并隐藏于 OpenAPI。不得记录 metadata、beta、被忽略字段、Claude Code session/agent ID、thinking/tool 内容或认证头。
+- `anthropic/codebuddy/<真实模型 ID>` 只用于 Claude Code 的模型列表发现。Messages 请求不查询模型列表、不区分真实 ID 与合成 ID，也不校验模型是否存在或可用；`model` 直接进入与 OpenAI 兼容接口相同的请求策略，由 `CODEBUDDY_STRIP_MODEL_NAMESPACE` 决定按最后一个 `/` 截断或原样转发，最终交由上游判断，不能回退到列表首项。
 
 ## OAuth、凭证与模型缓存
 

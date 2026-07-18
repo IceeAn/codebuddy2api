@@ -16,22 +16,36 @@ _RELEASE_RUNTIME_LOCK = acquire_runtime_lock(
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import APIRouter, Depends, FastAPI
+from fastapi import APIRouter, Depends, FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 # Import the routers
 from src.auth_router import router as service_auth_router
 from src.auth_router import require_session_user
 from src.admin_router import router as admin_router
+from src.anthropic_compat import SUPPORTED_ANTHROPIC_VERSION
+from src.anthropic_errors import (
+    AnthropicAPIError,
+    anthropic_error_response,
+    get_anthropic_request_id,
+)
+from src.anthropic_router import (
+    external_anthropic_router,
+    playground_anthropic_router,
+    upstream_error_as_anthropic,
+)
 from src.codebuddy_auth_router import router as codebuddy_auth_router
 from src.credential_refresh import credential_refresh_manager
 from src.credential_quota import credential_quota_manager
 from src.frontend_router import router as frontend_router
 from src.openai_router import external_openai_router, playground_openai_router
-from src.private_response import PrivateNoStoreFastAPI, PrivateNoStoreRoute
+from src.private_response import PRIVATE_NO_STORE_VALUE, PrivateNoStoreFastAPI, PrivateNoStoreRoute
 from src.request_limits import RequestBodyLimitMiddleware
 from src.stats_router import router as stats_router
 from src.stream_service import UpstreamAPIError, lifecycle_manager
@@ -85,7 +99,7 @@ async def lifespan(app: FastAPI):
 # 创建FastAPI应用
 app = PrivateNoStoreFastAPI(
     title="CodeBuddy2API",
-    description="CodeBuddy API proxy with OpenAI-compatible interface",
+    description="CodeBuddy API proxy with OpenAI and Anthropic-compatible interfaces",
     version=APP_VERSION,
     lifespan=lifespan,
     docs_url=None,
@@ -101,9 +115,79 @@ app.add_middleware(
 docs_router = APIRouter(route_class=PrivateNoStoreRoute)
 
 
+@app.exception_handler(AnthropicAPIError)
+async def anthropic_api_error_handler(_request, error: AnthropicAPIError):
+    """返回带稳定 request-id 的 Anthropic 错误信封。"""
+    return anthropic_error_response(error)
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_error_handler(request: Request, error: RequestValidationError):
+    """将 Anthropic 依赖校验错误规范化为 400，其余路由保持 FastAPI 行为。"""
+    path = request.url.path
+    if path == "/anthropic" or path.startswith((
+        "/anthropic/",
+        "/api/admin/playground/anthropic/",
+    )):
+        missing_version = any(
+            item.get("loc") == ("header", "anthropic-version")
+            for item in error.errors()
+        )
+        message = (
+            f"anthropic-version must be {SUPPORTED_ANTHROPIC_VERSION}"
+            if missing_version
+            else "Invalid Anthropic request"
+        )
+        return anthropic_error_response(AnthropicAPIError(
+            400,
+            "invalid_request_error",
+            message,
+            get_anthropic_request_id(request),
+            headers={"Cache-Control": PRIVATE_NO_STORE_VALUE},
+        ))
+    return JSONResponse(
+        status_code=422,
+        content={"detail": jsonable_encoder(error.errors())},
+    )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_error_handler(request: Request, error: StarletteHTTPException):
+    """使 Anthropic 命名空间内的框架级错误也保持协议错误信封。"""
+    path = request.url.path
+    is_anthropic = path == "/anthropic" or path.startswith((
+        "/anthropic/",
+        "/api/admin/playground/anthropic/",
+    ))
+    if not is_anthropic:
+        return JSONResponse(
+            status_code=error.status_code,
+            content={"detail": error.detail},
+            headers=error.headers,
+        )
+
+    error_type = {
+        401: "authentication_error",
+        403: "permission_error",
+        404: "not_found_error",
+        413: "request_too_large",
+    }.get(error.status_code, "api_error" if error.status_code >= 500 else "invalid_request_error")
+    headers = dict(error.headers or {})
+    headers["Cache-Control"] = PRIVATE_NO_STORE_VALUE
+    return anthropic_error_response(AnthropicAPIError(
+        error.status_code,
+        error_type,
+        str(error.detail),
+        get_anthropic_request_id(request),
+        headers=headers,
+    ))
+
+
 @app.exception_handler(UpstreamAPIError)
-async def upstream_api_error_handler(_request, error: UpstreamAPIError):
-    """使用 OpenAI 错误信封返回可识别的上游失败。"""
+async def upstream_api_error_handler(request, error: UpstreamAPIError):
+    """按当前下游协议返回可识别的上游失败。"""
+    if request.url.path.startswith(("/anthropic/", "/api/admin/playground/anthropic/")):
+        return anthropic_error_response(upstream_error_as_anthropic(request, error))
     return JSONResponse(
         status_code=error.status_code,
         content={"error": error.error},
@@ -157,7 +241,20 @@ if allowed_origins:
         allow_origins=allowed_origins,
         allow_credentials=False,
         allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "X-Conversation-ID", "X-Conversation-Request-ID", "X-Conversation-Message-ID", "X-Request-ID"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "X-Conversation-ID",
+            "X-Conversation-Request-ID",
+            "X-Conversation-Message-ID",
+            "X-Request-ID",
+            "X-Api-Key",
+            "Anthropic-Version",
+            "Anthropic-Beta",
+            "X-Claude-Code-Session-Id",
+            "X-Claude-Code-Agent-Id",
+            "X-Claude-Code-Parent-Agent-Id",
+        ],
     )
 
 # 挂载前端路由
@@ -186,11 +283,25 @@ app.include_router(
     tags=["OpenAI Compatible API"]
 )
 
+# 挂载外部 Anthropic Messages 兼容路由，仅接受本系统 API Key
+app.include_router(
+    external_anthropic_router,
+    prefix="/anthropic",
+    tags=["Anthropic Compatible API"],
+)
+
 # 挂载管理台测试使用的 OpenAI 兼容路由，仅接受会话 Cookie
 app.include_router(
     playground_openai_router,
     prefix="/api/admin/playground/openai",
     tags=["Admin Playground OpenAI Compatible API"]
+)
+
+# 挂载管理台 Anthropic playground 路由，仅接受会话 Cookie
+app.include_router(
+    playground_anthropic_router,
+    prefix="/api/admin/playground/anthropic",
+    tags=["Admin Playground Anthropic Compatible API"],
 )
 
 # 挂载管理页专用 API 路由
@@ -236,6 +347,7 @@ def run_server():
     logger.info("API Endpoints:")
     logger.info(f"   Models: GET http://{host}:{port}/openai/v1/models")
     logger.info(f"   Chat: POST http://{host}:{port}/openai/v1/chat/completions")
+    logger.info(f"   Anthropic Messages: POST http://{host}:{port}/anthropic/v1/messages")
     logger.info(f"   Admin API: GET http://{host}:{port}/api/admin/status")
     logger.info("=" * 60)
     logger.info("Authentication:")

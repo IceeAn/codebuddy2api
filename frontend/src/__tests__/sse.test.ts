@@ -66,6 +66,31 @@ describe('SseStreamDecoder', () => {
     ]);
   });
 
+  it('保留 Anthropic 具名事件并继续识别错误信封', () => {
+    const decoder = new SseStreamDecoder();
+    expect(
+      decoder.feed(
+        'event: content_block_delta\n' +
+          'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"A"}}\n\n' +
+          'event: error\n' +
+          'data: {"type":"error","error":{"type":"api_error","message":"failed"}}\n\n',
+      ),
+    ).toEqual([
+      {
+        type: 'message',
+        event: 'content_block_delta',
+        data: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'A' } },
+      },
+      { type: 'error', message: 'failed' },
+    ]);
+  });
+
+  it('忽略空 event 名称', () => {
+    expect(parseSsePayload('event:   \ndata: {"ok":true}\n\n')).toEqual([
+      { type: 'message', data: { ok: true } },
+    ]);
+  });
+
   it('finish 报告被截断的事件且清空缓冲', () => {
     const decoder = new SseStreamDecoder();
     decoder.feed('data: {"partial":');

@@ -183,6 +183,12 @@ function copyApiBaseUrl() {
   copy(value, '客户端入口地址已复制');
 }
 
+function copyAnthropicApiBaseUrl() {
+  const value = statusData.value?.anthropic_api_base_url;
+  if (!value) return;
+  copy(value, 'Claude Code 入口地址已复制');
+}
+
 function openStats(): void {
   void router.push({ name: 'stats' });
 }
@@ -251,7 +257,7 @@ function openStats(): void {
       />
     </div>
 
-    <CCard title="客户端入口">
+    <CCard title="OpenAI 客户端入口">
       <CInputGroup>
         <CInput :model-value="statusData?.api_base_url || ''" readonly />
         <CButton variant="secondary" @click="copyApiBaseUrl">
@@ -261,6 +267,24 @@ function openStats(): void {
           复制
         </CButton>
       </CInputGroup>
+    </CCard>
+
+    <CCard title="Anthropic / Claude Code 入口">
+      <div class="flex flex-col gap-3">
+        <CInputGroup>
+          <CInput :model-value="statusData?.anthropic_api_base_url || ''" readonly />
+          <CButton variant="secondary" @click="copyAnthropicApiBaseUrl">
+            <template #icon>
+              <Link :size="16" />
+            </template>
+            复制 Claude Code 地址
+          </CButton>
+        </CInputGroup>
+        <CAlert type="info">
+          Claude Code 请使用合成模型 anthropic/codebuddy/&lt;真实模型&gt;。服务接受并忽略
+          anthropic-beta、output_config 和未知字段；请关闭 attribution header。
+        </CAlert>
+      </div>
     </CCard>
   </div>
 </template>

@@ -15,16 +15,14 @@ from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 from starlette.requests import ClientDisconnect
 
+from .codebuddy_events import CodeBuddyResponseEvent, SSE_DONE, ToolCallIndexState
 from .openai_compat import (
-    CodeBuddyResponseEvent,
     CompletionResponseContext,
     OpenAIStreamNormalizer,
-    ToolCallIndexState,
     add_openai_tool_call_indexes,
     normalize_openai_stream_chunk_envelope,
 )
 from .sse import (
-    SSE_DONE,
     SSEDataError,
     SSE_HEADERS,
     format_sse_done,
@@ -61,7 +59,7 @@ class StreamObserver(Protocol):
 
 
 class UpstreamAPIError(HTTPException):
-    """可由 OpenAI 兼容入口稳定序列化的上游错误。"""
+    """由各下游协议使用中立字段稳定序列化的上游错误。"""
 
     def __init__(
             self,
@@ -71,8 +69,14 @@ class UpstreamAPIError(HTTPException):
             *,
             code: Any = None,
             headers: Optional[Dict[str, str]] = None,
+            upstream_status_code: Optional[int] = None,
     ):
         super().__init__(status_code=status_code, detail=message, headers=headers)
+        self.message = message
+        self.error_type = error_type
+        self.code = code
+        self.safe_headers = headers or {}
+        self.upstream_status_code = upstream_status_code
         self.error = {"message": message, "type": error_type}
         if code is not None:
             self.error["code"] = code
@@ -420,6 +424,67 @@ class StreamResponseAggregator:
         return final_response
 
 
+@dataclass
+class _OpenAIStreamState:
+    normalizer: OpenAIStreamNormalizer
+    tool_indexes: ToolCallIndexState
+    saw_finish_reason: bool = False
+
+
+class OpenAIDownstreamAdapter:
+    """保持既有 OpenAI 下游字节契约的响应适配器。"""
+
+    media_type = "text/event-stream"
+    stream_headers = SSE_HEADERS
+
+    def __init__(self, context: CompletionResponseContext):
+        self.context = context
+
+    def create_stream_state(self) -> _OpenAIStreamState:
+        return _OpenAIStreamState(OpenAIStreamNormalizer(), ToolCallIndexState())
+
+    def process_stream_event(self, state: _OpenAIStreamState, event: Any) -> List[str]:
+        if not isinstance(event, CodeBuddyResponseEvent):
+            return [format_sse_event(event)]
+        if event.finish_reason is not None:
+            state.saw_finish_reason = True
+        converted_chunk = add_openai_tool_call_indexes(event, state.tool_indexes)
+        converted_chunk = normalize_openai_stream_chunk_envelope(converted_chunk, self.context)
+        return [
+            format_sse_event(chunk)
+            for chunk in state.normalizer.normalize(converted_chunk)
+        ]
+
+    @staticmethod
+    def finalize_stream(state: _OpenAIStreamState, upstream_done: bool) -> List[str]:
+        if upstream_done or state.saw_finish_reason:
+            return [format_sse_done()]
+        raise CodeBuddyStreamService._incomplete_stream_error()
+
+    @staticmethod
+    def format_stream_error(error: Any) -> str:
+        if isinstance(error, UpstreamAPIError):
+            return format_sse_event({"error": error.error})
+        return format_sse_error(str(error), "stream_error")
+
+    def create_non_stream_aggregator(self) -> StreamResponseAggregator:
+        return StreamResponseAggregator(self.context)
+
+    @staticmethod
+    def process_non_stream_event(aggregator: StreamResponseAggregator, event: Any) -> None:
+        if isinstance(event, CodeBuddyResponseEvent):
+            aggregator.process_event(event)
+
+    @staticmethod
+    def finalize_non_stream(
+            aggregator: StreamResponseAggregator,
+            upstream_done: bool,
+    ) -> Dict[str, Any]:
+        if not upstream_done and aggregator.data["finish_reason"] is None:
+            raise CodeBuddyStreamService._incomplete_stream_error()
+        return aggregator.finalize()
+
+
 class CodeBuddyStreamService:
     """CodeBuddy 流式服务。"""
 
@@ -527,6 +592,7 @@ class CodeBuddyStreamService:
             error_type=error_type or default_type,
             code=code,
             headers=headers,
+            upstream_status_code=status_code,
         )
 
     @staticmethod
@@ -633,9 +699,11 @@ class CodeBuddyStreamService:
             headers: Dict[str, str],
             *,
             response_model: Optional[str] = None,
+            response_adapter: Optional[Any] = None,
     ) -> StreamingResponse:
         """处理流式响应。"""
         response_context = self._create_response_context(payload, response_model)
+        adapter = response_adapter or OpenAIDownstreamAdapter(response_context)
 
         async def stream_core():
             client = await self.http_client_factory()
@@ -643,36 +711,28 @@ class CodeBuddyStreamService:
                 if response.status_code != 200:
                     await self._raise_upstream_api_error(response)
 
-                tool_call_index_state = ToolCallIndexState()
-                stream_normalizer = OpenAIStreamNormalizer()
-                saw_finish_reason = False
+                state = adapter.create_stream_state()
+                try:
+                    async for event in self._iter_normalized_upstream_events(response):
+                        if event is SSE_DONE:
+                            for outgoing_chunk in adapter.finalize_stream(state, True):
+                                yield outgoing_chunk
+                            return
+                        for outgoing_chunk in adapter.process_stream_event(state, event):
+                            yield outgoing_chunk
 
-                async for event in self._iter_normalized_upstream_events(response):
-                    if event is SSE_DONE:
-                        yield format_sse_done()
-                        return
-                    if not isinstance(event, CodeBuddyResponseEvent):
-                        yield format_sse_event(event)
-                        continue
+                    for outgoing_chunk in adapter.finalize_stream(state, False):
+                        yield outgoing_chunk
+                except Exception as error:
+                    from .anthropic_response import UpstreamProtocolViolation
 
-                    if event.finish_reason is not None:
-                        saw_finish_reason = True
-                    converted_chunk = add_openai_tool_call_indexes(
-                        event,
-                        tool_call_index_state,
-                    )
-                    converted_chunk = normalize_openai_stream_chunk_envelope(
-                        converted_chunk,
-                        response_context,
-                    )
-
-                    for outgoing_chunk in stream_normalizer.normalize(converted_chunk):
-                        yield format_sse_event(outgoing_chunk)
-
-                if saw_finish_reason:
-                    yield format_sse_done()
-                    return
-                raise self._incomplete_stream_error()
+                    if isinstance(error, UpstreamProtocolViolation):
+                        raise UpstreamAPIError(
+                            status_code=502,
+                            message=str(error),
+                            error_type="upstream_protocol_error",
+                        ) from error
+                    raise
 
         managed_stream = self.connection_manager.stream_with_retry(
             stream_core,
@@ -725,16 +785,24 @@ class CodeBuddyStreamService:
                         yield chunk
                 except httpx.TimeoutException as error:
                     self._observe_error("upstream_timeout", 504)
-                    yield format_sse_error(str(error), "upstream_timeout")
+                    yield adapter.format_stream_error(UpstreamAPIError(
+                        status_code=504,
+                        message=str(error),
+                        error_type="upstream_timeout",
+                    ))
                 except httpx.TransportError as error:
                     self._observe_error("upstream_transport_error", 502)
-                    yield format_sse_error(str(error), "upstream_transport_error")
+                    yield adapter.format_stream_error(UpstreamAPIError(
+                        status_code=502,
+                        message=str(error),
+                        error_type="upstream_transport_error",
+                    ))
                 except UpstreamAPIError as error:
                     self._observe_error(error.error["type"], error.status_code)
-                    yield format_sse_event({"error": error.error})
+                    yield adapter.format_stream_error(error)
                 except Exception as error:
                     self._observe_error("stream_error")
-                    yield format_sse_error(str(error), "stream_error")
+                    yield adapter.format_stream_error(error)
             finally:
                 await managed_stream.aclose()
 
@@ -742,8 +810,8 @@ class CodeBuddyStreamService:
             response_body(),
             managed_stream.aclose,
             self._observe_client_disconnect,
-            media_type="text/event-stream",
-            headers=SSE_HEADERS,
+            media_type=adapter.media_type,
+            headers=adapter.stream_headers,
         )
 
     async def handle_non_stream_response(
@@ -752,9 +820,11 @@ class CodeBuddyStreamService:
             headers: Dict[str, str],
             *,
             response_model: Optional[str] = None,
+            response_adapter: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """聚合上游流式响应，返回 OpenAI 非流式响应。"""
         response_context = self._create_response_context(payload, response_model)
+        adapter = response_adapter or OpenAIDownstreamAdapter(response_context)
 
         async def request_once() -> Dict[str, Any]:
             client = await self.http_client_factory()
@@ -767,22 +837,25 @@ class CodeBuddyStreamService:
                 if response.status_code != 200:
                     await self._raise_upstream_api_error(response)
 
-                aggregator = StreamResponseAggregator(response_context)
-                saw_completion_marker = False
-                async for event in self._iter_normalized_upstream_events(response):
-                    if event is SSE_DONE:
-                        saw_completion_marker = True
-                        break
-                    if not isinstance(event, CodeBuddyResponseEvent):
-                        continue
-                    if event.finish_reason is not None:
-                        saw_completion_marker = True
-                    aggregator.process_event(event)
+                aggregator = adapter.create_non_stream_aggregator()
+                upstream_done = False
+                try:
+                    async for event in self._iter_normalized_upstream_events(response):
+                        if event is SSE_DONE:
+                            upstream_done = True
+                            break
+                        adapter.process_non_stream_event(aggregator, event)
+                    return adapter.finalize_non_stream(aggregator, upstream_done)
+                except Exception as error:
+                    from .anthropic_response import UpstreamProtocolViolation
 
-                if not saw_completion_marker:
-                    raise self._incomplete_stream_error()
-
-            return aggregator.finalize()
+                    if isinstance(error, UpstreamProtocolViolation):
+                        raise UpstreamAPIError(
+                            status_code=502,
+                            message=str(error),
+                            error_type="upstream_protocol_error",
+                        ) from error
+                    raise
 
         try:
             return await self.connection_manager.run_with_retry(

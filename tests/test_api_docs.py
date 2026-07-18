@@ -72,9 +72,32 @@ class ApiDocumentationTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
             schema["components"]["securitySchemes"]["SessionCookie"],
             {"type": "apiKey", "in": "cookie", "name": SESSION_COOKIE_NAME},
         )
+        self.assertEqual(
+            schema["components"]["securitySchemes"]["AnthropicApiKey"],
+            {"type": "apiKey", "in": "header", "name": "x-api-key"},
+        )
+        self.assertEqual(
+            schema["components"]["securitySchemes"]["AnthropicBearer"],
+            {"type": "http", "scheme": "bearer", "bearerFormat": "sk-..."},
+        )
         for path in ("/openai/v1/models", "/openai/v1/chat/completions"):
             method = "get" if path.endswith("models") else "post"
             self.assertEqual(schema["paths"][path][method]["security"], [{"ApiKeyBearer": []}])
+        for path, method in (
+            ("/anthropic/v1/models", "get"),
+            ("/anthropic/v1/messages", "post"),
+            ("/anthropic/v1/messages/count_tokens", "post"),
+        ):
+            self.assertEqual(
+                schema["paths"][path][method]["security"],
+                [{"AnthropicApiKey": []}, {"AnthropicBearer": []}],
+            )
+            parameters = schema["paths"][path][method]["parameters"]
+            by_name = {parameter["name"]: parameter for parameter in parameters}
+            self.assertTrue(by_name["anthropic-version"]["required"])
+            self.assertFalse(by_name["anthropic-beta"]["required"])
+            self.assertEqual(by_name["anthropic-version"]["schema"]["type"], "string")
+            self.assertEqual(by_name["anthropic-beta"]["schema"]["type"], "string")
 
         session_operations = (
             ("/auth/session", "get"),
@@ -125,6 +148,36 @@ class ApiDocumentationTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
             {"type": "array", "minItems": 1, "items": {"type": "object"}},
         )
 
+        anthropic_operation = schema["paths"]["/anthropic/v1/messages"]["post"]
+        anthropic_schema = anthropic_operation["requestBody"]["content"][
+            "application/json"
+        ]["schema"]
+        self.assertTrue(anthropic_schema["additionalProperties"])
+        self.assertIn("output_config", anthropic_schema["properties"])
+        anthropic_message = anthropic_schema["properties"]["messages"]["items"]
+        self.assertTrue(anthropic_message["additionalProperties"])
+        self.assertEqual(
+            anthropic_message["properties"]["role"]["enum"],
+            ["user", "assistant", "system"],
+        )
+
+        count_responses = schema["paths"]["/anthropic/v1/messages/count_tokens"][
+            "post"
+        ]["responses"]
+        self.assertNotIn("200", count_responses)
+        self.assertIn("404", count_responses)
+        count_error_schema = count_responses["404"]["content"]["application/json"][
+            "schema"
+        ]
+        self.assertEqual(
+            count_error_schema["required"],
+            ["type", "error", "request_id"],
+        )
+        self.assertEqual(
+            count_error_schema["properties"]["error"]["properties"]["type"]["enum"],
+            ["not_found_error"],
+        )
+
         credential_create_schema = schema["components"]["schemas"]["CredentialCreateRequest"]
         self.assertEqual(set(credential_create_schema["properties"]), {"bearer_token"})
         token_schema = credential_create_schema["properties"]["bearer_token"]
@@ -149,6 +202,9 @@ class ApiDocumentationTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         paths = (await self._request("/openapi.json", session=True)).json()["paths"]
 
         self.assertIn("/openai/v1/models", paths)
+        self.assertIn("/anthropic/v1/models", paths)
+        self.assertIn("/anthropic/v1/messages", paths)
+        self.assertIn("/anthropic/v1/messages/count_tokens", paths)
         self.assertIn("/auth/login", paths)
         self.assertIn("/api/admin/status", paths)
         self.assertIn("/codebuddy/auth/start", paths)
@@ -156,6 +212,8 @@ class ApiDocumentationTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.assertIn("/health", paths)
         self.assertNotIn("/api/admin/playground/openai/v1/models", paths)
         self.assertNotIn("/api/admin/playground/openai/v1/chat/completions", paths)
+        self.assertNotIn("/api/admin/playground/anthropic/v1/models", paths)
+        self.assertNotIn("/api/admin/playground/anthropic/v1/messages", paths)
         self.assertNotIn("/", paths)
         self.assertNotIn("/docs", paths)
         self.assertNotIn("/redoc", paths)

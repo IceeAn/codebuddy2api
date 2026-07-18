@@ -29,6 +29,15 @@ export interface ChatCompletionRequest {
   [key: string]: unknown;
 }
 
+/** 管理台文本 playground 使用的 Anthropic Messages 请求子集。 */
+export interface AnthropicMessageRequest {
+  model: string;
+  max_tokens: number;
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+  system?: string;
+  stream?: boolean;
+}
+
 /** CodeBuddy OAuth 授权成功后仅确认凭证已安全落盘。 */
 export interface CodeBuddyPollAuthResponse {
   saved?: boolean;

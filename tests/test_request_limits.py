@@ -86,6 +86,57 @@ class RequestBodyLimitMiddlewareTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(sent[0]["status"], 400)
 
+    async def test_anthropic_declared_and_streamed_errors_use_protocol_envelope(self):
+        declared = await self._request(
+            self._app(),
+            "/anthropic/v1/messages",
+            content=b"123456789",
+        )
+        self.assertEqual(declared.status_code, 413)
+        self.assertEqual(declared.json()["error"]["type"], "request_too_large")
+        self.assertEqual(declared.json()["request_id"], declared.headers["request-id"])
+
+        async def chunks():
+            for chunk in (b"123", b"456", b"789"):
+                yield chunk
+
+        streamed = await self._request(
+            self._app(),
+            "/api/admin/playground/anthropic/v1/messages",
+            content=chunks(),
+        )
+        self.assertEqual(streamed.status_code, 413)
+        self.assertEqual(streamed.json()["error"]["type"], "request_too_large")
+        self.assertEqual(streamed.json()["request_id"], streamed.headers["request-id"])
+
+    async def test_anthropic_malformed_content_length_reuses_existing_request_id(self):
+        middleware = RequestBodyLimitMiddleware(
+            self._app(),
+            max_body_bytes=8,
+            login_max_body_bytes=4,
+        )
+        sent = []
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message):
+            sent.append(message)
+
+        await middleware(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/anthropic/v1/messages",
+                "state": {"anthropic_request_id": "req_existing"},
+                "headers": [(b"content-length", b"invalid")],
+            },
+            receive,
+            send,
+        )
+        self.assertEqual(sent[0]["status"], 400)
+        self.assertIn((b"request-id", b"req_existing"), sent[0]["headers"])
+
     async def test_non_http_scope_passes_through(self):
         scopes = []
 

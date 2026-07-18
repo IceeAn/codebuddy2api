@@ -104,8 +104,11 @@ describe('DashboardView', () => {
     expect(wrapper.text()).toContain('今日请求|0');
     expect(wrapper.text()).toContain('-');
 
-    const copyButton = wrapper.findAll('button').find((button) => button.text().includes('复制'));
-    await copyButton?.trigger('click');
+    for (const copyButton of wrapper
+      .findAll('button')
+      .filter((button) => button.text().includes('复制'))) {
+      await copyButton.trigger('click');
+    }
     expect(copyMock).not.toHaveBeenCalled();
   });
 
@@ -115,6 +118,7 @@ describe('DashboardView', () => {
       status: 'healthy',
       uptime_seconds: 65,
       api_base_url: 'http://localhost/openai/v1',
+      anthropic_api_base_url: 'http://localhost/anthropic',
       credentials: {
         valid: 2,
         total: 3,
@@ -136,12 +140,22 @@ describe('DashboardView', () => {
     expect(wrapper.text()).toContain('今日请求|7');
     expect(wrapper.text()).toContain('00:01:05');
     expect(wrapper.text()).toContain('服务运行时长');
+    expect(wrapper.text()).toContain('接受并忽略 anthropic-beta、output_config');
     expect(wrapper.text()).not.toContain('模型使用');
     expect(wrapper.text()).not.toContain('凭证使用');
 
     const copyButton = wrapper.findAll('button').find((button) => button.text().includes('复制'));
     await copyButton?.trigger('click');
     expect(copyMock).toHaveBeenCalledWith('http://localhost/openai/v1', '客户端入口地址已复制');
+
+    const anthropicCopy = wrapper
+      .findAll('button')
+      .find((button) => button.text().includes('复制 Claude Code 地址'));
+    await anthropicCopy?.trigger('click');
+    expect(copyMock).toHaveBeenCalledWith(
+      'http://localhost/anthropic',
+      'Claude Code 入口地址已复制',
+    );
 
     await wrapper
       .findAll('.stat')

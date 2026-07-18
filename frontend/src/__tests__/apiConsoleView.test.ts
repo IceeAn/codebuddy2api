@@ -2,9 +2,18 @@ import { defineComponent, h } from 'vue';
 import { mount } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../api/client';
-import type { openaiPlaygroundApi } from '../api/admin';
+import type { anthropicPlaygroundApi, openaiPlaygroundApi } from '../api/admin';
 
-const { modelsQuery, toastMock, chatMock, validateMock } = vi.hoisted(() => {
+const {
+  modelsQuery,
+  queryOptions,
+  toastMock,
+  openaiModelsMock,
+  chatMock,
+  anthropicChatMock,
+  anthropicModelsMock,
+  validateMock,
+} = vi.hoisted(() => {
   const refValue = <T>(value: T) => ({ __v_isRef: true as const, value });
   return {
     modelsQuery: {
@@ -15,19 +24,26 @@ const { modelsQuery, toastMock, chatMock, validateMock } = vi.hoisted(() => {
       isFetching: refValue(false),
       refetch: vi.fn<() => Promise<unknown>>(),
     },
+    queryOptions: { value: undefined as any },
     toastMock: {
       success: vi.fn<(message: string, duration?: number) => void>(),
       error: vi.fn<(message: string, duration?: number) => void>(),
       warning: vi.fn<(message: string, duration?: number) => void>(),
       info: vi.fn<(message: string, duration?: number) => void>(),
     },
+    openaiModelsMock: vi.fn<typeof openaiPlaygroundApi.models>(),
     chatMock: vi.fn<typeof openaiPlaygroundApi.chat>(),
+    anthropicChatMock: vi.fn<typeof anthropicPlaygroundApi.chat>(),
+    anthropicModelsMock: vi.fn<typeof anthropicPlaygroundApi.models>(),
     validateMock: vi.fn<() => Promise<void>>(),
   };
 });
 
 vi.mock('@tanstack/vue-query', () => ({
-  useQuery: () => modelsQuery,
+  useQuery: (options: unknown) => {
+    queryOptions.value = options;
+    return modelsQuery;
+  },
 }));
 
 vi.mock('../composables/useToast', () => ({
@@ -36,8 +52,12 @@ vi.mock('../composables/useToast', () => ({
 
 vi.mock('../api/admin', () => ({
   openaiPlaygroundApi: {
-    models: vi.fn<typeof openaiPlaygroundApi.models>(),
+    models: openaiModelsMock,
     chat: chatMock,
+  },
+  anthropicPlaygroundApi: {
+    models: anthropicModelsMock,
+    chat: anthropicChatMock,
   },
 }));
 
@@ -209,6 +229,8 @@ describe('ApiConsoleView', () => {
     modelsQuery.isFetching.value = false;
     modelsQuery.refetch.mockReset();
     chatMock.mockReset();
+    anthropicChatMock.mockReset();
+    anthropicModelsMock.mockReset();
     toastMock.success.mockReset();
     toastMock.error.mockReset();
     toastMock.warning.mockReset();
@@ -261,6 +283,104 @@ describe('ApiConsoleView', () => {
     expect(toastMock.success).toHaveBeenCalledWith('请求完成');
     expect(state.loading).toBe(false);
     expect(state.abortController).toBeNull();
+  });
+
+  it('切换 Anthropic 后隔离模型查询、转换请求并清空进行中输出', async () => {
+    anthropicModelsMock.mockResolvedValue({ data: [{ id: 'anthropic/codebuddy/glm' }] });
+    anthropicChatMock.mockResolvedValue(response('{"type":"message"}'));
+    const wrapper = mountView();
+    const state = (wrapper.vm.$ as any).setupState;
+    state.selectedModel = 'old';
+    state.output = 'old output';
+    const abort = vi.fn<AbortController['abort']>();
+    state.abortController = { abort };
+
+    await wrapper.findComponent({ name: 'CRadioGroup' }).vm.$emit('update:modelValue', 'anthropic');
+    await wrapper.vm.$nextTick();
+
+    expect(abort).toHaveBeenCalledOnce();
+    expect(state.selectedModel).toBe('');
+    expect(state.output).toBe('点击发送查看响应');
+    expect(queryOptions.value.queryKey.value).toEqual([
+      'admin',
+      'test-user',
+      'playground',
+      'anthropic',
+      'models',
+    ]);
+    const modelController = new AbortController();
+    await expect(queryOptions.value.queryFn({ signal: modelController.signal })).resolves.toEqual({
+      data: [{ id: 'anthropic/codebuddy/glm' }],
+    });
+    expect(anthropicModelsMock).toHaveBeenCalledWith(modelController.signal);
+    state.protocol = 'openai';
+    await wrapper.vm.$nextTick();
+    await queryOptions.value.queryFn({ signal: modelController.signal });
+    expect(openaiModelsMock).toHaveBeenCalledWith(modelController.signal);
+    state.protocol = 'anthropic';
+    await wrapper.vm.$nextTick();
+
+    state.prompt = 'hello';
+    await state.send();
+    expect(anthropicChatMock).toHaveBeenCalledWith(
+      {
+        model: 'anthropic/codebuddy/glm-5.2',
+        max_tokens: 1024,
+        system: 'You are a helpful assistant.',
+        messages: [{ role: 'user', content: 'hello' }],
+        stream: false,
+      },
+      expect.any(AbortSignal),
+    );
+    expect(chatMock).not.toHaveBeenCalled();
+  });
+
+  it('Anthropic 流保留事件名并以 message_stop 完成', async () => {
+    anthropicChatMock.mockResolvedValue(
+      response(
+        'event: message_start\ndata: {"type":"message_start"}\n\n' +
+          'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"ok"}}\n\n' +
+          'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+      ),
+    );
+    const wrapper = mountView();
+    const state = (wrapper.vm.$ as any).setupState;
+    state.protocol = 'anthropic';
+    state.stream = true;
+    await wrapper.vm.$nextTick();
+
+    await state.send();
+
+    expect(state.output).toContain('"event": "content_block_delta"');
+    expect(state.output).toContain('"event": "message_stop"');
+    expect(toastMock.success).toHaveBeenCalledWith('流式请求完成');
+  });
+
+  it('Anthropic 流不把 DONE 当完成，协议切换取消时不覆盖已清空输出', async () => {
+    anthropicChatMock
+      .mockResolvedValueOnce(response('data: [DONE]\n\n'))
+      .mockImplementationOnce((_body, signal) => {
+        return new Promise((_, reject) => {
+          signal?.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError')),
+          );
+        });
+      });
+    const wrapper = mountView();
+    const state = (wrapper.vm.$ as any).setupState;
+    state.protocol = 'anthropic';
+    state.stream = true;
+    await wrapper.vm.$nextTick();
+
+    await state.send();
+    expect(state.output).toBe('流式响应在 message_stop 之前结束');
+
+    const pending = state.send();
+    await vi.waitFor(() => expect(state.loading).toBe(true));
+    state.protocol = 'openai';
+    await wrapper.vm.$nextTick();
+    await pending;
+    expect(state.output).toBe('点击发送查看响应');
   });
 
   it('请求期间固定发送时的流式模式并禁用模式开关', async () => {

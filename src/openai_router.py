@@ -9,10 +9,11 @@ from .auth_router import require_api_key_user, require_session_user
 from .auth_types import AuthenticatedUser
 from .codebuddy_api_client import codebuddy_api_client
 from .codebuddy_token_manager import get_token_manager_for_user
+from .chat_execution import execute_codebuddy_chat
 from .models_manager import models_manager
 from .private_response import PrivateNoStoreRoute
 from .request_processor import RequestProcessor
-from .stream_service import CodeBuddyStreamService
+from .stream_service import CodeBuddyStreamService, UpstreamAPIError
 from .usage_stats_context import UsageStatsContext, create_usage_stats_context
 
 logger = logging.getLogger(__name__)
@@ -154,62 +155,31 @@ async def chat_completions(
                 stats_context.mark_failure("validation_error", error.status_code)
             raise
 
-        token_manager = get_token_manager_for_user(_user)
+        prepared_request = RequestProcessor.prepare_request(request_body, _user)
         try:
-            selected = CredentialManager.get_valid_credential_selection(token_manager)
+            return await execute_codebuddy_chat(
+                prepared_request,
+                _user,
+                stats_context=stats_context,
+                conversation_headers={
+                    "conversation_id": x_conversation_id,
+                    "conversation_request_id": x_conversation_request_id,
+                    "conversation_message_id": x_conversation_message_id,
+                    "request_id": x_request_id,
+                },
+                token_manager_factory=get_token_manager_for_user,
+                credential_selector=CredentialManager.get_valid_credential_selection,
+                header_generator=codebuddy_api_client.generate_codebuddy_headers,
+                service_factory=CodeBuddyStreamService,
+            )
         except HTTPException as error:
-            if stats_context is not None:
+            if (
+                    stats_context is not None
+                    and error.status_code == 401
+                    and not isinstance(error, UpstreamAPIError)
+            ):
                 stats_context.mark_failure("no_credential", error.status_code)
             raise
-        if isinstance(selected, tuple) and len(selected) == 2:
-            credential_id, credential = selected
-        else:
-            credential = selected
-            credential_id = None
-        if stats_context is not None:
-            if credential_id is None:
-                current_info = token_manager.get_current_credential_info()
-                credential_id = current_info.get("credential_id")
-            else:
-                current_info = token_manager.get_credential_info_by_id(credential_id) or {}
-            credential_label = (
-                current_info.get("filename")
-                or current_info.get("user_id")
-                or credential_id
-            )
-            stats_context.capture_credential(credential_id, credential_label)
-
-        headers = codebuddy_api_client.generate_codebuddy_headers(
-            bearer_token=credential.get("bearer_token"),
-            user_id=credential.get("user_id"),
-            account_uid=credential.get("account_uid"),
-            domain=credential.get("domain"),
-            enterprise_id=credential.get("enterprise_id"),
-            department_full_name=credential.get("department_full_name"),
-            conversation_id=x_conversation_id,
-            conversation_request_id=x_conversation_request_id,
-            conversation_message_id=x_conversation_message_id,
-            request_id=x_request_id,
-        )
-
-        prepared_request = RequestProcessor.prepare_request(request_body, _user)
-        payload = prepared_request.payload
-        if stats_context is not None:
-            stats_context.capture_prepared_request(payload)
-
-        service = CodeBuddyStreamService(observer=stats_context)
-
-        if prepared_request.client_wants_stream:
-            return await service.handle_stream_response(
-                payload,
-                headers,
-                response_model=prepared_request.response_model,
-            )
-        return await service.handle_non_stream_response(
-            payload,
-            headers,
-            response_model=prepared_request.response_model,
-        )
 
     except HTTPException:
         raise

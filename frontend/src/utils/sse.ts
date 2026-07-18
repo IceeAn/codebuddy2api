@@ -1,5 +1,7 @@
 export type SseDecodeResult =
-  { type: 'message'; data: unknown } | { type: 'done' } | { type: 'error'; message: string };
+  | { type: 'message'; data: unknown; event?: string }
+  | { type: 'done' }
+  | { type: 'error'; message: string };
 
 const EVENT_SEPARATOR = /(?:\r\n|\r|\n)(?:\r\n|\r|\n)/;
 
@@ -51,7 +53,17 @@ function decodeEvent(rawEvent: string): SseDecodeResult | null {
   if (isRecord(data) && Object.prototype.hasOwnProperty.call(data, 'error')) {
     return { type: 'error', message: describeErrorEnvelope(data.error) };
   }
-  return { type: 'message', data };
+  const event = extractEventName(rawEvent);
+  return event ? { type: 'message', event, data } : { type: 'message', data };
+}
+
+function extractEventName(rawEvent: string): string | undefined {
+  for (const line of rawEvent.split(/\r\n|\r|\n/)) {
+    if (!line.startsWith('event:')) continue;
+    const value = line.slice(6).trim();
+    if (value) return value;
+  }
+  return undefined;
 }
 
 function describeErrorEnvelope(error: unknown): string {
