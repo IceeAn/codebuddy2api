@@ -106,6 +106,21 @@ class CredentialManager:
             logger.error("获取凭证失败: %s", e)
             raise HTTPException(status_code=401, detail="凭证获取失败")
 
+    @staticmethod
+    def get_valid_credential_selection(token_manager) -> Any:
+        """原子获取稳定凭证 ID 与有效凭证。"""
+        try:
+            selector_method = getattr(type(token_manager), "select_next_credential", None)
+            if not callable(selector_method):
+                return CredentialManager.get_valid_credential(token_manager)
+            selected = token_manager.select_next_credential()
+            if not selected or not selected[1].get("bearer_token"):
+                raise HTTPException(status_code=401, detail="没有可用的CodeBuddy凭证")
+            return selected
+        except Exception as error:
+            logger.error("获取凭证失败: %s", error)
+            raise HTTPException(status_code=401, detail="凭证获取失败") from error
+
 
 async def chat_completions(
         request: Request,
@@ -141,20 +156,38 @@ async def chat_completions(
 
         token_manager = get_token_manager_for_user(_user)
         try:
-            credential = CredentialManager.get_valid_credential(token_manager)
+            selected = CredentialManager.get_valid_credential_selection(token_manager)
         except HTTPException as error:
             if stats_context is not None:
                 stats_context.mark_failure("no_credential", error.status_code)
             raise
+        credential_generation = None
+        if isinstance(selected, tuple) and len(selected) in (2, 3):
+            credential_id, credential = selected[:2]
+            if len(selected) == 3:
+                credential_generation = selected[2]
+        else:
+            credential = selected
+            credential_id = None
         if stats_context is not None:
-            current_info = token_manager.get_current_credential_info()
-            credential_id = current_info.get("credential_id")
+            if credential_id is None:
+                current_info = token_manager.get_current_credential_info()
+                credential_id = current_info.get("credential_id")
+            else:
+                current_info = token_manager.get_credential_info_by_id(credential_id) or {}
             credential_label = (
                 current_info.get("filename")
                 or current_info.get("user_id")
                 or credential_id
             )
-            stats_context.capture_credential(credential_id, credential_label)
+            if credential_generation is None:
+                stats_context.capture_credential(credential_id, credential_label)
+            else:
+                stats_context.capture_credential(
+                    credential_id,
+                    credential_label,
+                    generation=credential_generation,
+                )
 
         headers = codebuddy_api_client.generate_codebuddy_headers(
             bearer_token=credential.get("bearer_token"),

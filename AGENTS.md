@@ -91,7 +91,8 @@ docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:
 - 刷新端点一旦返回轮换后的 refresh token，必须先按凭证代次原子持久化，再同步账号列表；账号同步失败或服务关闭时保留可恢复的 pending 状态。pending access token 仍有效或过期时间未知时，后续扫描只重试账号阶段；过期时间未知的 token 即使账号接口返回 401/403 也不得刷新。仅当过期时间已知，且 token 已过期或账号接口明确返回 401/403 时，才可使用 pending 状态中已持久化且未过期的当前 refresh token 重新刷新，不能用旧快照再次调用刷新端点。关闭刷新管理器必须取消主扫描和实际在途任务，不能只设置 stop event 后无限等待。
 - 每个系统用户拥有独立凭证目录和 Token 管理器。凭证轮换开关是用户级设置，轮换频率必须为正整数。
 - CodeBuddy `/v3/config` URL、`Host` 和 `X-Domain` 必须由同一个当前 API endpoint 派生。
-- 模型缓存键至少包含系统用户与 `credential_id`。凭证过期、删除或失效时必须同时驱逐缓存并作废在途查询；旧请求结果不能写回，也不能被同 ID 的新凭证复用。过期值不得作为失败回退，并发未命中使用 per-key single-flight 合并。
+- 凭证额度探测按 `enterprise_id` 分流：个人版使用 `/v2/billing/meter/get-user-resource`，额度以本周期的 `CycleCapacity*Precise` 为准、缺失时仅回退对应 `CycleCapacity*`，不能使用可能保持套餐初始值的 `Capacity*`；企业版使用 `/v2/billing/meter/get-enterprise-user-usage`，其中 `credit` 是已用额度、`limitNum` 是总额度。个人版响应中的 `Accounts: null` 或 `Accounts: []` 均表示探测成功但没有可展示的个人版额度，前端显示“未探测到个人版额度”；缺少 `Accounts` 字段或其余异常结构仍需失败。两类额度只用于探测与展示，不参与凭证轮换或统计 billing 语义。
+- 模型缓存键至少包含系统用户与 `credential_id`。凭证过期、删除或失效时必须同时驱逐缓存并作废在途查询；旧请求结果不能写回，也不能被同 ID 的新凭证复用。凭证删除的文件操作、内存重载与代次推进必须原子，删除失败不得推进普通代次或额度代次；账号切换仅在规范 `account_id` 确实变化时推进额度代次。过期值不得作为失败回退，并发未命中使用 per-key single-flight 合并。
 
 ## 统计系统
 
@@ -104,6 +105,7 @@ docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:
 
 ## 前端约定
 
+- `RouterView` 的页面组件由 `Transition mode="out-in"` 承载，必须只有一个根节点；页面级弹窗即使内部使用 Teleport，也必须放在该根节点内，否则进出场完成钩子会丢失，导致路由白屏与主题按钮持续禁用。
 - 管理数据的 Vue Query key 必须以 `['admin', username, ...]` 开头。登出、本地会话 401 或用户名变化时，同时清空 Query Cache 和 Mutation Cache。
 - 查询和 mutation 使用 `networkMode="always"`，查询禁用 `refetchOnReconnect`，保证离线时立即失败且联网后不补发。手动刷新和重试统一使用 `RefreshButton`；它需在 refetch 前检查离线状态，并独立维持最短加载反馈，不能只依赖 `isFetching`。
 - 前端请求超时必须覆盖后端串行上游调用的总上限并预留处理时间；调用方 AbortSignal 和业务总截止时间仍可提前取消请求。

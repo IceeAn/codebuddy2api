@@ -510,6 +510,7 @@ class CredentialRefreshManager:
         updated = TokenParser.build_credential_data(switched)
         if credential.get("compatibility_data") is not None:
             updated["compatibility_data"] = credential["compatibility_data"]
+        quota_changed = updated.get("account_id") != credential.get("account_id")
         from .models_manager import models_manager
 
         models_manager.invalidate_credential(
@@ -520,6 +521,7 @@ class CredentialRefreshManager:
             credential_id,
             updated,
             expected_generation=generation,
+            quota_changed=quota_changed,
         ):
             raise CredentialRefreshError("generation_conflict")
         return True

@@ -1,5 +1,6 @@
 """一次可计费请求的脱敏统计上下文。"""
 
+import logging
 import re
 import time
 from typing import Any, Callable, Iterable, Mapping, Optional
@@ -8,6 +9,8 @@ from .auth_types import AuthenticatedUser
 from .stream_service import StreamObservation
 from .usage_stats_middleware import USAGE_STATS_CONTEXT_STATE_KEY
 from .usage_stats_store import UsageEvent, UsageStatsStore, normalize_usage, usage_stats_store
+
+logger = logging.getLogger(__name__)
 
 
 _CONTROLLED_ERROR_TYPES = frozenset({
@@ -108,6 +111,7 @@ class UsageStatsContext:
             time_factory: Callable[[], float] = time.time,
             monotonic_factory: Callable[[], float] = time.monotonic,
             known_models: Optional[Iterable[str]] = None,
+            quota_usage_consumer: Optional[Callable[..., None]] = None,
     ) -> None:
         self.username = user.username
         self._source = source
@@ -116,6 +120,7 @@ class UsageStatsContext:
         self._store = store
         self._time_factory = time_factory
         self._monotonic_factory = monotonic_factory
+        self._quota_usage_consumer = quota_usage_consumer
         self._occurred_at = int(time_factory())
         self._started_monotonic = monotonic_factory()
         self._completed = False
@@ -139,6 +144,7 @@ class UsageStatsContext:
         self._confirmed_upstream_model = None
         self._credential_id = None
         self._credential_label = None
+        self._credential_generation = None
         self._client_stream = None
         self._thinking_mode = None
         self._message_count = None
@@ -213,9 +219,16 @@ class UsageStatsContext:
         self.capture_request_shape(request_body)
         self.capture_prepared_request(prepared_payload)
 
-    def capture_credential(self, credential_id: Optional[str], label: Optional[str]) -> None:
+    def capture_credential(
+            self,
+            credential_id: Optional[str],
+            label: Optional[str],
+            *,
+            generation: Optional[int] = None,
+    ) -> None:
         self._credential_id = str(credential_id) if credential_id is not None else None
         self._credential_label = str(label) if label is not None else None
+        self._credential_generation = generation
 
     def mark_failure(self, error_type: str, result_status: Optional[int] = None) -> None:
         self._error_type = _normalize_error_type(error_type, result_status)
@@ -341,6 +354,21 @@ class UsageStatsContext:
             first_reasoning_ms=self._first_reasoning_ms,
             first_content_ms=self._first_content_ms,
         )
+        if (
+                self._quota_usage_consumer is not None
+                and event.credential_id is not None
+                and event.credit is not None
+        ):
+            try:
+                self._quota_usage_consumer(
+                    self.username,
+                    event.credential_id,
+                    event.credit,
+                    credential_generation=self._credential_generation,
+                    occurred_at=event.occurred_at,
+                )
+            except Exception:
+                logger.exception("更新凭证额度估算失败，继续写入请求统计")
         self._store.record_event(event, username=self.username)
 
     @staticmethod
@@ -366,12 +394,15 @@ def create_usage_stats_context(
         monotonic_factory: Callable[[], float] = time.monotonic,
 ) -> UsageStatsContext:
     """创建上下文并挂到共享 ASGI state，供最终响应中间件收口。"""
+    from .credential_quota import credential_quota_manager
+
     context = UsageStatsContext(
         user,
         source,
         store=store,
         time_factory=time_factory,
         monotonic_factory=monotonic_factory,
+        quota_usage_consumer=credential_quota_manager.apply_usage,
     )
     setattr(request.state, USAGE_STATS_CONTEXT_STATE_KEY, context)
     return context

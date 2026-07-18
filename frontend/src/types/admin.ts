@@ -251,6 +251,34 @@ export interface CredentialRecord {
   has_refresh_token: boolean;
   has_token: boolean;
   token_display: string;
+  quota?: CredentialQuota;
+}
+
+export type CredentialQuotaStatus = 'unknown' | 'fresh' | 'stale' | 'error';
+
+export interface CredentialQuotaPackage {
+  name: string;
+  total: number;
+  remaining: number;
+  used: number;
+  cycle_start: string | null;
+  cycle_end: string | null;
+}
+
+export interface CredentialQuota {
+  status: CredentialQuotaStatus;
+  quota_type: 'personal' | 'enterprise';
+  quota_available: boolean | null;
+  total: number | null;
+  remaining: number | null;
+  remaining_percent: number | null;
+  estimated: boolean;
+  estimated_credit_since_sync: number;
+  last_attempt_at: number | null;
+  last_success_at: number | null;
+  last_estimated_at: number | null;
+  error_type: string | null;
+  packages: CredentialQuotaPackage[];
 }
 
 export interface CredentialAccount {

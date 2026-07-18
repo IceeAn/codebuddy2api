@@ -310,8 +310,21 @@ describe('CTooltip', () => {
     expect(classes).toContain('text-tooltip-text');
     expect(classes).toContain('text-xs');
     expect(classes).toContain('w-max');
-    expect(classes).toContain('max-w-[20rem]');
+    expect(classes).toContain('max-w-[min(24rem,calc(100vw-16px))]');
+    expect(classes).toContain('pointer-events-none');
     expect(classes.some((className) => className.startsWith('dark:'))).toBe(false);
+  });
+
+  it('clickable 模式显示后允许浮层接收鼠标事件', async () => {
+    const wrapper = mount(CTooltip, {
+      props: { content: '交互提示', clickable: true },
+      slots: { default: '<button>触发</button>' },
+    });
+    await wrapper.trigger('mouseenter');
+    vi.advanceTimersByTime(300);
+    await flushPromises();
+
+    expect(getPopoverClasses()).not.toContain('pointer-events-none');
   });
 
   it('短中文提示按内容宽度展开，避免在表格图标按钮上单字换行', async () => {
@@ -327,7 +340,7 @@ describe('CTooltip', () => {
     expect(popover).not.toBeNull();
     expect(popover?.textContent).toBe('测试凭证');
     expect(getPopoverClasses()).toContain('w-max');
-    expect(getPopoverClasses()).toContain('max-w-[20rem]');
+    expect(getPopoverClasses()).toContain('max-w-[min(24rem,calc(100vw-16px))]');
   });
 
   it('长连续文本在最大宽度内允许换行', async () => {
@@ -342,9 +355,63 @@ describe('CTooltip', () => {
     await flushPromises();
 
     const classes = getPopoverClasses();
-    expect(classes).toContain('max-w-[20rem]');
+    expect(classes).toContain('max-w-[min(24rem,calc(100vw-16px))]');
     expect(classes).toContain('whitespace-normal');
     expect(classes).toContain('break-words');
+  });
+
+  it('小屏幕下最大宽度扣除两侧 8px 间隔，并限制在视口边缘内', async () => {
+    const clientWidthSpy = vi
+      .spyOn(document.documentElement, 'clientWidth', 'get')
+      .mockReturnValue(400);
+    const clientHeightSpy = vi
+      .spyOn(document.documentElement, 'clientHeight', 'get')
+      .mockReturnValue(300);
+    const rectSpy = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement) {
+        if (this.classList.contains('c-tooltip-popover')) {
+          return {
+            x: 0,
+            y: 0,
+            left: 0,
+            top: 0,
+            right: 384,
+            bottom: 100,
+            width: 384,
+            height: 100,
+            toJSON: () => ({}),
+          };
+        }
+        return {
+          x: 0,
+          y: 0,
+          left: 0,
+          top: 0,
+          right: 20,
+          bottom: 20,
+          width: 20,
+          height: 20,
+          toJSON: () => ({}),
+        };
+      });
+    const wrapper = mount(CTooltip, {
+      props: { content: '小屏幕提示' },
+      slots: { default: '<button>触发</button>' },
+    });
+
+    await wrapper.trigger('mouseenter');
+    vi.advanceTimersByTime(300);
+    await flushPromises();
+
+    const popover = getPopover();
+    expect(popover?.style.left).toBe('8px');
+    expect(popover?.style.top).toBe('8px');
+    expect(getPopoverClasses()).toContain('max-w-[min(24rem,calc(100vw-16px))]');
+
+    rectSpy.mockRestore();
+    clientHeightSpy.mockRestore();
+    clientWidthSpy.mockRestore();
   });
 
   it('浮层含 Transition 组件', async () => {

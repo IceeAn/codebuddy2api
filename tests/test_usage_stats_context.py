@@ -140,6 +140,50 @@ class UsageStatsContextTests(unittest.TestCase):
         self.assertNotIn("private prompt", serialized)
         self.assertNotIn("private-tool", serialized)
 
+    def test_observed_credit_updates_quota_once_even_when_request_failed(self):
+        store = FakeStore()
+        quota_consumer = mock.Mock()
+        context = UsageStatsContext(
+            AuthenticatedUser("admin", "api_key"),
+            "external_api",
+            store=store,
+            quota_usage_consumer=quota_consumer,
+            time_factory=lambda: 1_234,
+            monotonic_factory=mock.Mock(side_effect=[1.0, 1.1, 1.2]),
+        )
+        context.capture_credential("credential-1", "credential.json", generation=7)
+        context(StreamObservation(kind="upstream_event", usage={"credit": 0.75}))
+        context.mark_failure("upstream_error", 502)
+
+        context.complete_response(http_status=502, response_bytes=0, client_disconnected=False)
+        context.complete_response(http_status=200, response_bytes=1, client_disconnected=False)
+
+        quota_consumer.assert_called_once_with(
+            "admin",
+            "credential-1",
+            0.75,
+            credential_generation=7,
+            occurred_at=1_234,
+        )
+
+    def test_quota_update_failure_does_not_drop_usage_event(self):
+        store = FakeStore()
+        quota_consumer = mock.Mock(side_effect=RuntimeError("quota failed"))
+        context = UsageStatsContext(
+            AuthenticatedUser("admin", "api_key"),
+            "external_api",
+            store=store,
+            quota_usage_consumer=quota_consumer,
+            monotonic_factory=mock.Mock(side_effect=[1.0, 1.1, 1.2]),
+        )
+        context.capture_credential("credential-1", "credential.json")
+        context(StreamObservation(kind="upstream_event", usage={"credit": 0.5}))
+
+        with self.assertLogs("src.usage_stats_context", level="ERROR"):
+            context.complete_response(http_status=200, response_bytes=1, client_disconnected=False)
+
+        self.assertEqual(store.events[0].credit, 0.5)
+
     def test_request_metadata_can_be_captured_before_validation_and_preparation(self):
         store = FakeStore()
         context = UsageStatsContext(

@@ -2,6 +2,7 @@ import base64
 import json
 import os
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -500,6 +501,44 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
             self.assertEqual(manager.get_credential_by_id(credential_id)["bearer_token"], "new")
             self.assertEqual(manager.get_credentials_info()[0]["credential_id"], credential_id)
 
+    def test_quota_generation_changes_only_for_account_identity_and_deletion(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
+            self.assertTrue(add_credential(manager, "old", "user", "stable.json"))
+            credential_id = manager.get_credentials_info()[0]["credential_id"]
+            initial = manager.get_quota_generation_by_id(credential_id)
+
+            credential, generation = manager.snapshot_credential_by_id(credential_id)
+            self.assertTrue(manager.replace_credential_by_id(
+                credential_id,
+                {**credential, "bearer_token": "refreshed"},
+                expected_generation=generation,
+            ))
+            self.assertEqual(manager.get_quota_generation_by_id(credential_id), initial)
+
+            credential, generation = manager.snapshot_credential_by_id(credential_id)
+            self.assertTrue(manager.replace_credential_by_id(
+                credential_id,
+                {**credential, "account_uid": "new-account"},
+                expected_generation=generation,
+                quota_changed=True,
+            ))
+            self.assertEqual(manager.get_quota_generation_by_id(credential_id), initial + 1)
+
+            selected_id, selected, selected_generation = manager.select_next_credential()
+            self.assertEqual(selected_id, credential_id)
+            self.assertEqual(selected["account_uid"], "new-account")
+            self.assertEqual(selected_generation, initial + 1)
+
+            self.assertTrue(manager.delete_credential_by_id(credential_id))
+            self.assertEqual(manager.get_quota_generation_by_id(credential_id), initial + 2)
+
+            self.assertTrue(add_credential(manager, "reused", "user", "stable.json"))
+            reused_id, reused, reused_generation = manager.select_next_credential()
+            self.assertEqual(reused_id, credential_id)
+            self.assertEqual(reused["bearer_token"], "reused")
+            self.assertEqual(reused_generation, initial + 2)
+
     def test_add_credential_with_data_returns_false_on_store_error(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
@@ -511,13 +550,73 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
             manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
             self.assertFalse(manager.delete_credential_by_index(0))
             self.assertTrue(add_credential(manager, "token", "user", "a"))
+            credential_id = manager.get_credentials_info()[0]["credential_id"]
+            initial_quota_generation = manager.get_quota_generation_by_id(credential_id)
 
-            with mock.patch.object(manager.store, "delete_credential_file", return_value=False):
-                self.assertTrue(manager.delete_credential_by_index(0))
+            os.remove(manager.credentials[0]["file_path"])
+            self.assertTrue(manager.delete_credential_by_index(0))
+            self.assertEqual(
+                manager.get_quota_generation_by_id(credential_id),
+                initial_quota_generation + 1,
+            )
+            self.assertIsNone(manager.snapshot_credential_by_id(credential_id))
 
-            manager.load_all_tokens()
+            self.assertTrue(add_credential(manager, "token", "user", "b"))
+            credential_id = manager.get_credentials_info()[0]["credential_id"]
+            before_credential, before_generation = manager.snapshot_credential_by_id(credential_id)
+            before_quota_generation = manager.get_quota_generation_by_id(credential_id)
             with mock.patch.object(manager.store, "delete_credential_file", side_effect=RuntimeError("disk error")):
                 self.assertFalse(manager.delete_credential_by_index(0))
+            after_credential, after_generation = manager.snapshot_credential_by_id(credential_id)
+            self.assertEqual(after_credential, before_credential)
+            self.assertEqual(after_generation, before_generation)
+            self.assertEqual(
+                manager.get_quota_generation_by_id(credential_id),
+                before_quota_generation,
+            )
+
+    def test_delete_blocks_request_snapshot_until_removed_from_memory(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
+            self.assertTrue(add_credential(manager, "token", "user", "a"))
+            credential_id = manager.get_credentials_info()[0]["credential_id"]
+            delete_started = threading.Event()
+            allow_delete = threading.Event()
+            snapshot_attempted = threading.Event()
+            snapshot_finished = threading.Event()
+            delete_results = []
+            snapshot_results = []
+            original_delete = manager.store.delete_credential_file
+
+            def blocked_delete(file_path):
+                delete_started.set()
+                allow_delete.wait(timeout=1)
+                return original_delete(file_path)
+
+            def take_snapshot():
+                snapshot_attempted.set()
+                snapshot_results.append(
+                    manager.snapshot_credential_for_request_by_id(credential_id)
+                )
+                snapshot_finished.set()
+
+            with mock.patch.object(manager.store, "delete_credential_file", side_effect=blocked_delete):
+                delete_thread = threading.Thread(
+                    target=lambda: delete_results.append(manager.delete_credential_by_index(0))
+                )
+                delete_thread.start()
+                self.assertTrue(delete_started.wait(timeout=1))
+                snapshot_thread = threading.Thread(target=take_snapshot)
+                snapshot_thread.start()
+                self.assertTrue(snapshot_attempted.wait(timeout=1))
+                completed_while_deleting = snapshot_finished.wait(timeout=0.1)
+                allow_delete.set()
+                delete_thread.join(timeout=1)
+                snapshot_thread.join(timeout=1)
+
+            self.assertFalse(completed_while_deleting)
+            self.assertEqual(delete_results, [True])
+            self.assertEqual(snapshot_results, [None])
 
     def test_current_info_repairs_invalid_index_for_fixed_and_rotating_modes(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -725,6 +824,8 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
 
             self.assertNotEqual(first_id, second_id)
             self.assertEqual(manager.get_credential_by_id(first_id)["bearer_token"], "a-token")
+            self.assertEqual(manager.get_credential_info_by_id(first_id)["credential_id"], first_id)
+            self.assertIsNone(manager.get_credential_info_by_id("missing"))
             self.assertTrue(manager.set_current_credential_by_id(second_id))
             self.assertEqual(manager.get_current_credential_info()["credential_id"], second_id)
             self.assertEqual(manager.get_current_credential_info()["status"], "auto_rotation_disabled")

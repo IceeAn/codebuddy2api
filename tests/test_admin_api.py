@@ -36,6 +36,7 @@ from src.admin_router import (
 )
 from src.auth_types import AuthenticatedUser
 from src.codebuddy_token_manager import CodeBuddyTokenManagerRegistry
+from src.credential_quota import credential_quota_manager
 from src.credential_refresh import CredentialRefreshError
 
 from tests.helpers import TempConfigMixin, configure_users_file, make_request
@@ -123,6 +124,7 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(listed["credentials"][0]["credential_id"], credential_id)
         self.assertEqual(listed["credentials"][0]["user_id"], "upstream-user")
         self.assertNotIn("bearer_token", listed["credentials"][0])
+        self.assertEqual(listed["credentials"][0]["quota"]["status"], "unknown")
 
         selected = await select_admin_credential(credential_id, self.user)
         self.assertEqual(selected["current"]["credential_id"], credential_id)
@@ -138,6 +140,31 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         deleted = await delete_admin_credential(credential_id, self.user)
         self.assertTrue(deleted["deleted"])
         self.assertEqual((await list_admin_credentials(self.user))["credentials"], [])
+
+    async def test_admin_credentials_include_only_safe_quota_snapshot(self):
+        manager = self._manager()
+        self.assertTrue(self._add_credential(manager, "token", "user", "quota.json"))
+        quota = {
+            "status": "fresh",
+            "total": 100,
+            "remaining": 20,
+            "remaining_percent": 20,
+            "estimated": True,
+            "estimated_credit_since_sync": 2,
+            "last_attempt_at": 10,
+            "last_success_at": 10,
+            "last_estimated_at": 11,
+            "error_type": None,
+            "packages": [],
+        }
+        with (
+            mock.patch("src.admin_router.get_token_manager_for_user", return_value=manager),
+            mock.patch("src.admin_router.credential_quota_manager.get_quota", return_value=quota),
+        ):
+            listed = await list_admin_credentials(self.user)
+
+        self.assertEqual(listed["credentials"][0]["quota"], quota)
+        self.assertNotIn("bearer_token", repr(listed["credentials"][0]["quota"]))
 
     async def test_manual_credential_has_no_switchable_accounts(self):
         manager = self._manager()
@@ -205,6 +232,25 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.assertTrue(response["selected"])
         switch.assert_awaited_once_with("admin", manager, credential_id, "account-1")
 
+        with (
+            mock.patch("src.admin_router.get_token_manager_for_user", return_value=manager),
+            mock.patch(
+                "src.admin_router.credential_refresh_manager.switch_account",
+                new=mock.AsyncMock(return_value=False),
+            ),
+            mock.patch.object(
+                credential_quota_manager,
+                "invalidate_credential",
+            ) as invalidate,
+        ):
+            unchanged = await select_credential_account(
+                credential_id,
+                "account-1",
+                self.user,
+            )
+        self.assertFalse(unchanged["selected"])
+        invalidate.assert_not_called()
+
     async def test_account_routes_handle_missing_invalid_and_upstream_failures(self):
         manager = mock.Mock()
         manager.get_credential_by_id.return_value = None
@@ -270,7 +316,7 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(context.exception.status_code, 500)
         self.assertEqual(context.exception.detail, "Failed to identify newly created credential")
-        safe_credentials.assert_called_once_with(manager)
+        safe_credentials.assert_called_once_with(manager, "admin")
 
     async def test_create_admin_credential_reports_store_failure(self):
         manager = mock.Mock()
@@ -380,7 +426,7 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.assertIs(captured["observer"], stats_context)
         self.assertEqual(stats_context.capture_credential.call_args_list, [
             mock.call(credential_id, credential_id),
-            mock.call(credential_id, "target.json"),
+            mock.call(credential_id, "target.json", generation=0),
         ])
         stats_context.capture_request_bytes.assert_not_called()
         stats_context.capture_request_shape.assert_called_once()
@@ -423,7 +469,7 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("敏感的模型查询异常详情", result["detail"])
         self.assertEqual(stats_context.capture_credential.call_args_list, [
             mock.call(credential_id, credential_id),
-            mock.call(credential_id, "target.json"),
+            mock.call(credential_id, "target.json", generation=0),
         ])
         stats_context.mark_failure.assert_called_once_with("model_lookup", 502)
 
@@ -807,6 +853,7 @@ class AdminHelperTests(unittest.TestCase):
 
     def test_safe_credentials_handles_missing_and_out_of_range_indexes(self):
         manager = mock.Mock()
+        manager.username = None
         manager.get_all_credentials.return_value = [{"bearer_token": "token"}]
         manager.get_credentials_info.return_value = [
             {"credential_id": "missing", "time_remaining": None},

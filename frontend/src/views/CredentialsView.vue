@@ -19,6 +19,7 @@ import { useClipboard } from '../composables/useClipboard';
 import { useToast } from '../composables/useToast';
 import CredentialActions from '../components/CredentialActions.vue';
 import CredentialAccountSwitcher from '../components/CredentialAccountSwitcher.vue';
+import CredentialQuotaRing from '../components/CredentialQuotaRing.vue';
 import RefreshButton from '../components/RefreshButton.vue';
 import { filterCredentials, type CredentialFilterTab } from '../utils/credentialsFilter';
 import { useSessionStore } from '../stores/session';
@@ -325,6 +326,13 @@ const columns: Column<CredentialRecord>[] = [
   },
   { title: 'Token', key: 'token_display', minWidth: 180, className: 'mono' },
   { title: '剩余', key: 'time_remaining_str', width: 120 },
+  {
+    title: '额度',
+    key: 'quota',
+    width: 84,
+    align: 'center',
+    render: (row) => (row.quota ? h(CredentialQuotaRing, { quota: row.quota }) : '-'),
+  },
   { title: '文件', key: 'filename', minWidth: 180, ellipsis: { tooltip: true } },
   {
     title: '操作',
@@ -492,13 +500,13 @@ const tableRows = computed(() => rows.value as unknown as Record<string, unknown
         </Transition>
       </div>
     </CCard>
+    <CredentialAccountSwitcher
+      :open="Boolean(accountSwitcherCredentialId)"
+      :credential-id="accountSwitcherCredentialId"
+      @close="closeAccountSwitcher"
+      @switching="accountSwitching = $event"
+    />
   </div>
-  <CredentialAccountSwitcher
-    :open="Boolean(accountSwitcherCredentialId)"
-    :credential-id="accountSwitcherCredentialId"
-    @close="closeAccountSwitcher"
-    @switching="accountSwitching = $event"
-  />
 </template>
 
 <style scoped>

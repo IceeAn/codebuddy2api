@@ -35,6 +35,7 @@ class CodeBuddyTokenManager:
         self.auto_rotation_enabled: bool = True
         self._lock = threading.RLock()
         self._generations: Dict[str, int] = {}
+        self._quota_generations: Dict[str, int] = {}
         self.load_all_tokens()
         self.load_state()
 
@@ -78,6 +79,7 @@ class CodeBuddyTokenManager:
         }
         for credential_id in current_ids:
             self._generations.setdefault(credential_id, 0)
+            self._quota_generations.setdefault(credential_id, 0)
 
         next_current_index = self._find_credential_index_by_filename(current_filename)
         if next_current_index is not None:
@@ -162,25 +164,37 @@ class CodeBuddyTokenManager:
 
     def get_next_credential(self) -> Optional[Dict]:
         """根据当前轮换策略获取下一个可用凭证。"""
+        selected = self.select_next_credential()
+        return selected[1] if selected is not None else None
+
+    def select_next_credential(self) -> Optional[tuple[str, Dict, int]]:
+        """原子返回下一张凭证的稳定 ID 与数据，供请求归属使用。"""
         from config import get_rotation_count
 
-        selection = self.rotation_policy.select(
-            credentials=self.credentials,
-            current_index=self.current_index,
-            usage_count=self.usage_count,
-            auto_rotation_enabled=self._is_auto_rotation_enabled(),
-            rotation_count=get_rotation_count(self.username),
-        )
-        self.current_index = selection.current_index
-        self.usage_count = selection.usage_count
+        with self._lock:
+            selection = self.rotation_policy.select(
+                credentials=self.credentials,
+                current_index=self.current_index,
+                usage_count=self.usage_count,
+                auto_rotation_enabled=self._is_auto_rotation_enabled(),
+                rotation_count=get_rotation_count(self.username),
+            )
+            self.current_index = selection.current_index
+            self.usage_count = selection.usage_count
 
-        if not selection.credential_record:
-            return None
+            if not selection.credential_record:
+                return None
 
-        if selection.log_message:
-            logger.info(selection.log_message)
+            if selection.log_message:
+                logger.info(selection.log_message)
 
-        return selection.credential_record["data"]
+            filename = os.path.basename(selection.credential_record["file_path"])
+            credential_id = self._credential_id_from_filename(filename)
+            return (
+                credential_id,
+                selection.credential_record["data"],
+                self._quota_generations.get(credential_id, 0),
+            )
 
     def preview_next_credential(self) -> Optional[tuple[str, Dict]]:
         """预览下一张可用凭证，不修改当前索引和使用计数。"""
@@ -255,6 +269,16 @@ class CodeBuddyTokenManager:
 
         return credentials_info
 
+    def get_credential_info_by_id(self, credential_id: str) -> Optional[Dict[str, Any]]:
+        """按稳定 ID 返回不含凭证密钥的管理信息。"""
+        return next(
+            (
+                info for info in self.get_credentials_info()
+                if info.get("credential_id") == credential_id
+            ),
+            None,
+        )
+
     def get_credential_by_id(self, credential_id: str) -> Optional[Dict]:
         """按公开 credential_id 获取凭证内容。"""
         index = self._find_credential_index_by_id(credential_id)
@@ -270,12 +294,38 @@ class CodeBuddyTokenManager:
                 return None
             return deepcopy(self.credentials[index]["data"]), self._generations.get(credential_id, 0)
 
+    def snapshot_credential_for_request_by_id(
+            self, credential_id: str,
+    ) -> Optional[tuple[Dict, int]]:
+        """原子返回请求所用凭证副本与额度代次。"""
+        with self._lock:
+            index = self._find_credential_index_by_id(credential_id)
+            if index is None:
+                return None
+            return (
+                deepcopy(self.credentials[index]["data"]),
+                self._quota_generations.get(credential_id, 0),
+            )
+
+    def get_quota_generation_by_id(self, credential_id: str) -> Optional[int]:
+        """返回额度身份代次；已删除凭证仍保留最后代次以拒绝旧请求。"""
+        with self._lock:
+            return self._quota_generations.get(credential_id)
+
+    def bump_quota_generation(self, credential_id: str) -> int:
+        """使旧账号或旧凭证请求的额度用量失效。"""
+        with self._lock:
+            generation = self._quota_generations.get(credential_id, 0) + 1
+            self._quota_generations[credential_id] = generation
+            return generation
+
     def replace_credential_by_id(
             self,
             credential_id: str,
             credential_data: Dict[str, Any],
             *,
             expected_generation: int,
+            quota_changed: bool = False,
     ) -> bool:
         """仅当凭证未被并发修改时原位原子更新。"""
         with self._lock:
@@ -286,6 +336,10 @@ class CodeBuddyTokenManager:
             self.store.replace_credential(credential_data, filename)
             self.credentials[index]["data"] = deepcopy(credential_data)
             self._generations[credential_id] = expected_generation + 1
+            if quota_changed:
+                self._quota_generations[credential_id] = (
+                    self._quota_generations.get(credential_id, 0) + 1
+                )
             return True
 
     def add_credential(self, bearer_token: str, filename: Optional[str] = None) -> bool:
@@ -332,32 +386,35 @@ class CodeBuddyTokenManager:
     def delete_credential_by_index(self, index: int) -> bool:
         """删除指定索引的凭证文件，并重新加载列表。"""
         try:
-            if not (0 <= index < len(self.credentials)):
-                logger.error(f"Invalid credential index for deletion: {index}")
-                return False
+            with self._lock:
+                if not (0 <= index < len(self.credentials)):
+                    logger.error(f"Invalid credential index for deletion: {index}")
+                    return False
 
-            file_path = self.credentials[index]["file_path"]
-            filename = os.path.basename(file_path)
-            credential_id = self._credential_id_from_filename(filename)
-            self._generations[credential_id] = self._generations.get(credential_id, 0) + 1
+                file_path = self.credentials[index]["file_path"]
+                filename = os.path.basename(file_path)
+                credential_id = self._credential_id_from_filename(filename)
 
-            if self.store.delete_credential_file(file_path):
-                logger.info(f"Deleted credential file: {filename}")
-            else:
-                logger.warning(f"Credential file already missing: {filename}")
+                if self.store.delete_credential_file(file_path):
+                    logger.info(f"Deleted credential file: {filename}")
+                else:
+                    logger.warning(f"Credential file already missing: {filename}")
 
-            self.load_all_tokens()
-            return True
+                self._generations[credential_id] = self._generations.get(credential_id, 0) + 1
+                self.bump_quota_generation(credential_id)
+                self.load_all_tokens()
+                return True
         except Exception as e:
             logger.error(f"Failed to delete credential at index {index}: {e}")
             return False
 
     def delete_credential_by_id(self, credential_id: str) -> bool:
         """按公开 credential_id 删除凭证文件。"""
-        index = self._find_credential_index_by_id(credential_id)
-        if index is None:
-            return False
-        return self.delete_credential_by_index(index)
+        with self._lock:
+            index = self._find_credential_index_by_id(credential_id)
+            if index is None:
+                return False
+            return self.delete_credential_by_index(index)
 
     def set_current_credential(self, index: int) -> bool:
         """选择指定索引的凭证，并固定使用该凭证。"""
