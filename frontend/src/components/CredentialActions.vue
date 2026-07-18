@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { CircleCheckBig, MousePointerClick, RotateCcw, Trash2 } from '@lucide/vue';
+import { Building2, CircleCheckBig, MousePointerClick, RotateCcw, Trash2 } from '@lucide/vue';
 import type { CredentialRecord } from '../types';
 import CButton from './ui/CButton.vue';
 import CPopconfirm from './ui/CPopconfirm.vue';
@@ -15,6 +15,7 @@ interface Props {
   isDeleting?: boolean;
   writeInProgress?: boolean;
   hasActiveTests?: boolean;
+  canSwitchAccount?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -23,12 +24,14 @@ const props = withDefaults(defineProps<Props>(), {
   isDeleting: false,
   writeInProgress: false,
   hasActiveTests: false,
+  canSwitchAccount: false,
 });
 
 const emit = defineEmits<{
   select: [credentialId: string];
   test: [credentialId: string];
   delete: [credentialId: string];
+  switchAccount: [credentialId: string];
 }>();
 
 const deleteTitle = computed(
@@ -64,6 +67,11 @@ function deleteCredential(): void {
   if (deleteDisabled.value) return;
   emit('delete', props.credential.credential_id);
 }
+
+function switchAccount(): void {
+  if (props.writeInProgress || props.hasActiveTests || !props.canSwitchAccount) return;
+  emit('switchAccount', props.credential.credential_id);
+}
 </script>
 
 <template>
@@ -98,6 +106,20 @@ function deleteCredential(): void {
         @click="testCredential"
       >
         <template #icon><RotateCcw :size="14" /></template>
+      </CButton>
+    </CTooltip>
+
+    <CTooltip v-if="canSwitchAccount" content="切换 CodeBuddy 账号">
+      <CButton
+        size="sm"
+        variant="secondary"
+        shape="circle"
+        class="table-action-button"
+        :disabled="writeInProgress || hasActiveTests"
+        aria-label="切换 CodeBuddy 账号"
+        @click="switchAccount"
+      >
+        <template #icon><Building2 :size="14" /></template>
       </CButton>
     </CTooltip>
 

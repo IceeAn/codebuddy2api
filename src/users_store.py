@@ -2,7 +2,7 @@
 import logging
 import threading
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from config import get_users_file_path
 from .auth_types import DUMMY_PASSWORD_HASH
@@ -91,6 +91,12 @@ class UsersFileStore:
         with self._cache_lock:
             self._load_if_needed()
             return username in self._users
+
+    def list_usernames(self) -> Tuple[str, ...]:
+        """返回当前有效用户名快照，不暴露密码哈希。"""
+        with self._cache_lock:
+            self._load_if_needed()
+            return tuple(self._users)
 
     def validate_configured_users_file(self) -> None:
         """启动期校验系统用户文件，避免服务以不可登录状态运行。"""

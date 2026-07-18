@@ -27,6 +27,7 @@ from src.auth_router import router as service_auth_router
 from src.auth_router import require_session_user
 from src.admin_router import router as admin_router
 from src.codebuddy_auth_router import router as codebuddy_auth_router
+from src.credential_refresh import credential_refresh_manager
 from src.frontend_router import router as frontend_router
 from src.openai_router import external_openai_router, playground_openai_router
 from src.private_response import PrivateNoStoreFastAPI, PrivateNoStoreRoute
@@ -68,9 +69,11 @@ async def lifespan(app: FastAPI):
         initialize_database()
         await usage_stats_retention_manager.startup()
         await lifecycle_manager.startup()
+        await credential_refresh_manager.startup()
         yield
     finally:
         # 关闭时清理资源
+        await credential_refresh_manager.shutdown()
         await usage_stats_retention_manager.shutdown()
         await lifecycle_manager.shutdown()
         logger.info("CodeBuddy2API Service stopped")

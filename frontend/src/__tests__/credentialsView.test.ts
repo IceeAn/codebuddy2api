@@ -138,6 +138,12 @@ function mountView() {
           props: ['type', 'dot'],
           template: '<span class="c-tag"><slot /></span>',
         },
+        CredentialAccountSwitcher: {
+          name: 'CredentialAccountSwitcher',
+          props: ['open', 'credentialId'],
+          emits: ['close', 'switching'],
+          template: '<div class="credential-account-switcher-stub" />',
+        },
         MousePointerClick: true,
         Copy: true,
         ExternalLink: true,
@@ -524,7 +530,7 @@ describe('CredentialsView', () => {
     expect([...state.testingIds]).toEqual([]);
   });
 
-  it('列渲染覆盖当前、过期、可用和操作按钮', () => {
+  it('列渲染覆盖当前、过期、可用和操作按钮', async () => {
     credentialsQuery.data.value = {
       credentials: [],
       current: { credential_id: 'active' },
@@ -548,6 +554,13 @@ describe('CredentialsView', () => {
     expect(state.columns[1].render(active)).toBe('a@example.com');
     expect(state.columns[1].render(expired)).toBe('user');
     expect(state.columns[1].render(valid)).toBe('-');
+    expect(
+      state.columns[1].render({
+        ...active,
+        enterprise_name: '测试企业',
+        department_full_name: '研发部',
+      }),
+    ).toBe('a@example.com · 测试企业 / 研发部');
     expect(state.columns[5].title).toBe('操作');
     expect(state.columns[5].align).toBe('left');
     expect(state.columns[5].headerClassName).toBe('table-action-header');
@@ -561,6 +574,7 @@ describe('CredentialsView', () => {
     expect(actions.props?.isDeleting).toBe(false);
     expect(actions.props?.writeInProgress).toBe(false);
     expect(actions.props?.hasActiveTests).toBe(false);
+    expect(actions.props?.canSwitchAccount).toBe(false);
     actions.props?.onSelect('valid');
     actions.props?.onTest('valid');
     actions.props?.onDelete('valid');
@@ -580,6 +594,37 @@ describe('CredentialsView', () => {
     const enabledWrapper = mountView();
     const enabledState = (enabledWrapper.vm.$ as any).setupState;
     expect(enabledState.columns[5].render(active).props?.autoRotationEnabled).toBe(true);
+
+    const switchableActions = enabledState.columns[5].render({
+      ...valid,
+      has_refresh_token: true,
+      account_count: 2,
+    });
+    expect(switchableActions.props?.canSwitchAccount).toBe(true);
+    switchableActions.props?.onSwitchAccount('valid');
+    expect(enabledState.accountSwitcherCredentialId).toBe('valid');
+    enabledState.accountSwitching = true;
+    enabledState.closeAccountSwitcher();
+    expect(enabledState.accountSwitcherCredentialId).toBe('valid');
+    enabledState.accountSwitching = false;
+    enabledState.closeAccountSwitcher();
+    expect(enabledState.accountSwitcherCredentialId).toBe('');
+    wrapper.findComponent({ name: 'CredentialAccountSwitcher' }).vm.$emit('switching', true);
+    await wrapper.vm.$nextTick();
+    expect(state.accountSwitching).toBe(true);
+    state.openAccountSwitcher('blocked');
+    expect(state.accountSwitcherCredentialId).toBe('');
+    state.accountSwitching = false;
+    state.testingIds.add('testing');
+    state.openAccountSwitcher('blocked-by-test');
+    expect(state.accountSwitcherCredentialId).toBe('');
+    state.testingIds.delete('testing');
+    expect(
+      enabledState.columns[5].render({
+        ...valid,
+        has_refresh_token: true,
+      }).props?.canSwitchAccount,
+    ).toBe(false);
 
     mutationOptions[3].onMutate('valid');
     expect(enabledState.columns[5].render(valid).props?.isTesting).toBe(true);

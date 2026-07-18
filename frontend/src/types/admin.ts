@@ -240,9 +240,30 @@ export interface CredentialRecord {
   scope?: string;
   domain?: string;
   enterprise_id?: string;
+  enterprise_name?: string;
+  department_full_name?: string;
+  account_type?: string;
+  account_id?: string;
+  account_count?: number;
+  auth_source?: 'oauth' | 'manual';
   has_refresh_token: boolean;
   has_token: boolean;
   token_display: string;
+}
+
+export interface CredentialAccount {
+  account_id: string;
+  type?: string;
+  nickname?: string;
+  enterprise_name?: string;
+  department_full_name?: string;
+  is_current: boolean;
+}
+
+export interface CredentialAccountsResponse {
+  accounts: CredentialAccount[];
+  current_account_id: string | null;
+  can_switch: boolean;
 }
 
 export interface CredentialsResponse {

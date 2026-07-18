@@ -78,6 +78,33 @@ class CodeBuddyAPIClientTests(unittest.TestCase):
         self.assertEqual(headers["X-Enterprise-Id"], "enterprise-1")
         self.assertEqual(headers["X-Tenant-Id"], "enterprise-1")
 
+    def test_account_uid_overrides_manual_fallback_and_department_is_optional(self):
+        client = CodeBuddyAPIClient()
+
+        oauth_headers = client.generate_codebuddy_headers(
+            "token",
+            user_id="anonymous_12345678",
+            account_uid="official-account",
+            enterprise_id="enterprise-1",
+            department_full_name="研发部",
+        )
+        manual_headers = client.generate_codebuddy_headers(
+            "token",
+            user_id="anonymous_12345678",
+        )
+
+        self.assertEqual(oauth_headers["X-User-Id"], "official-account")
+        self.assertEqual(oauth_headers["X-Department-Info"], "研发部")
+        self.assertEqual(manual_headers["X-User-Id"], "anonymous_12345678")
+        self.assertNotIn("X-Department-Info", manual_headers)
+
+        with self.assertRaisesRegex(ValueError, "department_full_name"):
+            client.generate_codebuddy_headers(
+                "token",
+                user_id="user",
+                department_full_name="invalid\nheader",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

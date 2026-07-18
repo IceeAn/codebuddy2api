@@ -47,6 +47,8 @@ describe('管理 API 封装', () => {
     await adminApi.credentials();
     await adminApi.createCredential('token');
     await adminApi.selectCredential('cred/id');
+    await adminApi.credentialAccounts('cred/id');
+    await adminApi.selectCredentialAccount('cred/id', 'account/id');
     await adminApi.deleteCredential('cred/id');
     await adminApi.testCredential('cred/id');
     await adminApi.toggleRotation();
@@ -83,6 +85,8 @@ describe('管理 API 封装', () => {
       ['/api/admin/credentials'],
       ['/api/admin/credentials', { method: 'POST', json: { bearer_token: 'token' } }],
       ['/api/admin/credentials/cred%2Fid/select', { method: 'POST' }],
+      ['/api/admin/credentials/cred%2Fid/accounts'],
+      ['/api/admin/credentials/cred%2Fid/accounts/account%2Fid/select', { method: 'POST' }],
       ['/api/admin/credentials/cred%2Fid', { method: 'DELETE' }],
       ['/api/admin/credentials/cred%2Fid/test', { method: 'POST', json: {}, timeoutMs: 335000 }],
       ['/api/admin/credentials/rotation/toggle', { method: 'POST' }],

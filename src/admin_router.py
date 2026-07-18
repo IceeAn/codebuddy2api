@@ -12,6 +12,7 @@ from .auth_router import require_session_user
 from .auth_types import ApiKeyCreateRequest, AuthenticatedUser
 from .codebuddy_api_client import codebuddy_api_client
 from .codebuddy_token_manager import get_token_manager_for_user
+from .credential_refresh import CredentialRefreshError, credential_refresh_manager
 from .models_manager import models_manager
 from .private_response import PrivateNoStoreRoute
 from .request_processor import RequestProcessor
@@ -221,6 +222,67 @@ async def list_admin_credentials(_user: AuthenticatedUser = Depends(require_sess
     }
 
 
+@router.get("/credentials/{credential_id}/accounts")
+async def list_credential_accounts(
+        credential_id: str,
+        _user: AuthenticatedUser = Depends(require_session_user),
+):
+    """列出凭证可切换账号，不返回真实账号或企业 ID。"""
+    token_manager = get_token_manager_for_user(_user)
+    credential = token_manager.get_credential_by_id(credential_id)
+    if credential is None:
+        raise _credential_not_found()
+    current_account_id = credential.get("account_id")
+    safe_accounts = []
+    for account in credential.get("accounts") or []:
+        if not isinstance(account, dict) or not account.get("account_id"):
+            continue
+        safe_accounts.append({
+            "account_id": account["account_id"],
+            "type": account.get("type"),
+            "nickname": account.get("nickname"),
+            "enterprise_name": account.get("enterprise_name"),
+            "department_full_name": account.get("department_full_name"),
+            "is_current": account["account_id"] == current_account_id,
+        })
+    return {
+        "accounts": safe_accounts,
+        "current_account_id": current_account_id,
+        "can_switch": bool(credential.get("refresh_token")) and len(safe_accounts) > 1,
+    }
+
+
+@router.post("/credentials/{credential_id}/accounts/{account_id}/select")
+async def select_credential_account(
+        credential_id: str,
+        account_id: str,
+        _user: AuthenticatedUser = Depends(require_session_user),
+):
+    """切换 OAuth 凭证的个人或企业账号。"""
+    token_manager = get_token_manager_for_user(_user)
+    if token_manager.get_credential_by_id(credential_id) is None:
+        raise _credential_not_found()
+    try:
+        selected = await credential_refresh_manager.switch_account(
+            _user.username,
+            token_manager,
+            credential_id,
+            account_id,
+        )
+    except CredentialRefreshError as error:
+        reason = str(error)
+        if reason in {"credential_not_found", "account_not_found"}:
+            raise HTTPException(status_code=404, detail="Credential account not found") from error
+        if reason in {"switch_unavailable", "account_invalid", "account_missing", "generation_conflict"}:
+            raise HTTPException(status_code=409, detail="Credential account cannot be switched") from error
+        if reason == "ip_restricted":
+            raise HTTPException(status_code=403, detail="Current IP is restricted by CodeBuddy") from error
+        if reason == "temporary":
+            raise HTTPException(status_code=503, detail="CodeBuddy account service unavailable") from error
+        raise HTTPException(status_code=502, detail="CodeBuddy account switch failed") from error
+    return {"selected": bool(selected), "credential_id": credential_id, "account_id": account_id}
+
+
 @router.post("/credentials")
 async def create_admin_credential(
         request_body: CredentialCreateRequest,
@@ -352,8 +414,10 @@ async def test_admin_credential(
     headers = codebuddy_api_client.generate_codebuddy_headers(
         bearer_token=credential.get("bearer_token"),
         user_id=credential.get("user_id"),
+        account_uid=credential.get("account_uid"),
         domain=credential.get("domain"),
         enterprise_id=credential.get("enterprise_id"),
+        department_full_name=credential.get("department_full_name"),
     )
 
     try:

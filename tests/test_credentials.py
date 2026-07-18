@@ -116,6 +116,54 @@ class CredentialStoreTests(ConfigIsolationMixin, unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 store.save_credential({"bearer_token": "second"}, "codebuddy_token_2.json", create_new=True)
 
+    def test_replace_credential_rejects_non_regular_target_and_cleans_temporary_files(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            store = CodeBuddyCredentialStore(tmp_dir)
+            Path(tmp_dir, "directory.json").mkdir()
+            with self.assertRaisesRegex(ValueError, "regular"):
+                store.replace_credential({"bearer_token": "new"}, "directory.json")
+
+            store.save_credential({"bearer_token": "old"}, "target.json")
+            with mock.patch("src.credential_store.json.dump", side_effect=RuntimeError("write failed")):
+                with self.assertRaisesRegex(RuntimeError, "write failed"):
+                    store.replace_credential({"bearer_token": "new"}, "target.json")
+            self.assertEqual(list(Path(tmp_dir).glob(".*.tmp")), [])
+
+            real_fsync = os.fsync
+            calls = 0
+
+            def fail_directory_fsync(fd):
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    raise RuntimeError("directory fsync failed")
+                return real_fsync(fd)
+
+            with mock.patch("src.credential_store.os.fsync", side_effect=fail_directory_fsync):
+                with self.assertRaisesRegex(RuntimeError, "directory fsync failed"):
+                    store.replace_credential({"bearer_token": "replaced"}, "target.json")
+
+    def test_replace_credential_closes_raw_fd_and_supports_platform_without_nofollow(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            store = CodeBuddyCredentialStore(tmp_dir)
+            store.save_credential({"bearer_token": "old"}, "target.json")
+            real_hasattr = hasattr
+
+            def without_nofollow(value, name):
+                if value is os and name == "O_NOFOLLOW":
+                    return False
+                return real_hasattr(value, name)
+
+            with mock.patch("builtins.hasattr", side_effect=without_nofollow):
+                self.assertEqual(
+                    store.replace_credential({"bearer_token": "new"}, "target.json"),
+                    "target.json",
+                )
+
+            with mock.patch("src.credential_store.os.fdopen", side_effect=RuntimeError("fdopen failed")):
+                with self.assertRaisesRegex(RuntimeError, "fdopen failed"):
+                    store.replace_credential({"bearer_token": "newer"}, "target.json")
+
     def test_loader_skips_outside_invalid_and_malformed_files(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             store = CodeBuddyCredentialStore(tmp_dir)
@@ -225,12 +273,13 @@ class TokenExpiryTests(unittest.TestCase):
     def test_missing_expiry_fields_are_not_expired(self):
         self.assertFalse(TokenExpiry().is_expired({"bearer_token": "token"}))
 
-    def test_expiry_uses_five_minute_buffer_boundary(self):
+    def test_expiry_uses_actual_expiration_boundary_without_request_buffer(self):
         expiry = TokenExpiry()
 
         with mock.patch("src.credential_rotation.time.time", return_value=1000):
-            self.assertFalse(expiry.is_expired({"created_at": 100, "expires_in": 1201}))
-            self.assertTrue(expiry.is_expired({"created_at": 100, "expires_in": 1200}))
+            self.assertFalse(expiry.is_expired({"created_at": 100, "expires_in": 901}))
+            self.assertTrue(expiry.is_expired({"created_at": 100, "expires_in": 900}))
+            self.assertTrue(expiry.is_expired({"expires_at": 1000}))
 
     def test_malformed_expiry_data_is_treated_as_not_expired(self):
         self.assertFalse(TokenExpiry().is_expired({"created_at": "bad", "expires_in": 1}))
@@ -372,12 +421,78 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
                 "created_at": 100,
                 "expires_in": 1000,
             }, "a"))
+            manager.credentials[0]["data"].pop("expires_at", None)
 
             with mock.patch("src.codebuddy_token_manager.time.time", return_value=200):
                 info = manager.get_credentials_info()[0]
 
             self.assertEqual(info["expires_at"], 1100)
             self.assertEqual(info["time_remaining"], 900)
+
+    def test_load_normalizes_bearer_only_manual_credential_without_account_fields(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "manual.json"
+            path.write_text(json.dumps({"bearer_token": "opaque.12345678"}), encoding="utf-8")
+            path.chmod(0o600)
+
+            manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
+            credential = manager.get_all_credentials()[0]
+
+            self.assertEqual(credential["user_id"], "anonymous_12345678")
+            self.assertEqual(credential["auth_source"], "manual")
+            self.assertNotIn("account_uid", credential)
+            self.assertNotIn("refresh_token", credential)
+            self.assertFalse(manager.is_token_expired(credential))
+
+    def test_load_migrates_legacy_full_response_and_explicit_expiry_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "legacy.json"
+            path.write_text(json.dumps({
+                "bearer_token": "opaque.12345678",
+                "created_at": 100,
+                "expires_in": 999,
+                "expires_at": 500,
+                "full_response": {"raw": True},
+            }), encoding="utf-8")
+            path.chmod(0o600)
+
+            manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
+            credential = manager.get_all_credentials()[0]
+            with mock.patch("src.codebuddy_token_manager.time.time", return_value=200):
+                info = manager.get_credentials_info()[0]
+
+            self.assertNotIn("full_response", credential)
+            self.assertEqual(credential["compatibility_data"]["legacy_full_response"], {"raw": True})
+            self.assertEqual(info["expires_at"], 500)
+            self.assertEqual(info["time_remaining"], 300)
+            self.assertIsNone(manager.snapshot_credential_by_id("missing"))
+
+    def test_replace_credential_requires_current_generation_and_preserves_id(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
+            self.assertTrue(add_credential(manager, "old", "user", "stable.json"))
+            credential_id = manager.get_credentials_info()[0]["credential_id"]
+            snapshot = manager.snapshot_credential_by_id(credential_id)
+            self.assertIsNotNone(snapshot)
+            data, generation = snapshot
+
+            replacement = {**data, "bearer_token": "new"}
+            self.assertTrue(
+                manager.replace_credential_by_id(
+                    credential_id,
+                    replacement,
+                    expected_generation=generation,
+                )
+            )
+            self.assertFalse(
+                manager.replace_credential_by_id(
+                    credential_id,
+                    {**replacement, "bearer_token": "stale"},
+                    expected_generation=generation,
+                )
+            )
+            self.assertEqual(manager.get_credential_by_id(credential_id)["bearer_token"], "new")
+            self.assertEqual(manager.get_credentials_info()[0]["credential_id"], credential_id)
 
     def test_add_credential_with_data_returns_false_on_store_error(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

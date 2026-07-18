@@ -39,7 +39,7 @@ docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:
 - **前端测试**：Vitest 使用 jsdom 与 Vue Test Utils；`pnpm run test:coverage` 对 `src/` 生产代码强制执行 statements、branches、functions、lines 四项 100% 覆盖率门槛。
 - **前端修改后流程**：前端修改后依次执行格式检查、lint、构建和覆盖率测试；格式检查失败时先执行 `pnpm run format`。`pnpm run build` 已包含类型检查和生产构建。
 - **保证需求的正确性**：若我需要你实现的需求存在不明确的部分，请直接提问；若工作过程中出现重要的选择，停下来说明并等待回复。尽可能地不要自行推测意图和需求。
-- **快速失败而不是兜底**：为保证质量、尽早发现错误，各种非预期的错误应该快速失败，少对错误数据进行防御性的兜底。
+- **快速失败而不是兜底**：为保证质量、尽早发现错误，项目内各种非预期的错误应该快速失败，少对错误数据进行防御性的兜底；对外部接口行为进行适当兜底，增强兼容性。
 - **干净的修改与重构**：进行 breaking change 后，无需对修改前的旧表、旧字段、旧接口等进行兼容。可以认为它们在前、后端均不再使用。
 - **bug修复使用最小修改**：对于bug修复，尽量保证最小修改，同时应保证遵循上述其余原则。
 - **持续更新本文档**：当开发或排错过程中出现重要或常见的的通用性问题未在此文件说明的情况，随时更新此文档。可以包括项目信息、常用命令、踩坑记录等。不要写入一次性排错过程或可从单处代码直接读出的细节。
@@ -84,6 +84,9 @@ docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:
 - `src/codebuddy_auth_router.py` 只负责路由；上游认证、auth state 所属关系及 token 解析/保存放在 `src/codebuddy_oauth.py`。
 - OAuth state 一旦取消或消费便不可轮询或重放。上游登录 URL 只允许带主机、无 userinfo/控制字符的绝对 HTTP(S) URL；校验通过前不得登记 state 或让前端导航。成功响应不能向浏览器返回 token 或用户信息；保存失败应返回 500，且不得恢复已消费 state。
 - 手动添加和 OAuth 保存必须共用 token 解析：`user_id` 优先取 JWT `sub`；失败或缺失时使用真实 CLI 兼容的 `anonymous_<token 后 8 位>`，不得读取 `ACC_USER_ID` 或 `ACC_USER_NICKNAME`。
+- 手动添加的 bearer-only 凭证不要求 `account_uid`、账号列表、过期时间或 refresh token，且不得进入 OAuth 刷新或账号切换流程；请求头中的 `X-User-Id` 对 OAuth 凭证优先使用 `account_uid`，否则继续使用 `user_id`。
+- OAuth 登录由后端返回 `interval` 与 `expires_in` 并由前端原样遵守；敏感的分阶段登录进度只能保存在服务端。凭证文件除规范字段外还需保存各阶段完整上游 JSON 响应体，用于后续兼容，但管理 API 不得返回这些原始响应。
+- OAuth 自动刷新只由启动任务和每小时任务触发，在 `expires_at - 86400` 秒进入刷新窗口；聊天、模型发现等请求路径不得触发、等待或重试刷新。
 - 每个系统用户拥有独立凭证目录和 Token 管理器。凭证轮换开关是用户级设置，轮换频率必须为正整数。
 - CodeBuddy `/v3/config` URL、`Host` 和 `X-Domain` 必须由同一个当前 API endpoint 派生。
 - 模型缓存键至少包含系统用户与 `credential_id`。凭证过期、删除或失效时必须同时驱逐缓存并作废在途查询；旧请求结果不能写回，也不能被同 ID 的新凭证复用。过期值不得作为失败回退，并发未命中使用 per-key single-flight 合并。

@@ -186,6 +186,20 @@ class AuthStateStoreTests(unittest.TestCase):
         self.assertFalse(hasattr(AuthStateStore(), "remember"))
         self.assertFalse(hasattr(oauth, "remember_auth_state"))
 
+    def test_progress_is_owner_scoped_and_cleared_when_consumed(self):
+        store = AuthStateStore()
+        owner = AuthenticatedUser(username="alice", source="session_cookie")
+        other = AuthenticatedUser(username="bob", source="session_cookie")
+        self.register_state(store, "state", owner)
+
+        self.assertTrue(store.set_progress("state", owner, {"access_token": "secret"}))
+        self.assertEqual(store.get_progress("state", owner), {"access_token": "secret"})
+        self.assertIsNone(store.get_progress("state", other))
+        self.assertFalse(store.set_progress("missing", owner, {"access_token": "secret"}))
+        self.assertTrue(store.consume("state", owner))
+        self.assertFalse(store.set_progress("state", owner, {"access_token": "new"}))
+        self.assertIsNone(store.get_progress("state", owner))
+
 
 class CodeBuddyAuthClientTests(unittest.IsolatedAsyncioTestCase):
     async def test_oauth_client_accepts_async_shared_client_factory(self):
@@ -196,6 +210,131 @@ class CodeBuddyAuthClientTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(client, shared_client)
         factory.assert_awaited_once_with()
+
+    async def test_state_request_matches_cli_without_nonce(self):
+        fake_client = mock.Mock()
+        fake_client.post = mock.AsyncMock(return_value=FakeAuthStateResponse({
+            "code": 0,
+            "data": {"state": "state", "authUrl": "https://codebuddy.example/auth"},
+        }))
+
+        await CodeBuddyAuthClient()._request_state(fake_client, {"X-Test": "1"})
+
+        args, kwargs = fake_client.post.await_args
+        self.assertEqual(args[0], f"{oauth.get_codebuddy_auth_state_endpoint()}?platform=CLI")
+        self.assertEqual(kwargs["json"], {})
+
+    async def test_poll_runs_token_account_and_accounts_stages(self):
+        responses = [
+            FakeTokenResponse({
+                "code": 0,
+                "data": {
+                    "accessToken": "access",
+                    "refreshToken": "refresh",
+                    "tokenType": "Bearer",
+                    "expiresIn": 7200,
+                    "refreshExpiresIn": 86400,
+                    "domain": "copilot.tencent.com",
+                },
+            }),
+            FakeTokenResponse({
+                "code": 0,
+                "data": {
+                    "uid": "account-uid",
+                    "nickname": "Alice",
+                    "type": "ultimate",
+                    "enterpriseId": "enterprise-1",
+                    "enterpriseName": "Example Corp",
+                    "departmentFullName": "研发部",
+                },
+            }),
+            FakeTokenResponse({
+                "code": 0,
+                "data": {
+                    "accounts": [
+                        {
+                            "uid": "account-uid",
+                            "nickname": "Alice",
+                            "type": "ultimate",
+                            "enterpriseId": "enterprise-1",
+                            "pluginEnabled": True,
+                            "lastLogin": True,
+                        },
+                        {"uid": "disabled", "type": "personal", "pluginEnabled": False},
+                    ],
+                },
+            }),
+        ]
+        fake_client = mock.Mock()
+        fake_client.get = mock.AsyncMock(side_effect=responses)
+        client = CodeBuddyAuthClient(http_client_factory=lambda: fake_client)
+
+        result = await client.poll_status("state")
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["token_data"]["account"]["uid"], "account-uid")
+        self.assertEqual(len(result["token_data"]["accounts"]), 1)
+        self.assertEqual(
+            [call.args[0] for call in fake_client.get.await_args_list],
+            [
+                f"{oauth.get_codebuddy_auth_token_endpoint()}?state=state",
+                f"{oauth.get_codebuddy_login_account_endpoint()}?state=state",
+                oauth.get_codebuddy_accounts_endpoint(),
+            ],
+        )
+
+    async def test_account_pending_returns_sensitive_progress_for_server_storage(self):
+        fake_client = mock.Mock()
+        fake_client.get = mock.AsyncMock(side_effect=[
+            FakeTokenResponse({
+                "code": 0,
+                "data": {"accessToken": "secret", "tokenType": "Bearer"},
+            }),
+            FakeTokenResponse({"code": 12151, "msg": "waiting"}),
+        ])
+
+        result = await CodeBuddyAuthClient(
+            http_client_factory=lambda: fake_client,
+        ).poll_status("state")
+
+        self.assertEqual(result["status"], "pending")
+        self.assertEqual(result["stage"], "account")
+        self.assertEqual(result["progress"]["access_token"], "secret")
+
+    async def test_poll_resumes_from_server_side_token_progress_without_repolling_token(self):
+        fake_client = mock.Mock()
+        fake_client.get = mock.AsyncMock(side_effect=[
+            FakeTokenResponse({"code": 12151, "msg": "waiting"}),
+        ])
+
+        result = await CodeBuddyAuthClient(
+            http_client_factory=lambda: fake_client,
+        ).poll_status("state", {"access_token": "secret", "domain": "example.com"})
+
+        self.assertEqual(result["status"], "pending")
+        self.assertEqual(result["stage"], "account")
+        self.assertEqual(fake_client.get.await_count, 1)
+        self.assertIn("/v2/plugin/login/account?state=state", fake_client.get.await_args.args[0])
+
+    async def test_known_business_errors_have_stable_meanings(self):
+        expected = {
+            12005: "license_seat_limit",
+            11212: "license_expired",
+            11216: "trial_expired",
+            10081: "ip_restricted",
+        }
+        for code, error_name in expected.items():
+            with self.subTest(code=code):
+                fake_client = mock.Mock()
+                fake_client.get = mock.AsyncMock(
+                    return_value=FakeTokenResponse({"code": code, "msg": "raw upstream message"})
+                )
+                result = await CodeBuddyAuthClient(
+                    http_client_factory=lambda: fake_client,
+                ).poll_status("state")
+                self.assertEqual(result["status"], "error")
+                self.assertEqual(result["error"], error_name)
+                self.assertNotIn("raw upstream message", result["message"])
     def test_auth_url_allowlist_accepts_only_absolute_http_and_https_without_userinfo(self):
         self.assertTrue(is_safe_external_auth_url("https://codebuddy.example/auth?state=1"))
         self.assertTrue(is_safe_external_auth_url("http://127.0.0.1:8080/auth"))
@@ -355,24 +494,8 @@ class CodeBuddyAuthClientTests(unittest.IsolatedAsyncioTestCase):
                 "pending",
             ),
             (
-                FakeTokenResponse({
-                    "code": 0,
-                    "data": {
-                        "accessToken": "token",
-                        "tokenType": "Custom",
-                        "expiresIn": 10,
-                        "refreshToken": "refresh",
-                        "sessionState": "session",
-                        "scope": "openid",
-                        "domain": "codebuddy.example",
-                        "enterpriseId": "enterprise-1",
-                    },
-                }),
-                "success",
-            ),
-            (
                 FakeTokenResponse({"code": 0, "data": {}}),
-                "unknown",
+                "error",
             ),
         ]
 
@@ -397,10 +520,8 @@ class CodeBuddyAuthClientTests(unittest.IsolatedAsyncioTestCase):
                 ).poll_status("state")
 
                 self.assertEqual(result["status"], expected_status)
-                if expected_status == "success":
-                    self.assertEqual(result["token_data"]["access_token"], "token")
-                    self.assertEqual(result["token_data"]["token_type"], "Custom")
-                    self.assertEqual(result["token_data"]["enterprise_id"], "enterprise-1")
+                if response.status_code == 502:
+                    self.assertEqual(result["error"], "auth_unavailable")
 
     async def test_poll_status_maps_client_exception(self):
         def broken_factory():
@@ -410,6 +531,74 @@ class CodeBuddyAuthClientTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["status"], "error")
         self.assertEqual(result["message"], "认证状态查询失败")
+
+    async def test_poll_status_rejects_invalid_responses_at_each_stage(self):
+        token = FakeTokenResponse({
+            "code": 0,
+            "data": {"accessToken": "secret", "tokenType": "Bearer"},
+        })
+        account = FakeTokenResponse({"code": 0, "data": {"uid": "account-uid"}})
+        cases = [
+            ([FakeTokenResponse([])], "invalid_auth_response"),
+            ([FakeTokenResponse({"code": 99999})], "invalid_auth_response"),
+            ([token, FakeTokenResponse({}, status_code=503)], "auth_unavailable"),
+            ([token, FakeTokenResponse([])], "invalid_auth_response"),
+            ([token, FakeTokenResponse({"code": 11212})], "license_expired"),
+            ([token, FakeTokenResponse({"code": 0, "data": {}})], "invalid_auth_response"),
+            ([token, account, FakeTokenResponse({}, status_code=503)], None),
+            ([token, account, FakeTokenResponse([])], "invalid_auth_response"),
+            ([token, account, FakeTokenResponse({"code": 11216})], "trial_expired"),
+            ([token, account, FakeTokenResponse({"code": 0, "data": {}})], "invalid_auth_response"),
+        ]
+        for responses, expected_error in cases:
+            with self.subTest(expected_error=expected_error, responses=responses):
+                fake_client = mock.Mock()
+                fake_client.get = mock.AsyncMock(side_effect=responses)
+                result = await CodeBuddyAuthClient(
+                    http_client_factory=lambda fake_client=fake_client: fake_client,
+                ).poll_status("state")
+                if expected_error is None:
+                    self.assertEqual(result["status"], "pending")
+                    self.assertEqual(result["stage"], "accounts")
+                else:
+                    self.assertEqual(result["status"], "error")
+                    self.assertEqual(result["error"], expected_error)
+
+    async def test_poll_exception_after_token_preserves_server_side_progress(self):
+        invalid_account_response = mock.Mock(status_code=200)
+        invalid_account_response.json.side_effect = RuntimeError("invalid json")
+        fake_client = mock.Mock()
+        fake_client.get = mock.AsyncMock(side_effect=[
+            FakeTokenResponse({"code": 0, "data": {"accessToken": "secret"}}),
+            invalid_account_response,
+        ])
+
+        result = await CodeBuddyAuthClient(
+            http_client_factory=lambda: fake_client,
+        ).poll_status("state")
+
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["progress"]["access_token"], "secret")
+
+    def test_token_parser_preserves_optional_compatibility_fields(self):
+        self.assertEqual(TokenParser._normalize_epoch(1_780_000_000_000), 1_780_000_000)
+        self.assertEqual(TokenParser._site_type("https://www.codebuddy.ai"), "international")
+        self.assertEqual(TokenParser._site_type("https://custom.example"), "custom")
+        self.assertIsNone(TokenParser._normalize_account("invalid"))
+        self.assertIsNone(TokenParser._normalize_account({"uid": ""}))
+
+        credential = TokenParser.build_credential_data({
+            "bearer_token": "opaque-token",
+            "accounts": [None, {"uid": "account", "type": "personal"}],
+            "full_response": {"legacy": True},
+            "refresh_expires_in": 100,
+            "created_at": 1000,
+        })
+        self.assertEqual(credential["compatibility_data"], {
+            "legacy_full_response": {"legacy": True},
+        })
+        self.assertEqual(len(credential["accounts"]), 1)
+        self.assertEqual(credential["refresh_expires_at"], 1100)
 
 
 class CodeBuddyAuthRouterTests(unittest.IsolatedAsyncioTestCase):
@@ -692,7 +881,8 @@ class CodeBuddyAuthRouterTests(unittest.IsolatedAsyncioTestCase):
                         _user=user,
                     )
 
-                self.assertEqual(response.status_code, 400)
+                expected_status = 502 if poll_result.get("status") == "error" else 400
+                self.assertEqual(response.status_code, expected_status)
                 body = json.loads(response.body)
                 self.assertEqual(body["error"], expected_error)
                 self.assertNotIn("sensitive-upstream", json.dumps(body))
@@ -922,8 +1112,27 @@ class OAuthWrapperTests(unittest.IsolatedAsyncioTestCase):
         validate.assert_called_once_with("state", user)
         consume.assert_called_once_with("state", user)
         start.assert_awaited_once_with()
-        poll.assert_awaited_once_with("state")
+        poll.assert_awaited_once_with("state", None)
         save.assert_awaited_once_with({"token": "value"}, user)
+
+    async def test_poll_wrapper_persists_progress_for_owner(self):
+        user = AuthenticatedUser(username="alice", source="session_cookie")
+        progress = {"access_token": "secret"}
+        with (
+            mock.patch.object(oauth.auth_state_store, "get_progress", return_value=None) as get_progress,
+            mock.patch.object(oauth.auth_state_store, "set_progress", return_value=True) as set_progress,
+            mock.patch.object(
+                oauth.codebuddy_auth_client,
+                "poll_status",
+                new=mock.AsyncMock(return_value={"status": "pending", "progress": progress}),
+            ) as poll,
+        ):
+            result = await oauth.poll_codebuddy_auth_status("state", user)
+
+        self.assertEqual(result["progress"], progress)
+        get_progress.assert_called_once_with("state", user)
+        poll.assert_awaited_once_with("state", None)
+        set_progress.assert_called_once_with("state", user, progress)
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ import type {
   ChatCompletionRequest,
   CodeBuddyPollAuthResponse,
   CredentialRecord,
+  CredentialAccountsResponse,
   CredentialsResponse,
   CurrentCredential,
   DeleteCredentialResponse,
@@ -92,6 +93,15 @@ export const adminApi = {
       json: {},
       timeoutMs: CREDENTIAL_TEST_TIMEOUT_MS,
     }),
+  credentialAccounts: (credentialId: string) =>
+    apiRequest<CredentialAccountsResponse>(
+      `/api/admin/credentials/${encodeURIComponent(credentialId)}/accounts`,
+    ),
+  selectCredentialAccount: (credentialId: string, accountId: string) =>
+    apiRequest<{ selected: boolean; credential_id: string; account_id: string }>(
+      `/api/admin/credentials/${encodeURIComponent(credentialId)}/accounts/${encodeURIComponent(accountId)}/select`,
+      { method: 'POST' },
+    ),
   toggleRotation: () =>
     apiRequest<{
       message?: string;
@@ -121,6 +131,8 @@ export const codebuddyOAuthApi = {
         auth_state?: string;
         success?: boolean;
         message?: string;
+        interval?: number;
+        expires_in?: number;
       }>(path, { method: 'POST', signal, timeoutMs: OAUTH_START_TIMEOUT_MS });
     }
     return apiRequest<{
@@ -128,6 +140,8 @@ export const codebuddyOAuthApi = {
       auth_state?: string;
       success?: boolean;
       message?: string;
+      interval?: number;
+      expires_in?: number;
     }>(path, { method: 'POST', timeoutMs: OAUTH_START_TIMEOUT_MS });
   },
   pollAuth: (authState: string, signal?: AbortSignal) => {

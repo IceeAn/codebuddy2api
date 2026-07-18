@@ -17,14 +17,15 @@ class TokenExpiry:
         try:
             created_at = credential_data.get("created_at")
             expires_in = credential_data.get("expires_in")
+            expires_at = credential_data.get("expires_at")
 
-            if not created_at or not expires_in:
-                return False
+            if expires_at is None:
+                if not created_at or not expires_in:
+                    return False
+                expires_at = created_at + expires_in
 
             current_time = int(time.time())
-            expiry_time = created_at + expires_in
-            buffer_time = 300
-            is_expired = current_time >= (expiry_time - buffer_time)
+            is_expired = current_time >= expires_at
 
             if is_expired:
                 user_id = credential_data.get("user_id", "unknown")

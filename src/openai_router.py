@@ -159,8 +159,10 @@ async def chat_completions(
         headers = codebuddy_api_client.generate_codebuddy_headers(
             bearer_token=credential.get("bearer_token"),
             user_id=credential.get("user_id"),
+            account_uid=credential.get("account_uid"),
             domain=credential.get("domain"),
             enterprise_id=credential.get("enterprise_id"),
+            department_full_name=credential.get("department_full_name"),
             conversation_id=x_conversation_id,
             conversation_request_id=x_conversation_request_id,
             conversation_message_id=x_conversation_message_id,

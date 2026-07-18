@@ -55,8 +55,10 @@ class CodeBuddyAPIClient:
             self,
             bearer_token: str,
             user_id: Optional[str] = None,
+            account_uid: Optional[str] = None,
             domain: str = None,
             enterprise_id: Optional[str] = None,
+            department_full_name: Optional[str] = None,
             conversation_id: Optional[str] = None,
             conversation_request_id: Optional[str] = None,
             conversation_message_id: Optional[str] = None,
@@ -67,7 +69,8 @@ class CodeBuddyAPIClient:
         优先使用传入的会话ID，如果未提供则随机生成。
         """
         from config import get_codebuddy_api_host
-        if not user_id:
+        effective_user_id = account_uid or user_id
+        if not effective_user_id:
             raise ValueError("CodeBuddy 凭证缺少 user_id")
 
         codebuddy_host = get_codebuddy_api_host()
@@ -99,11 +102,15 @@ class CodeBuddyAPIClient:
             'X-Private-Data': 'false',
             'X-CodeBuddy-Request': '1',
             'X-Product': 'SaaS',
-            'X-User-Id': user_id
+            'X-User-Id': effective_user_id
         }
         if enterprise_id:
             headers["X-Enterprise-Id"] = enterprise_id
             headers["X-Tenant-Id"] = enterprise_id
+        if department_full_name:
+            if any(ord(character) < 32 or ord(character) == 127 for character in department_full_name):
+                raise ValueError("CodeBuddy 凭证包含无效的 department_full_name")
+            headers["X-Department-Info"] = department_full_name
         return headers
 
 
