@@ -91,6 +91,7 @@ vi.mock('../composables/useOAuthPolling', () => ({
 import CredentialsView from '../views/CredentialsView.vue';
 import { adminApi } from '../api/admin';
 import CredentialActions from '../components/CredentialActions.vue';
+import CredentialQuotaRing from '../components/CredentialQuotaRing.vue';
 import CRadioGroup from '../components/ui/CRadioGroup.vue';
 import { RefreshButtonStub } from './refreshButtonStub';
 
@@ -561,11 +562,18 @@ describe('CredentialsView', () => {
         department_full_name: '研发部',
       }),
     ).toBe('a@example.com · 测试企业 / 研发部');
-    expect(state.columns[5].title).toBe('操作');
-    expect(state.columns[5].align).toBe('left');
-    expect(state.columns[5].headerClassName).toBe('table-action-header');
+    expect(state.columns[4].title).toBe('额度');
+    expect(state.columns[4].render(valid)).toBe('-');
+    const quota = { status: 'fresh', remaining_percent: 50 };
+    const quotaRing = state.columns[4].render({ ...valid, quota });
+    expect(quotaRing.type).toBe(CredentialQuotaRing);
+    expect(quotaRing.props?.quota).toBe(quota);
+    expect(state.columns[5].title).toBe('文件');
+    expect(state.columns[6].title).toBe('操作');
+    expect(state.columns[6].align).toBe('left');
+    expect(state.columns[6].headerClassName).toBe('table-action-header');
 
-    const actions = state.columns[5].render(valid);
+    const actions = state.columns[6].render(valid);
     expect(actions.type).toBe(CredentialActions);
     expect(actions.props?.credential).toBe(valid);
     expect(actions.props?.isCurrent).toBe(false);
@@ -582,7 +590,7 @@ describe('CredentialsView', () => {
     expect(mutationStates[3].mutate).toHaveBeenCalledWith('valid');
     expect(mutationStates[2].mutate).toHaveBeenCalledWith('valid');
 
-    const activeActions = state.columns[5].render(active);
+    const activeActions = state.columns[6].render(active);
     expect(activeActions.type).toBe(CredentialActions);
     expect(activeActions.props?.isCurrent).toBe(true);
     expect(activeActions.props?.autoRotationEnabled).toBe(false);
@@ -593,9 +601,9 @@ describe('CredentialsView', () => {
     };
     const enabledWrapper = mountView();
     const enabledState = (enabledWrapper.vm.$ as any).setupState;
-    expect(enabledState.columns[5].render(active).props?.autoRotationEnabled).toBe(true);
+    expect(enabledState.columns[6].render(active).props?.autoRotationEnabled).toBe(true);
 
-    const switchableActions = enabledState.columns[5].render({
+    const switchableActions = enabledState.columns[6].render({
       ...valid,
       has_refresh_token: true,
       account_count: 2,
@@ -620,14 +628,14 @@ describe('CredentialsView', () => {
     expect(state.accountSwitcherCredentialId).toBe('');
     state.testingIds.delete('testing');
     expect(
-      enabledState.columns[5].render({
+      enabledState.columns[6].render({
         ...valid,
         has_refresh_token: true,
       }).props?.canSwitchAccount,
     ).toBe(false);
 
     mutationOptions[3].onMutate('valid');
-    expect(enabledState.columns[5].render(valid).props?.isTesting).toBe(true);
+    expect(enabledState.columns[6].render(valid).props?.isTesting).toBe(true);
   });
 
   it('测试、选择和删除并发状态互相遵守冲突规则', async () => {
@@ -637,8 +645,8 @@ describe('CredentialsView', () => {
     const second = { credential_id: 'second', is_expired: false };
 
     mutationOptions[3].onMutate('first');
-    let firstActions = state.columns[5].render(first);
-    let secondActions = state.columns[5].render(second);
+    let firstActions = state.columns[6].render(first);
+    let secondActions = state.columns[6].render(second);
     expect(firstActions.props?.isTesting).toBe(true);
     expect(secondActions.props?.isTesting).toBe(false);
     expect(secondActions.props?.hasActiveTests).toBe(true);
@@ -654,7 +662,7 @@ describe('CredentialsView', () => {
 
     mutationOptions[3].onSettled(undefined, undefined, 'first');
     mutationOptions[1].onMutate('second');
-    secondActions = state.columns[5].render(second);
+    secondActions = state.columns[6].render(second);
     expect(secondActions.props?.isSelecting).toBe(true);
     expect(secondActions.props?.writeInProgress).toBe(true);
     secondActions.props?.onTest('second');
@@ -664,11 +672,18 @@ describe('CredentialsView', () => {
     mutationOptions[1].onSettled(undefined, undefined, 'second');
 
     mutationOptions[2].onMutate('second');
-    secondActions = state.columns[5].render(second);
+    secondActions = state.columns[6].render(second);
     expect(secondActions.props?.isDeleting).toBe(true);
     mutationOptions[2].onSettled(undefined, undefined, 'other');
     expect(state.deletingId).toBe('second');
     mutationOptions[2].onSettled(undefined, undefined, 'second');
+  });
+
+  it('保持单一页面根节点，使路由过渡能完整进入和离开', () => {
+    const wrapper = mountView();
+
+    expect((wrapper.vm.$ as any).subTree.type).toBe('div');
+    expect(wrapper.find('.section-grid > .credential-account-switcher-stub').exists()).toBe(true);
   });
 
   it('存在测试时禁止新增、轮换与开始认证', async () => {

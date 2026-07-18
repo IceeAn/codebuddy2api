@@ -13,6 +13,7 @@ from .auth_types import ApiKeyCreateRequest, AuthenticatedUser
 from .codebuddy_api_client import codebuddy_api_client
 from .codebuddy_token_manager import get_token_manager_for_user
 from .credential_refresh import CredentialRefreshError, credential_refresh_manager
+from .credential_quota import credential_quota_manager
 from .models_manager import models_manager
 from .private_response import PrivateNoStoreRoute
 from .request_processor import RequestProcessor
@@ -128,13 +129,19 @@ def _safe_credential(info: Dict[str, Any], credential: Optional[Dict[str, Any]])
     return safe_info
 
 
-def _safe_credentials(token_manager) -> List[Dict[str, Any]]:
+def _safe_credentials(token_manager, username: Optional[str] = None) -> List[Dict[str, Any]]:
     credentials = token_manager.get_all_credentials()
     result = []
     for info in token_manager.get_credentials_info():
         index = info.get("index")
         credential = credentials[index] if isinstance(index, int) and index < len(credentials) else None
-        result.append(_safe_credential(info, credential))
+        safe = _safe_credential(info, credential)
+        owner = username or getattr(token_manager, "username", None)
+        if owner:
+            safe["quota"] = credential_quota_manager.get_quota(
+                owner, info["credential_id"],
+            )
+        result.append(safe)
     return result
 
 
@@ -217,7 +224,7 @@ async def list_admin_credentials(_user: AuthenticatedUser = Depends(require_sess
     """列出当前管理页用户的 CodeBuddy 凭证。"""
     token_manager = get_token_manager_for_user(_user)
     return {
-        "credentials": _safe_credentials(token_manager),
+        "credentials": _safe_credentials(token_manager, _user.username),
         "current": token_manager.get_current_credential_info(),
     }
 
@@ -280,6 +287,11 @@ async def select_credential_account(
         if reason == "temporary":
             raise HTTPException(status_code=503, detail="CodeBuddy account service unavailable") from error
         raise HTTPException(status_code=502, detail="CodeBuddy account switch failed") from error
+    if selected:
+        credential_quota_manager.invalidate_credential(_user.username, credential_id)
+        credential_quota_manager.schedule_probe_if_running(
+            _user.username, token_manager, credential_id,
+        )
     return {"selected": bool(selected), "credential_id": credential_id, "account_id": account_id}
 
 
@@ -296,8 +308,11 @@ async def create_admin_credential(
     if not token_manager.add_credential(bearer_token):
         raise HTTPException(status_code=500, detail="Failed to save credential file")
 
-    for credential in _safe_credentials(token_manager):
+    for credential in _safe_credentials(token_manager, _user.username):
         if credential["credential_id"] not in before_ids:
+            credential_quota_manager.schedule_probe_if_running(
+                _user.username, token_manager, credential["credential_id"],
+            )
             return {"credential": credential}
     raise HTTPException(status_code=500, detail="Failed to identify newly created credential")
 
@@ -330,6 +345,7 @@ async def delete_admin_credential(
     if not token_manager.delete_credential_by_id(credential_id):
         raise _credential_not_found()
     models_manager.invalidate_credential(_user, credential_id)
+    credential_quota_manager.invalidate_credential(_user.username, credential_id)
     return {"deleted": True, "current": token_manager.get_current_credential_info()}
 
 

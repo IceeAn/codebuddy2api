@@ -89,6 +89,7 @@ docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:
 - OAuth 自动刷新只由启动任务和每小时任务触发，在 `expires_at - 86400` 秒进入刷新窗口；聊天、模型发现等请求路径不得触发、等待或重试刷新。
 - 每个系统用户拥有独立凭证目录和 Token 管理器。凭证轮换开关是用户级设置，轮换频率必须为正整数。
 - CodeBuddy `/v3/config` URL、`Host` 和 `X-Domain` 必须由同一个当前 API endpoint 派生。
+- 凭证额度探测按 `enterprise_id` 分流：个人版使用 `/v2/billing/meter/get-user-resource`；企业版使用 `/v2/billing/meter/get-enterprise-user-usage`，其中 `credit` 是已用额度、`limitNum` 是总额度。个人版无套餐时上游会返回 `TotalCount: 0` 与 `Accounts: null`，仅此组合应按零额度处理，其他异常结构仍需失败。两类额度只用于探测与展示，不参与凭证轮换或统计 billing 语义。
 - 模型缓存键至少包含系统用户与 `credential_id`。凭证过期、删除或失效时必须同时驱逐缓存并作废在途查询；旧请求结果不能写回，也不能被同 ID 的新凭证复用。过期值不得作为失败回退，并发未命中使用 per-key single-flight 合并。
 
 ## 统计系统
@@ -102,6 +103,7 @@ docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:
 
 ## 前端约定
 
+- `RouterView` 的页面组件由 `Transition mode="out-in"` 承载，必须只有一个根节点；页面级弹窗即使内部使用 Teleport，也必须放在该根节点内，否则进出场完成钩子会丢失，导致路由白屏与主题按钮持续禁用。
 - 管理数据的 Vue Query key 必须以 `['admin', username, ...]` 开头。登出、本地会话 401 或用户名变化时，同时清空 Query Cache 和 Mutation Cache。
 - 查询和 mutation 使用 `networkMode="always"`，查询禁用 `refetchOnReconnect`，保证离线时立即失败且联网后不补发。手动刷新和重试统一使用 `RefreshButton`；它需在 refetch 前检查离线状态，并独立维持最短加载反馈，不能只依赖 `isFetching`。
 - 可聚焦元素不要使用 Tailwind `transition-colors`；它会一并过渡 `outline-color`，使暗色模式的键盘焦点轮廓从浏览器默认浅色短暂闪烁。应使用 `transition-[color]` 或 `transition-[color,background-color]` 等明确的过渡属性。

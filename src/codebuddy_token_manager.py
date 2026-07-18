@@ -162,25 +162,35 @@ class CodeBuddyTokenManager:
 
     def get_next_credential(self) -> Optional[Dict]:
         """根据当前轮换策略获取下一个可用凭证。"""
+        selected = self.select_next_credential()
+        return selected[1] if selected is not None else None
+
+    def select_next_credential(self) -> Optional[tuple[str, Dict]]:
+        """原子返回下一张凭证的稳定 ID 与数据，供请求归属使用。"""
         from config import get_rotation_count
 
-        selection = self.rotation_policy.select(
-            credentials=self.credentials,
-            current_index=self.current_index,
-            usage_count=self.usage_count,
-            auto_rotation_enabled=self._is_auto_rotation_enabled(),
-            rotation_count=get_rotation_count(self.username),
-        )
-        self.current_index = selection.current_index
-        self.usage_count = selection.usage_count
+        with self._lock:
+            selection = self.rotation_policy.select(
+                credentials=self.credentials,
+                current_index=self.current_index,
+                usage_count=self.usage_count,
+                auto_rotation_enabled=self._is_auto_rotation_enabled(),
+                rotation_count=get_rotation_count(self.username),
+            )
+            self.current_index = selection.current_index
+            self.usage_count = selection.usage_count
 
-        if not selection.credential_record:
-            return None
+            if not selection.credential_record:
+                return None
 
-        if selection.log_message:
-            logger.info(selection.log_message)
+            if selection.log_message:
+                logger.info(selection.log_message)
 
-        return selection.credential_record["data"]
+            filename = os.path.basename(selection.credential_record["file_path"])
+            return (
+                self._credential_id_from_filename(filename),
+                selection.credential_record["data"],
+            )
 
     def preview_next_credential(self) -> Optional[tuple[str, Dict]]:
         """预览下一张可用凭证，不修改当前索引和使用计数。"""
@@ -252,6 +262,16 @@ class CodeBuddyTokenManager:
             )
 
         return credentials_info
+
+    def get_credential_info_by_id(self, credential_id: str) -> Optional[Dict[str, Any]]:
+        """按稳定 ID 返回不含凭证密钥的管理信息。"""
+        return next(
+            (
+                info for info in self.get_credentials_info()
+                if info.get("credential_id") == credential_id
+            ),
+            None,
+        )
 
     def get_credential_by_id(self, credential_id: str) -> Optional[Dict]:
         """按公开 credential_id 获取凭证内容。"""

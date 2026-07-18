@@ -1044,7 +1044,15 @@ class CodeBuddyTokenSaverTests(unittest.IsolatedAsyncioTestCase):
     async def test_saves_sanitized_credential_data(self):
         manager = mock.Mock()
         manager.add_credential_with_data.return_value = True
+        manager.get_credentials_info.side_effect = [
+            [{"credential_id": "existing-credential"}],
+            [
+                {"credential_id": "existing-credential"},
+                {"credential_id": "new-credential"},
+            ],
+        ]
         credential_data = {"bearer_token": "token", "user_id": "a/b:c@example.com"}
+        schedule_probe = mock.Mock()
 
         with (
             mock.patch(
@@ -1056,6 +1064,10 @@ class CodeBuddyTokenSaverTests(unittest.IsolatedAsyncioTestCase):
                 return_value=manager,
             ),
             mock.patch("src.codebuddy_oauth.time.time", return_value=123),
+            mock.patch(
+                "src.credential_quota.credential_quota_manager.schedule_probe_if_running",
+                schedule_probe,
+            ),
         ):
             result = await CodeBuddyTokenSaver().save({"access_token": "token"}, self.user)
 
@@ -1064,10 +1076,42 @@ class CodeBuddyTokenSaverTests(unittest.IsolatedAsyncioTestCase):
             credential_data=credential_data,
             filename="codebuddy_abcexample.com_123.json",
         )
+        schedule_probe.assert_called_once_with(
+            "alice",
+            manager,
+            "new-credential",
+        )
+
+    async def test_success_without_new_identifier_does_not_schedule_probe(self):
+        manager = mock.Mock()
+        manager.add_credential_with_data.return_value = True
+        manager.get_credentials_info.return_value = [
+            {"credential_id": "existing-credential"},
+        ]
+        schedule_probe = mock.Mock()
+        with (
+            mock.patch(
+                "src.codebuddy_oauth.TokenParser.build_credential_data",
+                return_value={"bearer_token": "token", "user_id": "alice"},
+            ),
+            mock.patch(
+                "src.codebuddy_token_manager.get_token_manager_for_user",
+                return_value=manager,
+            ),
+            mock.patch(
+                "src.credential_quota.credential_quota_manager.schedule_probe_if_running",
+                schedule_probe,
+            ),
+        ):
+            result = await CodeBuddyTokenSaver().save({"access_token": "token"}, self.user)
+
+        self.assertTrue(result)
+        schedule_probe.assert_not_called()
 
     async def test_returns_false_for_manager_rejection_or_exception(self):
         manager = mock.Mock()
         manager.add_credential_with_data.return_value = False
+        manager.get_credentials_info.return_value = []
         with mock.patch(
             "src.codebuddy_token_manager.get_token_manager_for_user",
             return_value=manager,

@@ -311,7 +311,20 @@ describe('CTooltip', () => {
     expect(classes).toContain('text-xs');
     expect(classes).toContain('w-max');
     expect(classes).toContain('max-w-[20rem]');
+    expect(classes).toContain('pointer-events-none');
     expect(classes.some((className) => className.startsWith('dark:'))).toBe(false);
+  });
+
+  it('clickable 模式显示后允许浮层接收鼠标事件', async () => {
+    const wrapper = mount(CTooltip, {
+      props: { content: '交互提示', clickable: true },
+      slots: { default: '<button>触发</button>' },
+    });
+    await wrapper.trigger('mouseenter');
+    vi.advanceTimersByTime(300);
+    await flushPromises();
+
+    expect(getPopoverClasses()).not.toContain('pointer-events-none');
   });
 
   it('短中文提示按内容宽度展开，避免在表格图标按钮上单字换行', async () => {

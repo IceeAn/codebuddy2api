@@ -719,6 +719,8 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
 
             self.assertNotEqual(first_id, second_id)
             self.assertEqual(manager.get_credential_by_id(first_id)["bearer_token"], "a-token")
+            self.assertEqual(manager.get_credential_info_by_id(first_id)["credential_id"], first_id)
+            self.assertIsNone(manager.get_credential_info_by_id("missing"))
             self.assertTrue(manager.set_current_credential_by_id(second_id))
             self.assertEqual(manager.get_current_credential_info()["credential_id"], second_id)
             self.assertEqual(manager.get_current_credential_info()["status"], "auto_rotation_disabled")

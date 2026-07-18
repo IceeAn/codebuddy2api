@@ -719,6 +719,9 @@ class CodeBuddyTokenSaver:
             filename = f"codebuddy_{safe_user_id}_{timestamp}.json"
 
             token_manager = get_token_manager_for_user(owner_user)
+            before_ids = {
+                item["credential_id"] for item in token_manager.get_credentials_info()
+            }
             success = token_manager.add_credential_with_data(
                 credential_data=credential_data,
                 filename=filename,
@@ -726,6 +729,16 @@ class CodeBuddyTokenSaver:
 
             if success:
                 logger.info(f"成功保存CodeBuddy token，用户: {user_id}，文件: {filename}")
+                from .credential_quota import credential_quota_manager
+                for item in token_manager.get_credentials_info():
+                    credential_id = item["credential_id"]
+                    if credential_id not in before_ids:
+                        credential_quota_manager.schedule_probe_if_running(
+                            owner_user.username,
+                            token_manager,
+                            credential_id,
+                        )
+                        break
 
             return success
         except Exception as e:

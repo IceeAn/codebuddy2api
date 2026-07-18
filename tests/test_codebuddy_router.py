@@ -57,6 +57,22 @@ class CredentialManagerTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.status_code, 401)
 
+    def test_atomic_credential_selection_validates_result(self):
+        class Manager:
+            def __init__(self, selected):
+                self.selected = selected
+
+            def select_next_credential(self):
+                return self.selected
+
+        selected = ("credential-id", {"bearer_token": "token"})
+        self.assertEqual(CredentialManager.get_valid_credential_selection(Manager(selected)), selected)
+
+        for value in (None, ("credential-id", {})):
+            with self.subTest(value=value), self.assertRaises(HTTPException) as raised:
+                CredentialManager.get_valid_credential_selection(Manager(value))
+            self.assertEqual(raised.exception.status_code, 401)
+
 
 class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -207,6 +223,64 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
             response_model="codebuddy/resolved-model",
         )
         service.handle_stream_response.assert_not_awaited()
+
+    async def test_chat_completion_attributes_usage_to_atomically_selected_credential(self):
+        request_body = {
+            "model": "model",
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+
+        class AtomicManager:
+            def select_next_credential(self):
+                return "selected-id", {
+                    **self_credential,
+                    "user_id": "selected-user",
+                }
+
+            def get_credential_info_by_id(self, credential_id):
+                self.requested_credential_id = credential_id
+                return {
+                    "credential_id": credential_id,
+                    "filename": "selected.json",
+                }
+
+            def get_current_credential_info(self):
+                raise AssertionError("原子选择后不应重新读取当前凭证")
+
+        self_credential = self.credential
+        token_manager = AtomicManager()
+        service = mock.Mock()
+        service.handle_non_stream_response = mock.AsyncMock(return_value={"ok": True})
+        stats_context = mock.Mock()
+
+        with (
+            mock.patch("src.openai_router.get_token_manager_for_user", return_value=token_manager),
+            mock.patch(
+                "src.openai_router.codebuddy_api_client.generate_codebuddy_headers",
+                return_value={},
+            ),
+            mock.patch(
+                "src.openai_router.RequestProcessor.prepare_request",
+                return_value=PreparedCodeBuddyRequest(
+                    payload={"model": "model", "stream": True},
+                    client_wants_stream=False,
+                    response_model="model",
+                ),
+            ),
+            mock.patch("src.openai_router.CodeBuddyStreamService", return_value=service),
+        ):
+            result = await chat_completions(
+                FakeChatRequest(request_body),
+                _user=self.user,
+                stats_context=stats_context,
+            )
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(token_manager.requested_credential_id, "selected-id")
+        stats_context.capture_credential.assert_called_once_with(
+            "selected-id",
+            "selected.json",
+        )
 
     async def test_chat_completion_rejects_invalid_json(self):
         stats_context = mock.Mock()
