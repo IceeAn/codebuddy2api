@@ -49,7 +49,6 @@ python3 -m venv venv
 source venv/bin/activate
 python3 -m pip install -r requirements.txt
 
-cp .env.example .env
 mkdir -p secrets data
 python3 scripts/hash_password.py admin --output secrets/users.txt
 
@@ -82,7 +81,6 @@ PowerShell 示例使用 Python Launcher `py -3`。如不可用，可以尝试将
 py -3 -m venv venv
 .\venv\Scripts\python.exe -m pip install -r requirements.txt
 
-Copy-Item .env.example .env
 New-Item -ItemType Directory -Force secrets | Out-Null
 New-Item -ItemType Directory -Force data | Out-Null
 .\venv\Scripts\python.exe scripts\hash_password.py admin --output secrets\users.txt
@@ -383,7 +381,7 @@ OpenAPI 文档会展示外部 `/openai/v1/*` 的 Bearer API Key 鉴权和 Chat C
 1. 启动与安全边界配置：环境变量优先于代码默认值，只在服务启动时加载，不从 SQLite 读取。
 2. 用户级运行配置：管理台首次保存后按用户名写入 `data/codebuddy2api.sqlite3`；未保存的字段继承对应环境变量或代码默认值。
 
-以下表格反映当前配置；`config.py` 是默认值的权威来源，`.env.example` 是部署模板，不穷举所有用户级设置。`.env` 是可选文件，仅用于覆盖默认值。
+以下表格反映当前配置；应用根目录下的 `.env` 是可选文件，仅用于覆盖默认值，不会向父目录搜索。
 
 ### 启动与安全边界配置
 

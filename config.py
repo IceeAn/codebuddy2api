@@ -90,13 +90,25 @@ def load_config():
     global _config_cache, _user_settings_cache
     
     config = _DEFAULT_CONFIG.copy()
-    
-    try:
-        from dotenv import load_dotenv
-        load_dotenv()
-        logger.info("Loaded environment variables from .env file.")
-    except ImportError:
-        logger.warning("python-dotenv not installed, skipping .env file loading.")
+
+    dotenv_path = _APPLICATION_ROOT / ".env"
+    if dotenv_path.is_file():
+        try:
+            from dotenv import load_dotenv
+        except ImportError:
+            logger.warning(
+                "python-dotenv is not installed; skipping environment file %s.",
+                dotenv_path,
+            )
+        else:
+            load_dotenv(dotenv_path=dotenv_path)
+            logger.info("Loaded environment variables from %s.", dotenv_path)
+    else:
+        logger.warning(
+            "Optional environment file %s was not found; continuing with process "
+            "environment variables and defaults.",
+            dotenv_path,
+        )
 
     for key in config:
         env_value = os.getenv(key)

@@ -19,6 +19,58 @@ from tests.helpers import ConfigIsolationMixin
 
 
 class ConfigTests(ConfigIsolationMixin, unittest.TestCase):
+    def test_load_config_uses_only_application_root_dotenv(self):
+        application_root = Path(self._database_dir.name) / "application"
+        application_root.mkdir()
+        dotenv_path = application_root / ".env"
+        dotenv_path.write_text("CODEBUDDY_LOG_LEVEL=DEBUG\n", encoding="utf-8")
+        data_dir = config.get_data_dir()
+
+        with (
+            mock.patch.object(config, "_APPLICATION_ROOT", application_root),
+            mock.patch("dotenv.load_dotenv") as load_dotenv,
+            mock.patch.object(config.logger, "info") as log_info,
+            mock.patch.dict(
+                "os.environ",
+                {"CODEBUDDY_DATA_DIR": data_dir},
+            ),
+        ):
+            config.load_config()
+
+        load_dotenv.assert_called_once_with(dotenv_path=dotenv_path)
+        log_info.assert_any_call(
+            "Loaded environment variables from %s.",
+            dotenv_path,
+        )
+
+    def test_load_config_ignores_parent_dotenv_when_application_file_is_missing(self):
+        parent_dir = Path(self._database_dir.name) / "parent"
+        application_root = parent_dir / "application"
+        application_root.mkdir(parents=True)
+        (parent_dir / ".env").write_text(
+            "FORWARDED_ALLOW_IPS=*\n",
+            encoding="utf-8",
+        )
+        dotenv_path = application_root / ".env"
+        data_dir = config.get_data_dir()
+
+        with (
+            mock.patch.object(config, "_APPLICATION_ROOT", application_root),
+            mock.patch("dotenv.load_dotenv") as load_dotenv,
+            mock.patch.object(config.logger, "warning") as log_warning,
+            mock.patch.dict(
+                "os.environ",
+                {"CODEBUDDY_DATA_DIR": data_dir},
+            ),
+        ):
+            config.load_config()
+
+        load_dotenv.assert_not_called()
+        log_warning.assert_any_call(
+            "Optional environment file %s was not found; continuing with process environment variables and defaults.",
+            dotenv_path,
+        )
+
     def test_load_config_rejects_api_endpoint_outside_explicit_allowlist(self):
         with mock.patch.dict(
             "os.environ",
@@ -34,6 +86,9 @@ class ConfigTests(ConfigIsolationMixin, unittest.TestCase):
     def test_load_config_continues_when_dotenv_is_unavailable(self):
         real_import = __import__
         data_dir = config.get_data_dir()
+        application_root = Path(self._database_dir.name) / "application"
+        application_root.mkdir()
+        (application_root / ".env").touch()
 
         def import_without_dotenv(name, *args, **kwargs):
             if name == "dotenv":
@@ -41,7 +96,9 @@ class ConfigTests(ConfigIsolationMixin, unittest.TestCase):
             return real_import(name, *args, **kwargs)
 
         with (
+            mock.patch.object(config, "_APPLICATION_ROOT", application_root),
             mock.patch("builtins.__import__", side_effect=import_without_dotenv),
+            mock.patch.object(config.logger, "warning") as log_warning,
             mock.patch.dict(
                 "os.environ",
                 {"CODEBUDDY_DATA_DIR": data_dir},
@@ -50,6 +107,10 @@ class ConfigTests(ConfigIsolationMixin, unittest.TestCase):
             config.load_config()
 
         self.assertEqual(config.get_data_dir(), data_dir)
+        log_warning.assert_called_once_with(
+            "python-dotenv is not installed; skipping environment file %s.",
+            application_root / ".env",
+        )
 
     def test_config_helpers_cover_missing_and_invalid_values(self):
         self.assertIsNone(config._username_from_user(object()))

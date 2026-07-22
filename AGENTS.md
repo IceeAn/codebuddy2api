@@ -46,7 +46,7 @@ docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:
 
 ## 架构与边界
 
-- `web.py` 是 FastAPI/Uvicorn 入口，`config.py` 管理启动级配置；环境变量优先于硬编码默认值，安全边界配置不得由用户数据库设置覆盖。
+- `web.py` 是 FastAPI/Uvicorn 入口，`config.py` 管理启动级配置；环境变量优先于硬编码默认值，安全边界配置不得由用户数据库设置覆盖。可选 `.env` 只从应用根目录加载，不得向父目录搜索。
 - `CODEBUDDY_DATA_DIR` 的相对路径以 `config.py` 所在的应用根目录为基准。SQLite 和凭证路径必须由解析后的绝对数据目录派生，不能依赖进程工作目录。
 - 管理台设置、API Key、凭证、模型缓存和统计都按系统用户隔离。新增管理端缓存时，隔离维度必须包含用户名；涉及凭证的数据还必须使用稳定的 `credential_id`，不得依赖列表下标。
 - 管理 API 位于 `/api/admin/*`。外部协议入口遵循 `/<协议>/v1/*`，仅接受 API Key；管理台测试入口遵循 `/api/admin/playground/<协议>/v1/*`，仅接受会话 Cookie。两者复用协议处理逻辑，但不能互相接受对方的认证方式。
