@@ -11,10 +11,14 @@ import CModal from './ui/CModal.vue';
 import CRadioButton from './ui/CRadioButton.vue';
 import CRadioGroup from './ui/CRadioGroup.vue';
 
-const props = defineProps<{
-  open: boolean;
-  credentialId: string;
-}>();
+const props = withDefaults(
+  defineProps<{
+    open: boolean;
+    credentialId: string;
+    disabled?: boolean;
+  }>(),
+  { disabled: false },
+);
 const emit = defineEmits<{
   close: [];
   switching: [value: boolean];
@@ -76,7 +80,7 @@ function close(): void {
 }
 
 function confirm(): void {
-  if (!selectedAccountId.value || switchMutation.isPending.value) return;
+  if (props.disabled || !selectedAccountId.value || switchMutation.isPending.value) return;
   switchMutation.mutate();
 }
 
@@ -113,7 +117,7 @@ function accountLabel(account: CredentialAccount): string {
       <CButton
         variant="primary"
         :loading="switchMutation.isPending.value"
-        :disabled="!selectedAccountId"
+        :disabled="disabled || !selectedAccountId"
         @click="confirm"
       >
         确认切换

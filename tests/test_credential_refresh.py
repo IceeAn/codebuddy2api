@@ -122,6 +122,32 @@ class CredentialRefreshManagerTests(ConfigIsolationMixin, unittest.IsolatedAsync
         await refresher.shutdown()
         await refresher._run()
 
+    async def test_initial_scan_waiter_does_not_block_startup(self):
+        started = asyncio.Event()
+        release = asyncio.Event()
+        refresher = CredentialRefreshManager(usernames_provider=lambda: ())
+
+        async def blocked_scan():
+            started.set()
+            await release.wait()
+
+        refresher.scan_once = mock.AsyncMock(side_effect=blocked_scan)
+        await asyncio.wait_for(refresher.startup(), timeout=0.1)
+        waiter = asyncio.create_task(refresher.wait_for_initial_scan())
+
+        await started.wait()
+        self.assertFalse(waiter.done())
+        release.set()
+        await waiter
+        refresher.scan_once.assert_awaited_once_with()
+        await refresher.shutdown()
+
+    async def test_initial_scan_waiter_requires_running_manager(self):
+        refresher = CredentialRefreshManager(usernames_provider=lambda: ())
+
+        with self.assertRaises(RuntimeError):
+            await refresher.wait_for_initial_scan()
+
     async def test_shutdown_cancels_blocked_scan_and_inflight_task(self):
         refresher = CredentialRefreshManager(usernames_provider=lambda: ())
         scan_blocker = asyncio.Event()

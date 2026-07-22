@@ -9,7 +9,7 @@ from typing import Iterator, Union
 from urllib.parse import quote
 
 DATABASE_FILENAME = "codebuddy2api.sqlite3"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA_LOCK = threading.RLock()
 _SCHEMA_V1_STATEMENTS = (
@@ -150,6 +150,27 @@ _SCHEMA_V2_STATEMENTS = (
     """,
 )
 
+_SCHEMA_V3_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS credential_daily_checkins (
+        username TEXT NOT NULL,
+        account_key TEXT NOT NULL,
+        code INTEGER,
+        message TEXT NOT NULL,
+        credit REAL,
+        attempted_at INTEGER NOT NULL,
+        checked_in_at INTEGER,
+        success INTEGER NOT NULL CHECK (success IN (0, 1)),
+        PRIMARY KEY (username, account_key),
+        CHECK (code = 0 OR (credit IS NULL AND checked_in_at IS NULL))
+    ) WITHOUT ROWID
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_credential_daily_checkins_attempted_at
+    ON credential_daily_checkins(attempted_at)
+    """,
+)
+
 
 def resolve_database_path(data_dir: Union[str, Path], cwd: Union[str, Path, None] = None) -> Path:
     """基于数据目录解析统一 SQLite 数据库路径。"""
@@ -174,7 +195,7 @@ class SQLiteDatabase:
     def _initialize_schema(self, connection: sqlite3.Connection) -> None:
         with _SCHEMA_LOCK:
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, SCHEMA_VERSION):
+            if version not in (0, 1, 2, SCHEMA_VERSION):
                 raise RuntimeError(
                     f"Unsupported SQLite schema version {version}; expected {SCHEMA_VERSION}"
                 )
@@ -188,8 +209,10 @@ class SQLiteDatabase:
             if version < SCHEMA_VERSION:
                 try:
                     connection.execute("BEGIN IMMEDIATE")
-                    statements = _SCHEMA_V2_STATEMENTS
-                    if version == 0:
+                    statements = _SCHEMA_V3_STATEMENTS
+                    if version < 2:
+                        statements = _SCHEMA_V2_STATEMENTS + statements
+                    if version < 1:
                         statements = _SCHEMA_V1_STATEMENTS + statements
                     for statement in statements:
                         connection.execute(statement)

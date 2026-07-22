@@ -48,11 +48,12 @@ const ModalStub = defineComponent({
     '<section v-if="open" class="modal"><slot /><footer><slot name="footer" /></footer><button class="modal-close" @click="$emit(\'update:open\', false)" /></section>',
 });
 
-function mountSwitcher(open = true, eventOrder?: string[]) {
+function mountSwitcher(open = true, eventOrder?: string[], disabled = false) {
   return mount(CredentialAccountSwitcher, {
     props: {
       open,
       credentialId: 'cred/id',
+      disabled,
       onSwitching: (value: boolean) => eventOrder?.push(`switching:${String(value)}`),
       onClose: () => eventOrder?.push('close'),
     },
@@ -186,6 +187,22 @@ describe('CredentialAccountSwitcher', () => {
     expect(wrapper.emitted('switching')).toEqual([[true], [false]]);
     expect(wrapper.emitted('close')).toBeUndefined();
     expect(eventOrder).toEqual(['switching:true', 'switching:false']);
+  });
+
+  it('凭证签到期间禁用已经打开弹窗的确认切换', async () => {
+    query.data.value = {
+      current_account_id: 'account',
+      accounts: [{ account_id: 'account', type: 'personal', nickname: '' }],
+    };
+    const wrapper = mountSwitcher(true, undefined, true);
+    await wrapper.vm.$nextTick();
+    const confirmButton = wrapper
+      .findAll('button')
+      .find((button) => button.text().includes('确认切换'))!;
+
+    expect(confirmButton.attributes('disabled')).toBeDefined();
+    (wrapper.vm.$ as any).setupState.confirm();
+    expect(mutation.mutate).not.toHaveBeenCalled();
   });
 
   it('覆盖关闭、空选择及加载失败状态', async () => {

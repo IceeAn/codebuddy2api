@@ -252,6 +252,16 @@ export interface CredentialRecord {
   has_token: boolean;
   token_display: string;
   quota?: CredentialQuota;
+  daily_checkin?: CredentialDailyCheckin;
+}
+
+export interface CredentialDailyCheckin {
+  code: number | null;
+  message: string;
+  success: boolean;
+  credit?: number | null;
+  checked_in_at?: number;
+  next_checkin_at?: number;
 }
 
 export type CredentialQuotaStatus = 'unknown' | 'fresh' | 'stale' | 'error';

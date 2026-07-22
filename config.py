@@ -73,6 +73,7 @@ _DEFAULT_CONFIG = {
     "CODEBUDDY_FORCED_TEMPERATURE": "1",
     "CODEBUDDY_STRIP_MODEL_NAMESPACE": True,
     "CODEBUDDY_AUTO_ROTATION_ENABLED": True,
+    "CODEBUDDY_AUTO_CHECKIN_ENABLED": False,
     "CODEBUDDY_ROTATION_COUNT": 1
 }
 
@@ -234,6 +235,8 @@ def _get_editable_config_value(key: str, user: Any = None, username: Optional[st
         return get_strip_model_namespace(owner)
     if key == "CODEBUDDY_AUTO_ROTATION_ENABLED":
         return get_auto_rotation_enabled(owner)
+    if key == "CODEBUDDY_AUTO_CHECKIN_ENABLED":
+        return get_auto_checkin_enabled(owner)
     if key == "CODEBUDDY_ROTATION_COUNT":
         return get_rotation_count(owner)
     return str(_get_user_config_value(key, user, username) or "")
@@ -464,6 +467,13 @@ def get_auto_rotation_enabled(user: Any = None) -> bool:
     )
 
 
+def get_auto_checkin_enabled(user: Any = None) -> bool:
+    return _to_bool(
+        _get_user_config_value("CODEBUDDY_AUTO_CHECKIN_ENABLED", user),
+        "CODEBUDDY_AUTO_CHECKIN_ENABLED",
+    )
+
+
 def get_rotation_count(user: Any = None) -> int:
     return _coerce_user_setting(
         "CODEBUDDY_ROTATION_COUNT",
@@ -480,6 +490,7 @@ def _validate_startup_config() -> None:
     get_forced_temperature()
     get_strip_model_namespace()
     get_auto_rotation_enabled()
+    get_auto_checkin_enabled()
     get_rotation_count()
     get_max_request_body_bytes()
     get_login_rate_window_seconds()

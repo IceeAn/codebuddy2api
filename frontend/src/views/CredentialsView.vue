@@ -43,6 +43,7 @@ const credentialRules: FormRules = {
 };
 
 const testingIds = reactive(new Set<string>());
+const checkingInIds = reactive(new Set<string>());
 const selectingId = ref<string | null>(null);
 const deletingId = ref<string | null>(null);
 const accountSwitcherCredentialId = ref('');
@@ -231,6 +232,25 @@ const toggleRotationMutation = useMutation({
   },
 });
 
+const checkinMutation = useMutation({
+  mutationFn: (credentialId: string) => adminApi.dailyCheckin(credentialId),
+  onMutate: (credentialId: string) => {
+    checkingInIds.add(credentialId);
+  },
+  onSuccess: (result) => {
+    const message =
+      result.code === 0
+        ? `签到成功，积分：${result.credit ?? '-'}`
+        : `${result.code ?? '未知'}：${result.message}`;
+    if (result.success) toast.success(message);
+    else toast.error(message);
+  },
+  onSettled: async (_data, _error, credentialId) => {
+    checkingInIds.delete(credentialId);
+    await queryClient.invalidateQueries({ queryKey: queryKeys.credentials });
+  },
+});
+
 const hasActiveTests = computed(() => testingIds.size > 0);
 const writeInProgress = computed(
   () =>
@@ -292,6 +312,11 @@ function openAccountSwitcher(credentialId: string): void {
   accountSwitcherCredentialId.value = credentialId;
 }
 
+function checkinCredential(credentialId: string): void {
+  if (checkingInIds.has(credentialId)) return;
+  checkinMutation.mutate(credentialId);
+}
+
 function closeAccountSwitcher(): void {
   if (!accountSwitching.value) accountSwitcherCredentialId.value = '';
 }
@@ -337,7 +362,7 @@ const columns: Column<CredentialRecord>[] = [
   {
     title: '操作',
     key: 'actions',
-    width: 216,
+    width: 260,
     align: 'left',
     headerClassName: 'table-action-header',
     render: (row) =>
@@ -351,10 +376,14 @@ const columns: Column<CredentialRecord>[] = [
         writeInProgress: writeInProgress.value,
         hasActiveTests: hasActiveTests.value,
         canSwitchAccount: Boolean(row.has_refresh_token && (row.account_count || 0) > 1),
+        canCheckIn: !row.is_expired && !row.enterprise_id,
+        isCheckingIn: checkingInIds.has(row.credential_id),
+        checkinDisabledReason: row.enterprise_id ? '企业版凭证不支持签到' : undefined,
         onSelect: selectCredential,
         onTest: testCredential,
         onDelete: deleteCredential,
         onSwitchAccount: openAccountSwitcher,
+        onCheckin: checkinCredential,
       }),
   },
 ];
@@ -503,6 +532,7 @@ const tableRows = computed(() => rows.value as unknown as Record<string, unknown
     <CredentialAccountSwitcher
       :open="Boolean(accountSwitcherCredentialId)"
       :credential-id="accountSwitcherCredentialId"
+      :disabled="checkingInIds.has(accountSwitcherCredentialId)"
       @close="closeAccountSwitcher"
       @switching="accountSwitching = $event"
     />

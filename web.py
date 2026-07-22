@@ -29,6 +29,7 @@ from src.admin_router import router as admin_router
 from src.codebuddy_auth_router import router as codebuddy_auth_router
 from src.credential_refresh import credential_refresh_manager
 from src.credential_quota import credential_quota_manager
+from src.credential_checkin import credential_checkin_manager
 from src.frontend_router import router as frontend_router
 from src.openai_router import external_openai_router, playground_openai_router
 from src.private_response import PrivateNoStoreFastAPI, PrivateNoStoreRoute
@@ -72,9 +73,13 @@ async def lifespan(app: FastAPI):
         await lifecycle_manager.startup()
         await credential_refresh_manager.startup()
         await credential_quota_manager.startup()
+        await credential_checkin_manager.startup(
+            initial_scan_waiter=credential_refresh_manager.wait_for_initial_scan,
+        )
         yield
     finally:
         # 关闭时清理资源
+        await credential_checkin_manager.shutdown()
         await credential_quota_manager.shutdown()
         await credential_refresh_manager.shutdown()
         await usage_stats_retention_manager.shutdown()

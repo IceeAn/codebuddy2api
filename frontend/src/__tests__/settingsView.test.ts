@@ -741,6 +741,28 @@ describe('SettingsView', () => {
     expect(state.tagValues.tags).toEqual(['y']);
   });
 
+  it('自动签到开关默认关闭并可在设置页提交开启', async () => {
+    query.data.value = {
+      settings: { CODEBUDDY_AUTO_CHECKIN_ENABLED: false },
+      fields: [
+        {
+          key: 'CODEBUDDY_AUTO_CHECKIN_ENABLED',
+          label: '自动签到',
+          type: 'boolean',
+          description: '每天 09:30 自动签到',
+        },
+      ],
+    };
+    const wrapper = mountView();
+    await wrapper.vm.$nextTick();
+    const state = (wrapper.vm.$ as any).setupState;
+
+    expect(wrapper.text()).toContain('自动签到');
+    expect(state.form.CODEBUDDY_AUTO_CHECKIN_ENABLED).toBe(false);
+    await wrapper.findComponent(SwitchStub).vm.$emit('update:modelValue', true);
+    expect(state.buildPayload()).toEqual({ CODEBUDDY_AUTO_CHECKIN_ENABLED: true });
+  });
+
   it('凭证轮换关闭时隐藏频率，开启后保留非法值并要求用户修正', async () => {
     query.data.value = {
       settings: {

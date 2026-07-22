@@ -93,6 +93,7 @@ docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:
 - CodeBuddy `/v3/config` URL、`Host` 和 `X-Domain` 必须由同一个当前 API endpoint 派生。
 - 凭证额度探测按 `enterprise_id` 分流：个人版使用 `/v2/billing/meter/get-user-resource`，额度以本周期的 `CycleCapacity*Precise` 为准、缺失时仅回退对应 `CycleCapacity*`，不能使用可能保持套餐初始值的 `Capacity*`；企业版使用 `/v2/billing/meter/get-enterprise-user-usage`，其中 `credit` 是已用额度、`limitNum` 是总额度。个人版响应中的 `Accounts: null` 或 `Accounts: []` 均表示探测成功但没有可展示的个人版额度，前端显示“未探测到个人版额度”；缺少 `Accounts` 字段或其余异常结构仍需失败。两类额度只用于探测与展示，不参与凭证轮换或统计 billing 语义。
 - 模型缓存键至少包含系统用户与 `credential_id`。凭证过期、删除或失效时必须同时驱逐缓存并作废在途查询；旧请求结果不能写回，也不能被同 ID 的新凭证复用。凭证删除的文件操作、内存重载与代次推进必须原子，删除失败不得推进普通代次或额度代次；账号切换仅在规范 `account_id` 确实变化时推进额度代次。过期值不得作为失败回退，并发未命中使用 per-key single-flight 合并。
+- 每日签到按系统用户、当前 API endpoint 与请求实际使用的 `X-User-Id` 隔离，同一上游账号的多张凭证共享最近记录与并发锁。自动签到是默认关闭的用户级热加载设置；扫描任务和排队中的自动任务在发起上游请求前均需检查开关，但关闭开关不得取消已发起的请求。凭证刷新和启动签到补偿都必须在后台执行；启动签到补偿可等待首次 OAuth 凭证刷新扫描完成，但不得阻塞应用 lifespan 进入就绪状态。签到成功后必须作废并重新探测同一上游账号关联凭证的额度缓存。记录时间存 UTC，但“今日”、09:30 调度、次日可签到时间和过期记录清理均按服务器本地自然日计算；`code=null` 的未成功异常不阻止当天后续启动补偿。
 
 ## 统计系统
 

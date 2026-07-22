@@ -27,6 +27,7 @@ from src.admin_router import (
     list_admin_api_keys,
     list_admin_credentials,
     list_credential_accounts,
+    manual_admin_credential_checkin,
     save_admin_settings,
     select_admin_credential,
     select_credential_account,
@@ -37,6 +38,7 @@ from src.admin_router import (
 from src.auth_types import AuthenticatedUser
 from src.codebuddy_token_manager import CodeBuddyTokenManagerRegistry
 from src.credential_quota import credential_quota_manager
+from src.credential_checkin import CredentialCheckinConflict, credential_checkin_manager
 from src.credential_refresh import CredentialRefreshError
 
 from tests.helpers import TempConfigMixin, configure_users_file, make_request
@@ -165,6 +167,71 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(listed["credentials"][0]["quota"], quota)
         self.assertNotIn("bearer_token", repr(listed["credentials"][0]["quota"]))
+
+    async def test_admin_credentials_include_today_checkin_only_when_available(self):
+        manager = self._manager()
+        self.assertTrue(self._add_credential(manager, "token", "user", "checkin.json"))
+        detail = {
+            "code": 0,
+            "message": "OK",
+            "success": True,
+            "credit": 100.0,
+            "checked_in_at": 100,
+            "next_checkin_at": 200,
+        }
+        with (
+            mock.patch("src.admin_router.get_token_manager_for_user", return_value=manager),
+            mock.patch.object(
+                credential_checkin_manager,
+                "today_detail_for_credential",
+                return_value=detail,
+            ) as today_detail,
+        ):
+            listed = await list_admin_credentials(self.user)
+
+        self.assertEqual(listed["credentials"][0]["daily_checkin"], detail)
+        today_detail.assert_called_once_with("admin", manager.get_all_credentials()[0])
+
+    async def test_manual_checkin_route_delegates_and_maps_controlled_conflicts(self):
+        manager = self._manager()
+        self.assertTrue(self._add_credential(manager, "token", "user", "checkin.json"))
+        credential_id = manager.get_credentials_info()[0]["credential_id"]
+        expected = {"code": 7, "message": "failed", "success": False}
+        with (
+            mock.patch("src.admin_router.get_token_manager_for_user", return_value=manager),
+            mock.patch.object(
+                credential_checkin_manager,
+                "manual_checkin",
+                new=mock.AsyncMock(return_value=expected),
+            ) as checkin,
+        ):
+            self.assertEqual(
+                await manual_admin_credential_checkin(credential_id, self.user),
+                expected,
+            )
+        checkin.assert_awaited_once_with("admin", manager, credential_id)
+
+        expected_statuses = {
+            "credential_not_found": 404,
+            "credential_ineligible": 409,
+            "manual_in_progress": 409,
+            "already_checked_in": 409,
+            "credential_context_changed": 409,
+            "shutting_down": 503,
+        }
+        for reason, status_code in expected_statuses.items():
+            with self.subTest(reason=reason):
+                with (
+                    mock.patch("src.admin_router.get_token_manager_for_user", return_value=manager),
+                    mock.patch.object(
+                        credential_checkin_manager,
+                        "manual_checkin",
+                        new=mock.AsyncMock(side_effect=CredentialCheckinConflict(reason)),
+                    ),
+                ):
+                    with self.assertRaises(HTTPException) as raised:
+                        await manual_admin_credential_checkin(credential_id, self.user)
+                self.assertEqual(raised.exception.status_code, status_code)
 
     async def test_manual_credential_has_no_switchable_accounts(self):
         manager = self._manager()
@@ -733,6 +800,10 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(field_by_key["CODEBUDDY_AUTO_ROTATION_ENABLED"]["type"], "boolean")
         self.assertEqual(field_by_key["CODEBUDDY_AUTO_ROTATION_ENABLED"]["label"], "凭证轮换")
         self.assertIn("有效凭证", field_by_key["CODEBUDDY_AUTO_ROTATION_ENABLED"]["description"])
+        self.assertEqual(field_by_key["CODEBUDDY_AUTO_CHECKIN_ENABLED"]["type"], "boolean")
+        self.assertEqual(field_by_key["CODEBUDDY_AUTO_CHECKIN_ENABLED"]["label"], "自动签到")
+        self.assertIn("09:30", field_by_key["CODEBUDDY_AUTO_CHECKIN_ENABLED"]["description"])
+        self.assertIs(settings["settings"]["CODEBUDDY_AUTO_CHECKIN_ENABLED"], False)
         self.assertEqual(field_by_key["CODEBUDDY_STRIP_MODEL_NAMESPACE"]["type"], "boolean")
         self.assertIn("provider/model", field_by_key["CODEBUDDY_STRIP_MODEL_NAMESPACE"]["description"])
         self.assertIn("reasoning_effort=max", field_by_key["CODEBUDDY_FORCED_REASONING_MODELS"]["description"])
@@ -746,6 +817,7 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
             AdminSettingsUpdate(settings={
                 "CODEBUDDY_MODELS": "admin-only",
                 "CODEBUDDY_AUTO_ROTATION_ENABLED": False,
+                "CODEBUDDY_AUTO_CHECKIN_ENABLED": True,
                 "CODEBUDDY_ROTATION_COUNT": 3,
             }),
             self.user,
@@ -753,6 +825,7 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["settings"]["CODEBUDDY_MODELS"], "admin-only")
         self.assertIs(result["settings"]["CODEBUDDY_AUTO_ROTATION_ENABLED"], False)
+        self.assertIs(result["settings"]["CODEBUDDY_AUTO_CHECKIN_ENABLED"], True)
         self.assertEqual(result["settings"]["CODEBUDDY_ROTATION_COUNT"], 3)
         result_field_by_key = {field["key"]: field for field in result["fields"]}
         self.assertEqual(
@@ -863,6 +936,11 @@ class AdminHelperTests(unittest.TestCase):
         credentials = _safe_credentials(manager)
 
         self.assertEqual([item["has_token"] for item in credentials], [False, False])
+
+        manager.username = "admin"
+        with mock.patch.object(credential_quota_manager, "get_quota", return_value={}):
+            owned = _safe_credentials(manager)
+        self.assertNotIn("daily_checkin", owned[0])
 
     def test_stream_service_factory_returns_service_class(self):
         from src.stream_service import CodeBuddyStreamService

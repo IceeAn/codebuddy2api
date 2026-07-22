@@ -45,7 +45,7 @@ class SQLiteDatabaseTests(unittest.TestCase):
                 if path.name != DATABASE_FILENAME
             }
 
-        self.assertEqual(version, 2)
+        self.assertEqual(version, 3)
         self.assertTrue({
             "api_keys",
             "user_settings",
@@ -53,6 +53,7 @@ class SQLiteDatabaseTests(unittest.TestCase):
             "usage_hourly",
             "usage_latency_histogram",
             "usage_retention_state",
+            "credential_daily_checkins",
         }.issubset(tables))
         with sqlite3.connect(database_path) as connection:
             api_key_columns = {
@@ -166,14 +167,40 @@ class SQLiteDatabaseTests(unittest.TestCase):
                 )
             }
 
-        self.assertEqual(version, 2)
+        self.assertEqual(version, 3)
         self.assertEqual(value, "true")
         self.assertTrue({
             "usage_events",
             "usage_hourly",
             "usage_latency_histogram",
             "usage_retention_state",
+            "credential_daily_checkins",
         }.issubset(tables))
+
+    def test_connection_atomically_migrates_v2_and_preserves_existing_rows(self):
+        database = SQLiteDatabase(self.database_path)
+        with database.connect() as connection:
+            connection.execute(
+                "INSERT INTO user_settings VALUES (?, ?, ?)",
+                ("alice", "enabled", "true"),
+            )
+        with sqlite3.connect(self.database_path) as connection:
+            connection.execute("DROP TABLE credential_daily_checkins")
+            connection.execute("PRAGMA user_version = 2")
+
+        with database.connect() as connection:
+            version = connection.execute("PRAGMA user_version").fetchone()[0]
+            value = connection.execute(
+                "SELECT value_json FROM user_settings WHERE username = 'alice'"
+            ).fetchone()[0]
+            checkin_table = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                "AND name = 'credential_daily_checkins'"
+            ).fetchone()
+
+        self.assertEqual(version, 3)
+        self.assertEqual(value, "true")
+        self.assertIsNotNone(checkin_table)
 
     def test_v1_migration_rolls_back_all_new_objects_when_ddl_fails(self):
         with sqlite3.connect(self.database_path) as connection:

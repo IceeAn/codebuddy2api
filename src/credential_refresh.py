@@ -53,6 +53,7 @@ class CredentialRefreshManager:
         self._max_concurrency = max_concurrency
         self._task: Optional[asyncio.Task] = None
         self._stop_event: Optional[asyncio.Event] = None
+        self._initial_scan_complete: Optional[asyncio.Event] = None
         self._inflight: Dict[str, asyncio.Task] = {}
         self._stopping = False
 
@@ -65,7 +66,14 @@ class CredentialRefreshManager:
             raise RuntimeError("credential refresh manager is already running")
         self._stopping = False
         self._stop_event = asyncio.Event()
+        self._initial_scan_complete = asyncio.Event()
         self._task = asyncio.create_task(self._run())
+
+    async def wait_for_initial_scan(self) -> None:
+        initial_scan_complete = self._initial_scan_complete
+        if initial_scan_complete is None:
+            raise RuntimeError("credential refresh manager is not running")
+        await initial_scan_complete.wait()
 
     async def shutdown(self) -> None:
         task = self._task
@@ -83,13 +91,20 @@ class CredentialRefreshManager:
             self._inflight.clear()
             self._task = None
             self._stop_event = None
+            self._initial_scan_complete = None
 
     async def _run(self) -> None:
+        initial_scan = True
         while self._stop_event is not None:
             try:
                 await self.scan_once()
             except Exception:
                 logger.exception("CodeBuddy 凭证后台刷新扫描失败")
+            finally:
+                if initial_scan:
+                    initial_scan = False
+                    if self._initial_scan_complete is not None:
+                        self._initial_scan_complete.set()
             try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=self._interval_seconds)
                 return

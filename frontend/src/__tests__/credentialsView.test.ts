@@ -141,7 +141,7 @@ function mountView() {
         },
         CredentialAccountSwitcher: {
           name: 'CredentialAccountSwitcher',
-          props: ['open', 'credentialId'],
+          props: ['open', 'credentialId', 'disabled'],
           emits: ['close', 'switching'],
           template: '<div class="credential-account-switcher-stub" />',
         },
@@ -502,6 +502,7 @@ describe('CredentialsView', () => {
     const createSpy = vi.spyOn(adminApi, 'createCredential').mockResolvedValue({} as never);
     const testSpy = vi.spyOn(adminApi, 'testCredential').mockResolvedValue({} as never);
     const deleteSpy = vi.spyOn(adminApi, 'deleteCredential').mockResolvedValue({} as never);
+    const checkinSpy = vi.spyOn(adminApi, 'dailyCheckin').mockResolvedValue({} as never);
     const wrapper = mountView();
     const state = (wrapper.vm.$ as any).setupState;
     state.credentialForm.bearerToken = 'token';
@@ -509,9 +510,11 @@ describe('CredentialsView', () => {
     await mutationOptions[0].mutationFn();
     await mutationOptions[3].mutationFn('cred');
     await mutationOptions[2].mutationFn('gone');
+    await mutationOptions[5].mutationFn('cred');
     expect(createSpy).toHaveBeenCalledWith('token');
     expect(testSpy).toHaveBeenCalledWith('cred');
     expect(deleteSpy).toHaveBeenCalledWith('gone');
+    expect(checkinSpy).toHaveBeenCalledWith('cred');
   });
 
   it('测试 mutation 用 ID 集合维护并发行 loading 并提示结果', () => {
@@ -537,6 +540,34 @@ describe('CredentialsView', () => {
     expect([...state.testingIds]).toEqual(['cred-b']);
     mutationOptions[3].onSettled(undefined, undefined, 'cred-b');
     expect([...state.testingIds]).toEqual([]);
+  });
+
+  it('签到 mutation 按凭证维护 loading、提示结果并刷新凭证列表', async () => {
+    const wrapper = mountView();
+    const state = (wrapper.vm.$ as any).setupState;
+
+    mutationOptions[5].onMutate('cred-a');
+    mutationOptions[5].onMutate('cred-b');
+    expect([...state.checkingInIds]).toEqual(['cred-a', 'cred-b']);
+    state.checkinCredential('cred-a');
+    expect(mutationStates[5].mutate).not.toHaveBeenCalled();
+    mutationOptions[5].onSuccess({ code: 0, message: 'OK', success: true, credit: 100 });
+    expect(toastMock.success).toHaveBeenCalledWith('签到成功，积分：100');
+    mutationOptions[5].onSuccess({ code: 0, message: 'OK', success: true, credit: null });
+    expect(toastMock.success).toHaveBeenCalledWith('签到成功，积分：-');
+    mutationOptions[5].onSuccess({ code: 1001, message: '今天已签到', success: true });
+    expect(toastMock.success).toHaveBeenCalledWith('1001：今天已签到');
+    mutationOptions[5].onSuccess({ code: 7, message: '稍后再试', success: false });
+    expect(toastMock.error).toHaveBeenCalledWith('7：稍后再试');
+    mutationOptions[5].onSuccess({ code: null, message: '网络异常', success: false });
+    expect(toastMock.error).toHaveBeenCalledWith('未知：网络异常');
+    await mutationOptions[5].onSettled(undefined, undefined, 'cred-a');
+    expect([...state.checkingInIds]).toEqual(['cred-b']);
+    await mutationOptions[5].onSettled(undefined, undefined, 'cred-b');
+    expect([...state.checkingInIds]).toEqual([]);
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ['admin', 'test-user', 'credentials'],
+    });
   });
 
   it('列渲染覆盖当前、过期、可用和操作按钮', async () => {
@@ -604,12 +635,16 @@ describe('CredentialsView', () => {
     expect(actions.props?.writeInProgress).toBe(false);
     expect(actions.props?.hasActiveTests).toBe(false);
     expect(actions.props?.canSwitchAccount).toBe(false);
+    expect(actions.props?.canCheckIn).toBe(true);
+    expect(actions.props?.isCheckingIn).toBe(false);
     actions.props?.onSelect('valid');
     actions.props?.onTest('valid');
     actions.props?.onDelete('valid');
+    actions.props?.onCheckin('valid');
     expect(mutationStates[1].mutate).toHaveBeenCalledWith('valid');
     expect(mutationStates[3].mutate).toHaveBeenCalledWith('valid');
     expect(mutationStates[2].mutate).toHaveBeenCalledWith('valid');
+    expect(mutationStates[5].mutate).toHaveBeenCalledWith('valid');
 
     const activeActions = state.columns[6].render(active);
     expect(activeActions.type).toBe(CredentialActions);
@@ -632,6 +667,12 @@ describe('CredentialsView', () => {
     expect(switchableActions.props?.canSwitchAccount).toBe(true);
     switchableActions.props?.onSwitchAccount('valid');
     expect(enabledState.accountSwitcherCredentialId).toBe('valid');
+    enabledState.checkingInIds.add('valid');
+    await enabledWrapper.vm.$nextTick();
+    expect(
+      enabledWrapper.findComponent({ name: 'CredentialAccountSwitcher' }).props('disabled'),
+    ).toBe(true);
+    enabledState.checkingInIds.delete('valid');
     enabledState.accountSwitching = true;
     enabledState.closeAccountSwitcher();
     expect(enabledState.accountSwitcherCredentialId).toBe('valid');
@@ -657,6 +698,16 @@ describe('CredentialsView', () => {
 
     mutationOptions[3].onMutate('valid');
     expect(enabledState.columns[6].render(valid).props?.isTesting).toBe(true);
+    expect(
+      enabledState.columns[6].render({ ...valid, enterprise_id: 'enterprise' }).props?.canCheckIn,
+    ).toBe(false);
+    expect(
+      enabledState.columns[6].render({ ...valid, enterprise_id: 'enterprise' }).props
+        ?.checkinDisabledReason,
+    ).toBe('企业版凭证不支持签到');
+    expect(enabledState.columns[6].render({ ...valid, is_expired: true }).props?.canCheckIn).toBe(
+      false,
+    );
   });
 
   it('测试、选择和删除并发状态互相遵守冲突规则', async () => {

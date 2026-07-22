@@ -197,6 +197,7 @@ class ConfigTests(ConfigIsolationMixin, unittest.TestCase):
         boolean_cases = (
             ("CODEBUDDY_SSL_VERIFY", config.get_ssl_verify),
             ("CODEBUDDY_AUTO_ROTATION_ENABLED", config.get_auto_rotation_enabled),
+            ("CODEBUDDY_AUTO_CHECKIN_ENABLED", config.get_auto_checkin_enabled),
         )
         for key, getter in boolean_cases:
             for value, expected in (("true", True), ("1", True), ("false", False), ("0", False)):
@@ -336,6 +337,7 @@ class ConfigTests(ConfigIsolationMixin, unittest.TestCase):
             {
                 "CODEBUDDY_MODELS": "admin-only",
                 "CODEBUDDY_AUTO_ROTATION_ENABLED": False,
+                "CODEBUDDY_AUTO_CHECKIN_ENABLED": True,
                 "CODEBUDDY_ROTATION_COUNT": 2,
             },
             username="admin",
@@ -343,6 +345,8 @@ class ConfigTests(ConfigIsolationMixin, unittest.TestCase):
 
         self.assertEqual(config.get_available_models("admin"), ["admin-only"])
         self.assertIs(config.get_auto_rotation_enabled("admin"), False)
+        self.assertIs(config.get_auto_checkin_enabled("admin"), True)
+        self.assertIs(config.get_auto_checkin_enabled("alice"), False)
         self.assertEqual(config.get_rotation_count("admin"), 2)
         with sqlite3.connect(config.get_database_path()) as connection:
             persisted = dict(connection.execute(
@@ -428,6 +432,7 @@ class ConfigTests(ConfigIsolationMixin, unittest.TestCase):
     def test_get_editable_config_returns_typed_default_and_environment_values(self):
         config._config_cache["CODEBUDDY_FORCED_TEMPERATURE"] = "1"
         config._config_cache["CODEBUDDY_AUTO_ROTATION_ENABLED"] = "false"
+        config._config_cache["CODEBUDDY_AUTO_CHECKIN_ENABLED"] = "false"
         config._config_cache["CODEBUDDY_STRIP_MODEL_NAMESPACE"] = "true"
         config._config_cache["CODEBUDDY_ROTATION_COUNT"] = "3"
 
@@ -435,6 +440,7 @@ class ConfigTests(ConfigIsolationMixin, unittest.TestCase):
 
         self.assertEqual(settings["CODEBUDDY_FORCED_TEMPERATURE"], 1)
         self.assertIs(settings["CODEBUDDY_AUTO_ROTATION_ENABLED"], False)
+        self.assertIs(settings["CODEBUDDY_AUTO_CHECKIN_ENABLED"], False)
         self.assertIs(settings["CODEBUDDY_STRIP_MODEL_NAMESPACE"], True)
         self.assertEqual(settings["CODEBUDDY_ROTATION_COUNT"], 3)
 

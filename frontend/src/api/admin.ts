@@ -6,6 +6,7 @@ import type {
   ChatCompletionRequest,
   CodeBuddyPollAuthResponse,
   CredentialRecord,
+  CredentialDailyCheckin,
   CredentialAccountsResponse,
   CredentialsResponse,
   CurrentCredential,
@@ -27,6 +28,8 @@ import { buildStatsSearchParams } from '../utils/stats';
 // 覆盖后端串行执行的 30 秒模型查询与 300 秒聊天请求，并预留响应处理时间。
 const CREDENTIAL_TEST_TIMEOUT_MS = 335_000;
 const ACCOUNT_SWITCH_TIMEOUT_MS = 70_000;
+// 手动签到可能先等待一轮自动签到，再执行自身的连接池、连接和读取阶段。
+const DAILY_CHECKIN_TIMEOUT_MS = 225_000;
 const OAUTH_START_TIMEOUT_MS = 35_000;
 const OAUTH_POLL_TIMEOUT_MS = 100_000;
 const MODEL_LIST_TIMEOUT_MS = 35_000;
@@ -109,6 +112,11 @@ export const adminApi = {
       auto_rotation_enabled: boolean;
       current: CredentialsResponse['current'];
     }>('/api/admin/credentials/rotation/toggle', { method: 'POST' }),
+  dailyCheckin: (credentialId: string) =>
+    apiRequest<CredentialDailyCheckin>(
+      `/api/admin/credentials/${encodeURIComponent(credentialId)}/daily-checkin`,
+      { method: 'POST', timeoutMs: DAILY_CHECKIN_TIMEOUT_MS },
+    ),
   statsOverview: (query: StatsOverviewQuery) =>
     apiRequest<StatsOverviewResponse>(`/api/admin/stats/overview?${buildStatsSearchParams(query)}`),
   statsRequests: (query: StatsRequestsQuery) =>

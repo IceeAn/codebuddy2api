@@ -14,6 +14,7 @@ from .codebuddy_api_client import codebuddy_api_client
 from .codebuddy_token_manager import get_token_manager_for_user
 from .credential_refresh import CredentialRefreshError, credential_refresh_manager
 from .credential_quota import credential_quota_manager
+from .credential_checkin import CredentialCheckinConflict, credential_checkin_manager
 from .models_manager import models_manager
 from .private_response import PrivateNoStoreRoute
 from .request_processor import RequestProcessor
@@ -59,7 +60,7 @@ SETTING_FIELDS: List[Dict[str, Any]] = [
         "key": "CODEBUDDY_STRIP_MODEL_NAMESPACE",
         "label": "去除模型名前缀",
         "type": "boolean",
-        "description": "开启后将 provider/model 形式的模型名转发为 model，用于兼容上游模型 ID。",
+        "description": "将 provider/model 形式的模型名转发为 model，用于兼容上游模型 ID。",
     },
     {
         "key": "CODEBUDDY_AUTO_ROTATION_ENABLED",
@@ -74,6 +75,12 @@ SETTING_FIELDS: List[Dict[str, Any]] = [
         "min": 1,
         "step": 1,
         "description": "自动轮换开启时，每张凭证最多连续使用的请求次数；达到次数后切换到下一张未过期凭证，必须为正整数。",
+    },
+    {
+        "key": "CODEBUDDY_AUTO_CHECKIN_ENABLED",
+        "label": "自动签到",
+        "type": "boolean",
+        "description": "（实验性）每天服务器时间 09:30 为有效个人版凭证自动签到。",
     },
 ]
 
@@ -143,6 +150,12 @@ def _safe_credentials(token_manager, username: Optional[str] = None) -> List[Dic
             )
             quota["quota_type"] = "enterprise" if info.get("enterprise_id") else "personal"
             safe["quota"] = quota
+            if credential is not None and not info.get("is_expired") and not info.get("enterprise_id"):
+                checkin = credential_checkin_manager.today_detail_for_credential(
+                    owner, credential,
+                )
+                if checkin is not None:
+                    safe["daily_checkin"] = checkin
         result.append(safe)
     return result
 
@@ -337,6 +350,35 @@ async def select_admin_credential(
         "auto_rotation_disabled_by_select": auto_rotation_was_enabled,
         "current": token_manager.get_current_credential_info(),
     }
+
+
+@router.post("/credentials/{credential_id}/daily-checkin")
+async def manual_admin_credential_checkin(
+        credential_id: str,
+        _user: AuthenticatedUser = Depends(require_session_user),
+):
+    """使用指定的有效个人版凭证执行一次账号签到。"""
+    token_manager = get_token_manager_for_user(_user)
+    try:
+        return await credential_checkin_manager.manual_checkin(
+            _user.username, token_manager, credential_id,
+        )
+    except CredentialCheckinConflict as error:
+        reason = str(error)
+        if reason == "credential_not_found":
+            raise _credential_not_found() from error
+        if reason == "shutting_down":
+            raise HTTPException(status_code=503, detail="签到服务正在关闭") from error
+        details = {
+            "credential_ineligible": "仅有效个人版凭证可以签到",
+            "manual_in_progress": "该账号已有手动签到正在执行",
+            "already_checked_in": "该账号今日已签到",
+            "credential_context_changed": "等待期间凭证账号已变化，请重试",
+        }
+        raise HTTPException(
+            status_code=409,
+            detail=details.get(reason, "当前无法执行签到"),
+        ) from error
 
 
 @router.delete("/credentials/{credential_id}")

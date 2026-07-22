@@ -9,7 +9,7 @@ import type { CredentialRecord } from '../types';
 const TooltipStub = defineComponent({
   name: 'CTooltip',
   props: { content: String },
-  template: '<span class="tooltip-stub"><slot /></span>',
+  template: '<span class="tooltip-stub"><slot /><slot name="content" /></span>',
 });
 
 const PopconfirmStub = defineComponent({
@@ -44,6 +44,9 @@ function mountActions(
     writeInProgress: boolean;
     hasActiveTests: boolean;
     canSwitchAccount: boolean;
+    canCheckIn: boolean;
+    isCheckingIn: boolean;
+    checkinDisabledReason: string;
   }> = {},
 ) {
   return mount(CredentialActions, {
@@ -181,5 +184,113 @@ describe('CredentialActions', () => {
     await wrapper.setProps({ hasActiveTests: false, canSwitchAccount: false });
     state.switchAccount();
     expect(wrapper.emitted('switchAccount')).toEqual([['cred-1']]);
+  });
+
+  it('仅对有效个人版凭证显示签到，并展示今日详情和成功禁用状态', async () => {
+    const wrapper = mountActions({ canCheckIn: true });
+    const state = (wrapper.vm.$ as any).setupState;
+    expect(state.checkinTooltipLines).toEqual(['签到']);
+    const button = wrapper.get('[aria-label="签到"]');
+    expect(button.attributes('disabled')).toBeUndefined();
+    await button.trigger('click');
+    expect(wrapper.emitted('checkin')).toEqual([['cred-1']]);
+
+    await wrapper.setProps({
+      credential: {
+        ...credential,
+        daily_checkin: {
+          code: 7,
+          message: '稍后再试',
+          success: false,
+        },
+      },
+    });
+    expect(state.checkinTooltipLines).toEqual(['Code：7', '消息：稍后再试']);
+    expect(wrapper.get('[aria-label="签到"]').attributes('disabled')).toBeUndefined();
+
+    await wrapper.setProps({
+      credential: {
+        ...credential,
+        daily_checkin: {
+          code: 0,
+          message: 'OK',
+          success: true,
+          credit: 100,
+          checked_in_at: 1_700_000_000,
+          next_checkin_at: 1_700_086_400,
+        },
+      },
+    });
+    expect(state.checkinTooltipLines[0]).toContain('签到时间：');
+    expect(state.checkinTooltipLines).toContain('获得积分：100');
+    expect(state.checkinTooltipLines.at(-1)).toContain('下次可签到：');
+    expect(wrapper.get('[aria-label="签到"]').attributes('disabled')).toBeDefined();
+    state.checkin();
+    expect(wrapper.emitted('checkin')).toEqual([['cred-1']]);
+
+    await wrapper.setProps({ isCheckingIn: true });
+    expect(wrapper.get('[aria-label="签到"]').attributes('disabled')).toBeDefined();
+
+    await wrapper.setProps({
+      isCheckingIn: false,
+      credential: {
+        ...credential,
+        daily_checkin: {
+          code: 0,
+          message: 'OK',
+          success: true,
+          credit: null,
+        },
+      },
+    });
+    expect(state.checkinTooltipLines).toEqual(['签到时间：-', '获得积分：-']);
+
+    await wrapper.setProps({
+      credential: {
+        ...credential,
+        daily_checkin: { code: null, message: '网络异常', success: false },
+      },
+      writeInProgress: true,
+    });
+    expect(state.checkinTooltipLines).toEqual(['Code：未知', '消息：网络异常']);
+    state.checkin();
+    expect(wrapper.emitted('checkin')).toEqual([['cred-1']]);
+
+    const hidden = mountActions();
+    (hidden.vm.$ as any).setupState.checkin();
+    expect(hidden.emitted('checkin')).toBeUndefined();
+  });
+
+  it('签到期间禁用同一凭证的冲突操作', async () => {
+    const wrapper = mountActions({
+      canCheckIn: true,
+      canSwitchAccount: true,
+      isCheckingIn: true,
+    });
+
+    for (const label of ['切换为当前凭证', '测试凭证', '切换 CodeBuddy 账号', '删除凭证']) {
+      expect(wrapper.get(`[aria-label="${label}"]`).attributes('disabled')).toBeDefined();
+    }
+    const state = (wrapper.vm.$ as any).setupState;
+    state.selectCredential();
+    state.testCredential();
+    state.switchAccount();
+    state.deleteCredential();
+    expect(wrapper.emitted('select')).toBeUndefined();
+    expect(wrapper.emitted('test')).toBeUndefined();
+    expect(wrapper.emitted('switchAccount')).toBeUndefined();
+    expect(wrapper.emitted('delete')).toBeUndefined();
+  });
+
+  it('企业版凭证显示禁用的签到按钮和不支持提示', async () => {
+    const wrapper = mountActions({
+      credential: { ...credential, enterprise_id: 'enterprise' },
+      checkinDisabledReason: '企业版凭证不支持签到',
+    });
+
+    expect(wrapper.text()).toContain('企业版凭证不支持签到');
+    expect(wrapper.get('[aria-label="签到"]').attributes('disabled')).toBeDefined();
+    await wrapper.get('[aria-label="签到"]').trigger('click');
+    expect(wrapper.emitted('checkin')).toBeUndefined();
   });
 });
