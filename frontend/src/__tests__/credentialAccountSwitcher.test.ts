@@ -103,14 +103,12 @@ describe('CredentialAccountSwitcher', () => {
           type: 'personal',
           nickname: '',
           enterprise_name: '',
-          department_full_name: '',
         },
         {
           account_id: 'enterprise',
           type: 'enterprise',
           nickname: '张三',
           enterprise_name: '测试企业',
-          department_full_name: '研发部',
         },
       ],
     };
@@ -132,8 +130,8 @@ describe('CredentialAccountSwitcher', () => {
     expect(accountsSpy).toHaveBeenCalledWith('cred/id');
     expect(state.selectedAccountId).toBe('enterprise');
     expect(state.accountLabel(query.data.value.accounts[0])).toBe('个人账号');
-    expect(state.accountLabel(query.data.value.accounts[1])).toBe('张三 · 测试企业 / 研发部');
-    expect(wrapper.text()).toContain('张三 · 测试企业 / 研发部');
+    expect(state.accountLabel(query.data.value.accounts[1])).toBe('张三 · 测试企业');
+    expect(wrapper.text()).toContain('张三 · 测试企业');
     wrapper.findComponent({ name: 'CRadioGroup' }).vm.$emit('update:modelValue', 'personal');
     await wrapper.vm.$nextTick();
     expect(state.selectedAccountId).toBe('personal');

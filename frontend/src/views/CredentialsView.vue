@@ -319,11 +319,8 @@ const columns: Column<CredentialRecord>[] = [
     key: 'email',
     minWidth: 220,
     render: (row) => {
-      const identity = row.name || row.email || row.user_id || '-';
-      const organization = [row.enterprise_name, row.department_full_name]
-        .filter(Boolean)
-        .join(' / ');
-      return organization ? `${identity} · ${organization}` : identity;
+      const identity = row.nickname || row.preferred_username || row.email || row.user_id || '-';
+      return row.enterprise_name ? `${identity} · ${row.enterprise_name}` : identity;
     },
   },
   { title: 'Token', key: 'token_display', minWidth: 180, className: 'mono' },

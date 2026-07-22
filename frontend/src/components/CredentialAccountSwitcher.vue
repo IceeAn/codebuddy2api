@@ -82,10 +82,7 @@ function confirm(): void {
 
 function accountLabel(account: CredentialAccount): string {
   const identity = account.nickname || (account.type === 'personal' ? '个人账号' : '企业账号');
-  const organization = [account.enterprise_name, account.department_full_name]
-    .filter(Boolean)
-    .join(' / ');
-  return organization ? `${identity} · ${organization}` : identity;
+  return account.enterprise_name ? `${identity} · ${account.enterprise_name}` : identity;
 }
 </script>
 

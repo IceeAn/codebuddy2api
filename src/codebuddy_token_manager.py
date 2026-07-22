@@ -230,6 +230,8 @@ class CodeBuddyTokenManager:
                     "filename": filename,
                     "user_id": data.get("user_id", "unknown"),
                     "email": user_info.get("email") or data.get("user_id"),
+                    "nickname": data.get("nickname") or user_info.get("nickname"),
+                    "preferred_username": user_info.get("preferred_username"),
                     "name": user_info.get("name"),
                     "created_at": data.get("created_at"),
                     "expires_in": data.get("expires_in"),

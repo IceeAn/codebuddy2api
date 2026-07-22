@@ -420,6 +420,10 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
                 "user_id": "user",
                 "created_at": 100,
                 "expires_in": 1000,
+                "user_info": {
+                    "nickname": "昵称",
+                    "preferred_username": "preferred-user",
+                },
             }, "a"))
             manager.credentials[0]["data"].pop("expires_at", None)
 
@@ -428,6 +432,8 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
 
             self.assertEqual(info["expires_at"], 1100)
             self.assertEqual(info["time_remaining"], 900)
+            self.assertEqual(info["nickname"], "昵称")
+            self.assertEqual(info["preferred_username"], "preferred-user")
 
     def test_load_normalizes_bearer_only_manual_credential_without_account_fields(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

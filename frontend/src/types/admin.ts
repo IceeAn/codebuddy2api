@@ -230,6 +230,8 @@ export interface CredentialRecord {
   filename: string;
   user_id: string;
   email?: string;
+  nickname?: string;
+  preferred_username?: string;
   name?: string;
   created_at?: number;
   expires_at?: number;

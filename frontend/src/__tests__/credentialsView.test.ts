@@ -551,16 +551,29 @@ describe('CredentialsView', () => {
     expect(activeExpiredTag.props?.type).toBe('error');
     expect((expiredTag.children as any).default()).toBe('过期');
     expect((validTag.children as any).default()).toBe('可用');
+    expect(
+      state.columns[1].render({
+        ...active,
+        nickname: '昵称',
+        preferred_username: '偏好用户名',
+      }),
+    ).toBe('昵称');
+    expect(
+      state.columns[1].render({
+        ...active,
+        preferred_username: '偏好用户名',
+      }),
+    ).toBe('偏好用户名');
     expect(state.columns[1].render(active)).toBe('a@example.com');
     expect(state.columns[1].render(expired)).toBe('user');
     expect(state.columns[1].render(valid)).toBe('-');
     expect(
       state.columns[1].render({
         ...active,
+        nickname: '昵称',
         enterprise_name: '测试企业',
-        department_full_name: '研发部',
       }),
-    ).toBe('a@example.com · 测试企业 / 研发部');
+    ).toBe('昵称 · 测试企业');
     expect(state.columns[5].title).toBe('操作');
     expect(state.columns[5].align).toBe('left');
     expect(state.columns[5].headerClassName).toBe('table-action-header');
