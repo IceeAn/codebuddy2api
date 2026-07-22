@@ -426,6 +426,7 @@ class AuthSessionTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
             await service_login(make_request(), Response(), LoginRequest(username=" ", password=""))
 
         self.assertEqual(context.exception.status_code, 401)
+        self.assertEqual(context.exception.detail, "用户名或密码错误")
 
     async def test_login_rejects_wrong_password(self):
         with self.assertRaises(HTTPException) as context:
@@ -436,6 +437,31 @@ class AuthSessionTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(context.exception.status_code, 401)
+        self.assertEqual(context.exception.detail, "用户名或密码错误")
+
+    async def test_login_rejects_unknown_username_with_same_message(self):
+        with self.assertRaises(HTTPException) as context:
+            await service_login(
+                make_request(),
+                Response(),
+                LoginRequest(username="unknown", password="secret-password"),
+            )
+
+        self.assertEqual(context.exception.status_code, 401)
+        self.assertEqual(context.exception.detail, "用户名或密码错误")
+
+    async def test_login_endpoint_returns_chinese_message_for_invalid_credentials(self):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+            for credentials in (
+                {"username": "admin", "password": "wrong"},
+                {"username": "unknown", "password": "secret-password"},
+            ):
+                with self.subTest(username=credentials["username"]):
+                    response = await client.post("/auth/login", json=credentials)
+
+                    self.assertEqual(response.status_code, 401)
+                    self.assertEqual(response.json(), {"detail": "用户名或密码错误"})
 
     async def test_forwarded_for_header_cannot_bypass_socket_ip_limit(self):
         guard = LoginAttemptGuard(

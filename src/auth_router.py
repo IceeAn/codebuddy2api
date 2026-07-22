@@ -39,6 +39,14 @@ def _auth_error() -> HTTPException:
     )
 
 
+def _login_auth_error() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="用户名或密码错误",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
 def _is_secure_request(request: Request) -> bool:
     return request.url.scheme == "https"
 
@@ -115,7 +123,7 @@ async def login(request: Request, response: Response, credentials: LoginRequest)
         raise _login_limit_error(error.retry_after) from error
 
     if not username or not credentials.password:
-        raise _auth_error()
+        raise _login_auth_error()
 
     if not login_attempt_guard.try_acquire():
         raise _login_limit_error(1)
@@ -129,7 +137,7 @@ async def login(request: Request, response: Response, credentials: LoginRequest)
         login_attempt_guard.release()
 
     if not verified:
-        raise _auth_error()
+        raise _login_auth_error()
 
     session_id = session_store.create(username)
     response.set_cookie(
