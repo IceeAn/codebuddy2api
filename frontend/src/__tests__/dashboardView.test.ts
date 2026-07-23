@@ -42,6 +42,7 @@ import DashboardView from '../views/DashboardView.vue';
 import CButton from '../components/ui/CButton.vue';
 import CInput from '../components/ui/CInput.vue';
 import CProgress from '../components/ui/CProgress.vue';
+import CTooltip from '../components/ui/CTooltip.vue';
 import { RefreshButtonStub } from './refreshButtonStub';
 
 function mountView() {
@@ -121,7 +122,7 @@ describe('DashboardView', () => {
         current: { status: 'auto_rotation' },
       },
     };
-    queries[1].data.value = { totals: { request_count: 7 } };
+    queries[1].data.value = { totals: { request_count: 7, success_rate: 0.6 } };
 
     const wrapper = mountView();
     const state = (wrapper.vm.$ as any).setupState;
@@ -139,14 +140,29 @@ describe('DashboardView', () => {
     expect(wrapper.text()).not.toContain('模型使用');
     expect(wrapper.text()).not.toContain('凭证使用');
 
+    const todayRequestTile = wrapper
+      .findAll('.stat')
+      .find((tile) => tile.text().includes('今日请求'))!;
+    const todaySuccessRateProgress = todayRequestTile.findComponent(CProgress);
+    expect(todaySuccessRateProgress.props()).toEqual(
+      expect.objectContaining({
+        percentage: 60,
+        variant: 'success-rate',
+        size: 52,
+        strokeWidth: 5,
+      }),
+    );
+    expect(todaySuccessRateProgress.attributes('aria-label')).toBe('成功率');
+    expect(todaySuccessRateProgress.attributes('tabindex')).toBe('0');
+    expect(todayRequestTile.findComponent(CTooltip).props('content')).toBe(
+      '成功 4 / 总请求 7（60.0%）',
+    );
+
     const copyButton = wrapper.findAll('button').find((button) => button.text().includes('复制'));
     await copyButton?.trigger('click');
     expect(copyMock).toHaveBeenCalledWith('http://localhost/openai/v1', '客户端入口地址已复制');
 
-    await wrapper
-      .findAll('.stat')
-      .find((tile) => tile.text().includes('今日请求'))!
-      .trigger('click');
+    await todayRequestTile.trigger('click');
     expect(pushMock).toHaveBeenCalledWith({ name: 'stats' });
   });
 
@@ -269,13 +285,21 @@ describe('DashboardView', () => {
   });
 
   it('今日统计失败时显示占位符和独立重试入口', async () => {
-    queries[1].data.value = { totals: { request_count: 99 } };
+    queries[1].data.value = { totals: { request_count: 99, success_rate: 0.8 } };
     queries[1].isError.value = true;
     queries[1].error.value = new Error('stats failed');
     const wrapper = mountView();
 
     expect(wrapper.text()).toContain('今日请求|-');
     expect(wrapper.text()).toContain('加载今日请求统计失败');
+    const todayRequestTile = wrapper
+      .findAll('.stat')
+      .find((tile) => tile.text().includes('今日请求'))!;
+    const todaySuccessRateProgress = todayRequestTile.findComponent(CProgress);
+    expect(todaySuccessRateProgress.props('percentage')).toBe(0);
+    expect(todaySuccessRateProgress.props('label')).toBe('-');
+    expect(todaySuccessRateProgress.attributes('aria-valuetext')).toBe('暂无数据');
+    expect(todayRequestTile.findComponent(CTooltip).props('content')).toBe('暂无成功率数据');
     const retry = wrapper
       .findAll('button')
       .find((button) => button.text().includes('重试今日统计'))!;

@@ -11,9 +11,15 @@ import CCard from '../components/ui/CCard.vue';
 import CInput from '../components/ui/CInput.vue';
 import CInputGroup from '../components/ui/CInputGroup.vue';
 import CProgress from '../components/ui/CProgress.vue';
+import CTooltip from '../components/ui/CTooltip.vue';
 import { adminApi } from '../api/admin';
 import { useClipboard } from '../composables/useClipboard';
-import { buildPresetRange, resolveBrowserTimeZone } from '../utils/stats';
+import {
+  buildPresetRange,
+  formatCompactNumber,
+  formatPercent,
+  resolveBrowserTimeZone,
+} from '../utils/stats';
 import {
   computeValidityPercent,
   describeCredentialStatus,
@@ -156,9 +162,20 @@ const runningUptimeSeconds = computed(() => {
 
 const uptimeDisplay = computed(() => buildUptimeDisplay(runningUptimeSeconds.value));
 
-const todayRequestCount = computed(() =>
-  todayStatsQuery.isError.value ? '-' : (todayStatsQuery.data.value?.totals.request_count ?? 0),
+const todayStatsTotals = computed(() =>
+  todayStatsQuery.isError.value ? undefined : todayStatsQuery.data.value?.totals,
 );
+const todayRequestCount = computed(() => todayStatsTotals.value?.request_count ?? 0);
+const todaySuccessRatePercentage = computed(() => {
+  const rate = todayStatsTotals.value?.success_rate;
+  return rate === null || rate === undefined ? null : Math.round(rate * 100);
+});
+const todaySuccessRateTooltip = computed(() => {
+  const totals = todayStatsTotals.value;
+  if (!totals || totals.success_rate === null) return '暂无成功率数据';
+  const successCount = Math.round(totals.request_count * totals.success_rate);
+  return `成功 ${formatCompactNumber(successCount)} / 总请求 ${formatCompactNumber(totals.request_count)}（${formatPercent(totals.success_rate)}）`;
+});
 
 const validityPercent = computed(() => {
   const valid = statusData.value?.credentials.valid ?? 0;
@@ -231,7 +248,7 @@ function openStats(): void {
       </StatTile>
       <StatTile
         label="今日请求"
-        :value="todayRequestCount"
+        :value="todayStatsQuery.isError.value ? '-' : todayRequestCount"
         tone="warning"
         :icon="Activity"
         meta="查看持久化统计"
@@ -240,7 +257,23 @@ function openStats(): void {
         tabindex="0"
         @click="openStats"
         @keyup.enter="openStats"
-      />
+      >
+        <template #corner>
+          <CTooltip :content="todaySuccessRateTooltip">
+            <CProgress
+              class="rounded-full"
+              :percentage="todaySuccessRatePercentage ?? 0"
+              :label="todaySuccessRatePercentage === null ? '-' : undefined"
+              variant="success-rate"
+              :stroke-width="5"
+              :size="52"
+              aria-label="成功率"
+              :aria-valuetext="todaySuccessRatePercentage === null ? '暂无数据' : undefined"
+              tabindex="0"
+            />
+          </CTooltip>
+        </template>
+      </StatTile>
       <StatTile
         :label="uptimeDisplay.label"
         :value="uptimeDisplay.value"
