@@ -13,6 +13,7 @@ import httpx
 
 from config import get_codebuddy_api_endpoint, get_codebuddy_api_host
 from .auth_types import AuthenticatedUser
+from .credential_store import build_user_credential_filename
 from .stream_service import get_http_client
 
 logger = logging.getLogger(__name__)
@@ -719,9 +720,7 @@ class CodeBuddyTokenSaver:
 
             credential_data = TokenParser.build_credential_data(token_data)
             user_id = credential_data.get("user_id", "unknown")
-            timestamp = int(time.time())
-            safe_user_id = "".join(c for c in str(user_id) if c.isalnum() or c in "._-")[:20]
-            filename = f"codebuddy_{safe_user_id}_{timestamp}.json"
+            filename = build_user_credential_filename(user_id)
 
             token_manager = get_token_manager_for_user(owner_user)
             before_ids = {

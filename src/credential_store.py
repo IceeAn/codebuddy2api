@@ -7,7 +7,7 @@ import os
 import re
 import secrets
 import stat
-import time
+import unicodedata
 from typing import Any, Dict, List, Optional, TypedDict
 
 logger = logging.getLogger(__name__)
@@ -18,6 +18,23 @@ class CredentialRecord(TypedDict):
 
     file_path: str
     data: Dict[str, Any]
+
+
+def _sanitize_filename_text(value: Any) -> str:
+    """规范化并仅保留可安全用于凭证文件名的字符。"""
+    normalized = unicodedata.normalize("NFC", "" if value is None else str(value))
+    return "".join(
+        char if char.isalnum() or char in "._-" else "_"
+        for char in normalized
+    )
+
+
+def build_user_credential_filename(user_id: Any) -> str:
+    """根据上游用户标识生成可被凭证加载器发现的文件名。"""
+    safe_user_id = _sanitize_filename_text(user_id).lstrip(".")[:36]
+    if not any(char.isalnum() for char in safe_user_id):
+        safe_user_id = "unknown"
+    return f"{safe_user_id}.json"
 
 
 def build_user_credentials_dirname(username: str) -> str:
@@ -143,19 +160,26 @@ class CodeBuddyCredentialStore:
             raise
         return safe_filename
 
-    def next_available_filename(self, filename: str) -> str:
-        """基于候选文件名查找当前凭证目录中不会碰撞的安全文件名。"""
+    def next_available_filename(
+            self,
+            filename: str,
+            *,
+            force_random_suffix: bool = False,
+    ) -> str:
+        """为已占用的候选文件名生成带随机短后缀的安全文件名。"""
         safe_filename = self.sanitize_filename(filename)
-        if not os.path.exists(self.resolve_credential_path(safe_filename)):
+        if (
+            not force_random_suffix
+            and safe_filename != os.path.basename(self.state_file)
+            and not os.path.exists(self.resolve_credential_path(safe_filename))
+        ):
             return safe_filename
 
         stem, ext = os.path.splitext(safe_filename)
-        suffix = 1
         while True:
-            candidate = f"{stem}_{suffix}{ext or '.json'}"
+            candidate = f"{stem}_{secrets.token_hex(4)}{ext or '.json'}"
             if not os.path.exists(self.resolve_credential_path(candidate)):
                 return candidate
-            suffix += 1
 
     def delete_credential_file(self, file_path: str) -> bool:
         """删除指定凭证文件。"""
@@ -174,10 +198,12 @@ class CodeBuddyCredentialStore:
 
     def sanitize_filename(self, filename: str) -> str:
         """清理凭证文件名，禁止路径穿越和特殊路径。"""
-        filename = os.path.basename(str(filename).strip())
-        filename = re.sub(r"[^A-Za-z0-9._-]", "_", filename)
-        if not filename or filename in (".", ".."):
-            filename = f"codebuddy_token_{int(time.time())}.json"
+        filename = os.path.basename(
+            unicodedata.normalize("NFC", str(filename).strip())
+        )
+        filename = _sanitize_filename_text(filename).lstrip(".")
+        if not filename:
+            filename = "token.json"
         if not filename.endswith(".json"):
             filename += ".json"
         return filename

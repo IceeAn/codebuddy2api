@@ -9,7 +9,12 @@ from typing import Any, Dict, List, Optional
 
 from .auth_types import AuthenticatedUser
 from .credential_rotation import CredentialRotationPolicy, TokenExpiry
-from .credential_store import CodeBuddyCredentialStore, CredentialRecord, build_user_credentials_dirname
+from .credential_store import (
+    CodeBuddyCredentialStore,
+    CredentialRecord,
+    build_user_credential_filename,
+    build_user_credentials_dirname,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -344,32 +349,38 @@ class CodeBuddyTokenManager:
 
     def add_credential(self, bearer_token: str, filename: Optional[str] = None) -> bool:
         """添加新的凭证。"""
+        force_random_suffix = not filename
         if not filename:
-            next_index = len(self.credentials) + 1
-            while True:
-                candidate = f"codebuddy_token_{next_index}.json"
-                if not os.path.exists(self.store.resolve_credential_path(candidate)):
-                    filename = candidate
-                    break
-                next_index += 1
+            filename = "token.json"
 
         from .codebuddy_oauth import TokenParser
 
         credential_data = TokenParser.build_credential_data({"bearer_token": bearer_token})
-        return self.add_credential_with_data(credential_data, filename)
+        return self.add_credential_with_data(
+            credential_data,
+            filename,
+            force_random_suffix=force_random_suffix,
+        )
 
-    def add_credential_with_data(self, credential_data: Dict[str, Any], filename: Optional[str] = None) -> bool:
+    def add_credential_with_data(
+            self,
+            credential_data: Dict[str, Any],
+            filename: Optional[str] = None,
+            *,
+            force_random_suffix: bool = False,
+    ) -> bool:
         """添加新的凭证。"""
         if not filename:
             user_id = credential_data.get("user_id", "unknown")
-            timestamp = credential_data.get("created_at", int(time.time()))
-            safe_user_id = "".join(c for c in str(user_id) if c.isalnum() or c in "._-")[:20]
-            filename = f"codebuddy_{safe_user_id}_{timestamp}.json"
+            filename = build_user_credential_filename(user_id)
         if "created_at" not in credential_data:
             credential_data["created_at"] = int(time.time())
 
         while True:
-            candidate = self.store.next_available_filename(filename)
+            candidate = self.store.next_available_filename(
+                filename,
+                force_random_suffix=force_random_suffix,
+            )
             try:
                 safe_filename = self.store.save_credential(
                     credential_data, candidate, indent=4, create_new=True

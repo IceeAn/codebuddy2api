@@ -407,26 +407,28 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValidationError):
             CredentialCreateRequest(bearer_token="token", user_id="legacy-user")
 
-    async def test_create_admin_credential_returns_new_row_when_numeric_filename_has_gap(self):
+    async def test_create_admin_credential_always_uses_random_suffix(self):
         manager = self._manager()
-        self.assertTrue(self._add_credential(manager, "first-token", "first-user", "codebuddy_token_1.json"))
-        self.assertTrue(self._add_credential(manager, "second-token", "second-user", "codebuddy_token_2.json"))
-        self.assertTrue(manager.delete_credential_by_id(manager.get_credentials_info()[0]["credential_id"]))
 
-        bearer_token = jwt_with_payload({"sub": "third-user"})
-        with mock.patch("src.admin_router.get_token_manager_for_user", return_value=manager):
+        bearer_token = jwt_with_payload({"sub": "manual-user"})
+        with (
+            mock.patch("src.admin_router.get_token_manager_for_user", return_value=manager),
+            mock.patch(
+                "src.credential_store.secrets.token_hex",
+                return_value="randomsuffix",
+            ),
+        ):
             result = await create_admin_credential(
                 CredentialCreateRequest(bearer_token=bearer_token),
                 self.user,
             )
             listed = await list_admin_credentials(self.user)
 
-        self.assertEqual(result["credential"]["user_id"], "third-user")
-        self.assertEqual(result["credential"]["filename"], "codebuddy_token_3.json")
+        self.assertEqual(result["credential"]["user_id"], "manual-user")
+        self.assertEqual(result["credential"]["filename"], "token_randomsuffix.json")
         self.assertNotIn("bearer_token", result["credential"])
         credentials = {item["filename"]: item for item in listed["credentials"]}
-        self.assertIn("codebuddy_token_2.json", credentials)
-        self.assertIn("codebuddy_token_3.json", credentials)
+        self.assertEqual(set(credentials), {"token_randomsuffix.json"})
 
     async def test_admin_status_leaves_usage_analytics_to_stats_api(self):
         result = await get_admin_status(make_request(path="/api/admin/status"), self.user)

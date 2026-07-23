@@ -66,7 +66,7 @@ docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:
 
 - SQLite schema 创建/迁移与 `user_version` 必须在同一 `BEGIN IMMEDIATE` 事务中提交；每次连接都要确保 WAL 可用，失败即终止。
 - 数据目录不得是符号链接；数据库及其 `-wal`、`-shm`、`-journal` sidecar 必须是非符号链接普通文件。数据库和凭证文件权限为 0600。
-- 凭证写入使用 `O_NOFOLLOW`，加载时忽略凭证目录中的符号链接，所有文件名都必须防路径穿越。
+- 凭证写入使用 `O_NOFOLLOW`，加载时忽略凭证目录中的符号链接，所有文件名都必须防路径穿越。新凭证文件名使用 NFC 规范化并允许 Unicode 字母数字，但不得以 `.` 开头，否则 `glob("*.json")` 无法发现。
 - `CODEBUDDY_ALLOWED_API_ENDPOINTS` 是硬白名单：为空、含非法 URL 或当前端点不在其中时必须在启动阶段失败，禁止自动补入或回退。`X-Domain` 只允许 `[A-Za-z0-9.-]+`。
 - 用户认证必须对不存在或无效用户执行虚拟密码哈希，避免时序枚举。密码文件只接受规范的 `pbkdf2_sha256$迭代数$盐$摘要`：默认迭代数为 600000，只允许 600000 至 1000000；盐固定 16 字节，摘要固定 32 字节，Base64URL 必须规范且无填充。修改格式时必须同步所有读写入口。
 

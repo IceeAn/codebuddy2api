@@ -1071,7 +1071,7 @@ class CodeBuddyTokenSaverTests(unittest.IsolatedAsyncioTestCase):
                 {"credential_id": "new-credential"},
             ],
         ]
-        credential_data = {"bearer_token": "token", "user_id": "a/b:c@example.com"}
+        credential_data = {"bearer_token": "token", "user_id": ".alice"}
         schedule_probe = mock.Mock()
 
         with (
@@ -1094,7 +1094,7 @@ class CodeBuddyTokenSaverTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result)
         manager.add_credential_with_data.assert_called_once_with(
             credential_data=credential_data,
-            filename="codebuddy_abcexample.com_123.json",
+            filename="alice.json",
         )
         schedule_probe.assert_called_once_with(
             "alice",

@@ -13,7 +13,11 @@ from src.auth_types import AuthenticatedUser
 from src.codebuddy_oauth import TokenParser
 from src.codebuddy_token_manager import CodeBuddyTokenManager, CodeBuddyTokenManagerRegistry
 from src.credential_rotation import CredentialRotationPolicy, CredentialSelection, TokenExpiry
-from src.credential_store import CodeBuddyCredentialStore, build_user_credentials_dirname
+from src.credential_store import (
+    CodeBuddyCredentialStore,
+    build_user_credential_filename,
+    build_user_credentials_dirname,
+)
 
 from tests.helpers import ConfigIsolationMixin
 
@@ -46,6 +50,20 @@ class FakeTokenExpiry:
 
 
 class CredentialStoreTests(ConfigIsolationMixin, unittest.TestCase):
+    def test_build_user_credential_filename_preserves_unicode_and_full_uuid(self):
+        uuid_user_id = "123e4567-e89b-12d3-a456-426614174000"
+
+        self.assertEqual(build_user_credential_filename("张三"), "张三.json")
+        self.assertEqual(build_user_credential_filename("e\u0301"), "é.json")
+        self.assertEqual(build_user_credential_filename(".alice"), "alice.json")
+        self.assertEqual(build_user_credential_filename("/"), "unknown.json")
+        self.assertEqual(build_user_credential_filename("..."), "unknown.json")
+        self.assertEqual(build_user_credential_filename(None), "unknown.json")
+        self.assertEqual(
+            build_user_credential_filename(uuid_user_id),
+            f"{uuid_user_id}.json",
+        )
+
     def test_build_user_credentials_dirname_sanitizes_and_hashes_username(self):
         dirname = build_user_credentials_dirname(" alice@example.com ")
 
@@ -63,12 +81,31 @@ class CredentialStoreTests(ConfigIsolationMixin, unittest.TestCase):
 
         self.assertEqual(store.sanitize_filename("../../outside"), "outside.json")
         self.assertEqual(store.sanitize_filename("bad:name?.json"), "bad_name_.json")
+        self.assertEqual(store.sanitize_filename(".张三.json"), "张三.json")
+        self.assertEqual(store.sanitize_filename("用户:name.json"), "用户_name.json")
+        self.assertEqual(store.sanitize_filename("..."), "token.json")
 
-    def test_sanitize_filename_uses_timestamp_fallback_for_empty_names(self):
+    def test_sanitize_filename_uses_token_fallback_for_empty_names(self):
         store = CodeBuddyCredentialStore("/tmp/creds")
 
-        with mock.patch("src.credential_store.time.time", return_value=123):
-            self.assertEqual(store.sanitize_filename(".."), "codebuddy_token_123.json")
+        self.assertEqual(store.sanitize_filename(".."), "token.json")
+
+    def test_loader_keeps_supporting_legacy_prefixed_filename(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            store = CodeBuddyCredentialStore(tmp_dir)
+            store.save_credential(
+                {"bearer_token": "legacy-token"},
+                "codebuddy_legacy-user_123.json",
+            )
+
+            credentials = store.load_credentials()
+
+            self.assertEqual(len(credentials), 1)
+            self.assertEqual(credentials[0]["data"]["bearer_token"], "legacy-token")
+            self.assertEqual(
+                Path(credentials[0]["file_path"]).name,
+                "codebuddy_legacy-user_123.json",
+            )
 
     def test_resolve_credential_path_rejects_escape_after_join(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -200,13 +237,39 @@ class CredentialStoreTests(ConfigIsolationMixin, unittest.TestCase):
             ):
                 self.assertIsNone(store.load_manager_state())
 
-    def test_next_available_filename_increments_until_free(self):
+    def test_next_available_filename_retries_random_suffix_collision(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             store = CodeBuddyCredentialStore(tmp_dir)
-            Path(tmp_dir, "token.json").touch()
-            Path(tmp_dir, "token_1.json").touch()
+            Path(tmp_dir, "token_taken.json").touch()
 
-            self.assertEqual(store.next_available_filename("token.json"), "token_2.json")
+            with mock.patch(
+                "src.credential_store.secrets.token_hex",
+                side_effect=["taken", "available"],
+            ) as generate_suffix:
+                self.assertEqual(
+                    store.next_available_filename(
+                        "token.json",
+                        force_random_suffix=True,
+                    ),
+                    "token_available.json",
+                )
+            self.assertEqual(
+                generate_suffix.call_args_list,
+                [mock.call(4), mock.call(4)],
+            )
+
+    def test_next_available_filename_avoids_reserved_manager_state_name(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            store = CodeBuddyCredentialStore(tmp_dir)
+
+            with mock.patch(
+                "src.credential_store.secrets.token_hex",
+                return_value="available",
+            ):
+                self.assertEqual(
+                    store.next_available_filename("manager_state.json"),
+                    "manager_state_available.json",
+                )
 
     def test_delete_credential_rejects_outside_path_and_reports_missing_file(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -634,25 +697,23 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
             manager.current_index = 0
             self.assertEqual(manager.get_current_credential_info()["index"], 0)
 
-    def test_add_credential_uses_non_colliding_numeric_filename_after_gap(self):
+    def test_add_credential_always_uses_random_suffix(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
-            self.assertTrue(add_credential(manager, "first-token", "first-user", "codebuddy_token_1.json"))
-            self.assertTrue(add_credential(manager, "second-token", "second-user", "codebuddy_token_2.json"))
-            os.remove(Path(tmp_dir) / "codebuddy_token_1.json")
-            manager.load_all_tokens()
 
-            third_token = jwt_with_payload({"sub": "third-user"})
-            self.assertTrue(manager.add_credential(third_token))
+            bearer_token = jwt_with_payload({"sub": "manual-user"})
+            with mock.patch(
+                "src.credential_store.secrets.token_hex",
+                return_value="randomsuffix",
+            ):
+                self.assertTrue(manager.add_credential(bearer_token))
 
-            files = sorted(path.name for path in Path(tmp_dir).glob("codebuddy_token_*.json"))
-            self.assertEqual(files, ["codebuddy_token_2.json", "codebuddy_token_3.json"])
-            with (Path(tmp_dir) / "codebuddy_token_2.json").open("r", encoding="utf-8") as f:
-                self.assertEqual(json.load(f)["bearer_token"], "second-token")
-            with (Path(tmp_dir) / "codebuddy_token_3.json").open("r", encoding="utf-8") as f:
+            files = sorted(path.name for path in Path(tmp_dir).glob("token*.json"))
+            self.assertEqual(files, ["token_randomsuffix.json"])
+            with (Path(tmp_dir) / "token_randomsuffix.json").open("r", encoding="utf-8") as f:
                 data = json.load(f)
-            self.assertEqual(data["bearer_token"], third_token)
-            self.assertEqual(data["user_id"], "third-user")
+            self.assertEqual(data["bearer_token"], bearer_token)
+            self.assertEqual(data["user_id"], "manual-user")
 
     def test_add_credential_parses_manual_token_with_shared_token_parser(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -682,16 +743,19 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
                 credential["user_id"],
             )
 
-    def test_add_credential_with_data_generates_unique_timestamp_filename(self):
+    def test_add_credential_with_data_uses_unicode_user_filename_and_random_suffix(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
 
-            with mock.patch("src.codebuddy_token_manager.time.time", return_value=123):
-                self.assertTrue(manager.add_credential_with_data({"bearer_token": "first", "user_id": "same"}))
-                self.assertTrue(manager.add_credential_with_data({"bearer_token": "second", "user_id": "same"}))
+            with mock.patch(
+                "src.credential_store.secrets.token_hex",
+                return_value="randomsuffix",
+            ):
+                self.assertTrue(manager.add_credential_with_data({"bearer_token": "first", "user_id": "张三"}))
+                self.assertTrue(manager.add_credential_with_data({"bearer_token": "second", "user_id": "张三"}))
 
-            files = sorted(path.name for path in Path(tmp_dir).glob("codebuddy_same_123*.json"))
-            self.assertEqual(files, ["codebuddy_same_123.json", "codebuddy_same_123_1.json"])
+            files = sorted(path.name for path in Path(tmp_dir).glob("张三*.json"))
+            self.assertEqual(files, ["张三.json", "张三_randomsuffix.json"])
 
     def test_add_credential_with_data_retries_atomic_filename_collision(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -707,16 +771,22 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
                     raise FileExistsError(filename)
                 return original_save(credential_data, filename, indent, create_new)
 
-            with mock.patch.object(manager.store, "save_credential", side_effect=collide_once):
+            with (
+                mock.patch.object(manager.store, "save_credential", side_effect=collide_once),
+                mock.patch(
+                    "src.credential_store.secrets.token_hex",
+                    return_value="atomicretry",
+                ),
+            ):
                 self.assertTrue(
                     manager.add_credential_with_data(
                         {"bearer_token": "requested", "user_id": "same", "created_at": 123}
                     )
                 )
 
-            files = sorted(path.name for path in Path(tmp_dir).glob("codebuddy_same_123*.json"))
-            self.assertEqual(files, ["codebuddy_same_123.json", "codebuddy_same_123_1.json"])
-            with (Path(tmp_dir) / "codebuddy_same_123_1.json").open("r", encoding="utf-8") as f:
+            files = sorted(path.name for path in Path(tmp_dir).glob("same*.json"))
+            self.assertEqual(files, ["same.json", "same_atomicretry.json"])
+            with (Path(tmp_dir) / "same_atomicretry.json").open("r", encoding="utf-8") as f:
                 self.assertEqual(json.load(f)["bearer_token"], "requested")
 
     def test_token_manager_preserves_current_credential_after_deleting_prior_file(self):
