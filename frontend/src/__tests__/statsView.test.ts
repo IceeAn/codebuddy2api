@@ -611,6 +611,46 @@ describe('StatsView', () => {
     expect((wrapper.vm.$ as any).setupState.filters.traffic).toBe('external');
   });
 
+  it('一键清空四个下拉筛选并保留时间与流量条件', async () => {
+    const wrapper = mountView();
+    const state = (wrapper.vm.$ as any).setupState;
+    const clearButton = wrapper.findAll('button').find((button) => button.text() === '清空')!;
+
+    expect(clearButton.find('.lucide-eraser').exists()).toBe(true);
+    expect(clearButton.attributes('disabled')).toBeDefined();
+    state.filters.traffic = 'external';
+    state.filters.model = 'glm';
+    state.filters.apiKeyId = 'key-1';
+    state.filters.credentialId = 'cred-1';
+    state.filters.outcome = 'failure';
+    await nextTick();
+    expect(clearButton.attributes('disabled')).toBeUndefined();
+    const rangeBeforeClear = { ...state.range };
+
+    await clearButton.trigger('click');
+
+    expect(state.filters).toEqual({
+      traffic: 'external',
+      model: '',
+      apiKeyId: '',
+      credentialId: '',
+      outcome: '',
+    });
+    expect(state.range).toEqual(rangeBeforeClear);
+    expect(state.queryParams).toEqual(
+      expect.objectContaining({
+        traffic: 'external',
+        start_at: rangeBeforeClear.startAt,
+        end_at: rangeBeforeClear.endAt,
+      }),
+    );
+    expect(state.queryParams).not.toHaveProperty('model');
+    expect(state.queryParams).not.toHaveProperty('api_key_id');
+    expect(state.queryParams).not.toHaveProperty('credential_id');
+    expect(state.queryParams).not.toHaveProperty('outcome');
+    expect(clearButton.attributes('disabled')).toBeDefined();
+  });
+
   it('刷新概览与明细并处理整体错误和空状态', async () => {
     queries[0].isError.value = true;
     queries[1].isError.value = true;

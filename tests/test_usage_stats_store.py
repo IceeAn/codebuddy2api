@@ -935,6 +935,32 @@ class UsageStatsStoreTests(unittest.TestCase):
             **{**matching, "occurred_at": self.now + 400, "outcome": "failure"},
             total_tokens=100,
         ))
+        self.record(self.event(
+            **{**matching, "occurred_at": self.now + 150, "upstream_model": "glm-5.1"},
+            total_tokens=100,
+        ))
+        self.record(self.event(
+            **{
+                **matching,
+                "occurred_at": self.now + 160,
+                "api_key_id": "key-2",
+                "api_key_name": "Staging",
+            },
+            total_tokens=100,
+        ))
+        self.record(self.event(
+            **{
+                **matching,
+                "occurred_at": self.now + 170,
+                "credential_id": "credential-2",
+                "credential_label": "Bob",
+            },
+            total_tokens=100,
+        ))
+        self.record(self.event(
+            **{**matching, "occurred_at": self.now + 180, "outcome": "failure"},
+            total_tokens=100,
+        ))
 
         overview = self.store.get_overview("alice", StatsFilters(
             start_time=self.now + 50,
@@ -953,8 +979,44 @@ class UsageStatsStoreTests(unittest.TestCase):
         self.assertEqual(overview["totals"]["usage_coverage"], 0.5)
         self.assertEqual(overview["totals"]["p95_first_output_ms"], 5000)
         self.assertEqual(overview["totals"]["p95_total_ms"], 10000)
-        self.assertEqual(overview["dimensions"]["models"], ["glm-5.2"])
-        self.assertEqual(overview["dimensions"]["outcomes"], ["success"])
+        self.assertEqual(overview["dimensions"], {
+            "models": ["glm-5.2", "glm-5.1"],
+            "api_keys": [
+                {"id": "key-1", "name": "Production"},
+                {"id": "key-2", "name": "Staging"},
+            ],
+            "credentials": [
+                {"id": "credential-1", "label": "Alice"},
+                {"id": "credential-2", "label": "Bob"},
+            ],
+            "outcomes": ["failure", "success"],
+        })
+        self.assertEqual(
+            [row["model"] for row in overview["breakdowns"]["models"]],
+            ["glm-5.2"],
+        )
+        self.assertEqual(
+            [row["id"] for row in overview["breakdowns"]["api_keys"]],
+            ["key-1"],
+        )
+        self.assertEqual(
+            [row["id"] for row in overview["breakdowns"]["credentials"]],
+            ["credential-1"],
+        )
+
+        api_key_only = self.store.get_overview("alice", StatsFilters(
+            start_time=self.now + 50,
+            end_time=self.now + 250,
+            api_key_id="key-1",
+            granularity="hour",
+        ))
+        self.assertEqual(
+            api_key_only["dimensions"]["api_keys"],
+            [
+                {"id": "key-1", "name": "Production"},
+                {"id": "key-2", "name": "Staging"},
+            ],
+        )
 
     def test_overview_honors_non_utc_local_day_boundaries(self):
         zone = ZoneInfo("Asia/Kathmandu")

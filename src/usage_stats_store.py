@@ -1134,6 +1134,114 @@ class UsageStatsStore:
             parameters,
         ).fetchall()
 
+    @staticmethod
+    def _facet_conditions(
+            filters: StatsFilters,
+            excluded_filter: str,
+            alias: str,
+    ) -> Tuple[list[str], Dict[str, Any]]:
+        columns = {
+            "model": "model",
+            "api_key_id": "api_key_id",
+            "credential_id": "credential_id",
+            "outcome": "outcome",
+        }
+        clauses = []
+        parameters = {}
+        for name, column in columns.items():
+            value = getattr(filters, name)
+            if name != excluded_filter and value is not None:
+                clauses.append(f"{alias}.{column} = :{name}")
+                parameters[name] = value
+        return clauses, parameters
+
+    @classmethod
+    def _facet_group_rows(
+            cls,
+            connection,
+            group_column: str,
+            label_column: Optional[str],
+            filters: StatsFilters,
+            excluded_filter: str,
+    ):
+        clauses, parameters = cls._facet_conditions(
+            filters,
+            excluded_filter,
+            "base",
+        )
+        where_clause = f"base.{group_column} <> ''"
+        if clauses:
+            where_clause += " AND " + " AND ".join(clauses)
+        label_select = f", base.{group_column} AS label"
+        if label_column is not None:
+            latest_clauses, _ = cls._facet_conditions(
+                filters,
+                excluded_filter,
+                "latest",
+            )
+            latest_where = f"latest.{group_column} = base.{group_column}"
+            if latest_clauses:
+                latest_where += " AND " + " AND ".join(latest_clauses)
+            label_select = (
+                f", (SELECT latest.{label_column} FROM stats_base latest "
+                f"WHERE {latest_where} "
+                "ORDER BY latest.period_time DESC, latest.row_id DESC LIMIT 1) AS label"
+            )
+        return connection.execute(
+            f"SELECT base.{group_column} AS identifier{label_select}, "
+            "SUM(base.request_count) AS request_count FROM stats_base base "
+            f"WHERE {where_clause} GROUP BY base.{group_column} "
+            "ORDER BY request_count DESC, identifier ASC",
+            parameters,
+        ).fetchall()
+
+    @classmethod
+    def _faceted_dimensions(
+            cls,
+            connection,
+            filters: StatsFilters,
+    ) -> Dict[str, Any]:
+        model_rows = cls._facet_group_rows(
+            connection,
+            "model",
+            None,
+            filters,
+            "model",
+        )
+        api_key_rows = cls._facet_group_rows(
+            connection,
+            "api_key_id",
+            "api_key_name",
+            filters,
+            "api_key_id",
+        )
+        credential_rows = cls._facet_group_rows(
+            connection,
+            "credential_id",
+            "credential_label",
+            filters,
+            "credential_id",
+        )
+        outcome_rows = cls._facet_group_rows(
+            connection,
+            "outcome",
+            None,
+            filters,
+            "outcome",
+        )
+        return {
+            "models": [row["identifier"] for row in model_rows],
+            "api_keys": [
+                {"id": row["identifier"], "name": row["label"]}
+                for row in api_key_rows
+            ],
+            "credentials": [
+                {"id": row["identifier"], "label": row["label"]}
+                for row in credential_rows
+            ],
+            "outcomes": sorted(row["identifier"] for row in outcome_rows),
+        }
+
     @classmethod
     def _breakdown_rows(
             cls,
@@ -1336,6 +1444,30 @@ class UsageStatsStore:
                 zone,
                 granularity,
             )
+            if any((
+                    normalized_filters.model,
+                    normalized_filters.api_key_id,
+                    normalized_filters.credential_id,
+                    normalized_filters.outcome,
+            )):
+                facet_base_filters = replace(
+                    normalized_filters,
+                    model=None,
+                    api_key_id=None,
+                    credential_id=None,
+                    outcome=None,
+                )
+                self._prepare_stats_tables(
+                    connection,
+                    username,
+                    facet_base_filters,
+                    replaced_hours,
+                    detail_segments,
+                )
+                dimensions = self._faceted_dimensions(
+                    connection,
+                    normalized_filters,
+                )
 
         reported_drops = (
             self.get_dropped_events(username)

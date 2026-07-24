@@ -10,6 +10,7 @@ import {
   ChevronsRight,
   CircleDollarSign,
   Clock3,
+  Eraser,
   MessageSquareText,
   TimerReset,
 } from '@lucide/vue';
@@ -341,6 +342,21 @@ const outcomeOptions = computed(() =>
     filters.outcome,
   ),
 );
+const hasDimensionFilters = computed(
+  () =>
+    Boolean(filters.model) ||
+    Boolean(filters.apiKeyId) ||
+    Boolean(filters.credentialId) ||
+    Boolean(filters.outcome),
+);
+
+function clearDimensionFilters(): void {
+  filters.model = '';
+  filters.apiKeyId = '';
+  filters.credentialId = '';
+  filters.outcome = '';
+}
+
 const combinedFetching = computed(
   () =>
     overviewQuery.isFetching.value || requestsQuery.isFetching.value || requestPageLoading.value,
@@ -760,6 +776,19 @@ function breakdownRows(kind: 'models' | 'api_keys' | 'credentials'): RankingRow[
               :data-traffic="option.value"
             />
           </CRadioGroup>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <span class="text-xs font-semibold text-muted">筛选条件</span>
+          <CButton
+            size="sm"
+            variant="secondary"
+            :disabled="!hasDimensionFilters"
+            @click="clearDimensionFilters"
+          >
+            <template #icon><Eraser :size="14" /></template>
+            清空
+          </CButton>
         </div>
 
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
