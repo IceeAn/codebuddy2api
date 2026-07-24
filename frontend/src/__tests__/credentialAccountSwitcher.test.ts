@@ -61,16 +61,6 @@ function mountSwitcher(open = true, eventOrder?: string[], disabled = false) {
       stubs: {
         CModal: ModalStub,
         CAlert: { template: '<div class="alert"><slot /></div>' },
-        CRadioGroup: {
-          name: 'CRadioGroup',
-          props: ['modelValue'],
-          emits: ['update:modelValue'],
-          template: '<div class="radio-group"><slot /></div>',
-        },
-        CRadioButton: {
-          props: ['value'],
-          template: '<button class="radio"><slot /></button>',
-        },
       },
     },
   });
@@ -133,9 +123,25 @@ describe('CredentialAccountSwitcher', () => {
     expect(state.accountLabel(query.data.value.accounts[0])).toBe('个人账号');
     expect(state.accountLabel(query.data.value.accounts[1])).toBe('张三 · 测试企业');
     expect(wrapper.text()).toContain('张三 · 测试企业');
-    wrapper.findComponent({ name: 'CRadioGroup' }).vm.$emit('update:modelValue', 'personal');
+
+    const radios = wrapper.findAll<HTMLInputElement>('input[type="radio"]');
+    expect(radios).toHaveLength(2);
+    expect(radios[0].attributes('name')).toBe(radios[1].attributes('name'));
+    expect(radios[0].element.checked).toBe(false);
+    expect(radios[1].element.checked).toBe(true);
+    expect(radios[1].element.closest('label')?.classList).toContain('border-brand-500');
+    expect(radios[1].element.nextElementSibling?.querySelector('.bg-brand-600')).not.toBeNull();
+    expect(wrapper.find('.c-radio-group-indicator').exists()).toBe(false);
+
+    await radios[0].setValue();
     await wrapper.vm.$nextTick();
+
     expect(state.selectedAccountId).toBe('personal');
+    expect(radios[0].element.checked).toBe(true);
+    expect(radios[1].element.checked).toBe(false);
+    expect(radios[0].element.closest('label')?.classList).toContain('border-brand-500');
+    expect(radios[0].element.nextElementSibling?.querySelector('.bg-brand-600')).not.toBeNull();
+    expect(radios[1].element.nextElementSibling?.querySelector('.bg-brand-600')).toBeNull();
   });
 
   it('切换成功后驱逐账号、凭证与状态缓存', async () => {
@@ -226,6 +232,6 @@ describe('CredentialAccountSwitcher', () => {
     loadingWrapper.unmount();
     query.isLoading.value = false;
     const emptyWrapper = mountSwitcher();
-    expect(emptyWrapper.findAll('.radio')).toHaveLength(0);
+    expect(emptyWrapper.findAll('input[type="radio"]')).toHaveLength(0);
   });
 });
