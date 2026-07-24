@@ -295,7 +295,7 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
         payload = self._prepare_payload(request_body)
 
         self.assertEqual(request_body, original_body)
-        self.assertNotEqual(payload["messages"][0]["content"], original_body["messages"][0]["content"])
+        self.assertEqual(payload["messages"][0]["content"], original_body["messages"][0]["content"])
         self.assertEqual(payload["stream_options"], {"include_usage": True})
 
     def test_prepare_payload_preserves_stream_options_except_include_usage(self):
@@ -307,7 +307,7 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
 
         self.assertEqual(payload["stream_options"], {"include_usage": True, "foo": "bar"})
 
-    def test_prepare_payload_replaces_system_text_items_in_list_content(self):
+    def test_prepare_payload_preserves_system_message_content(self):
         payload = self._prepare_payload({
             "model": "lite",
             "messages": [
@@ -323,7 +323,7 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
         })
 
         content = payload["messages"][0]["content"]
-        self.assertEqual(content[0]["text"], "CodeBuddy and Tencent")
+        self.assertEqual(content[0]["text"], "Claude and Anthropic")
         self.assertEqual(content[1]["text"], "Claude")
 
     def test_prepare_payload_adds_default_system_message_for_single_user_message(self):

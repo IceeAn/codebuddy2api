@@ -76,7 +76,6 @@ docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:
 - 上游响应采用宽松事件提取，不在事件模型层承担完整协议验证。流式与非流式路径共享首个 choice 语义；`OpenAIStreamNormalizer` 负责拆分混合的 reasoning/content delta，并在首块补 `role: assistant`。
 - 上游工具调用 ID 原样透传，只为 OpenAI 流式兼容补充缺失的 `index`，不要重新生成 ID。
 - 强制推理模型会覆盖为最大推理并启用 thinking，但 `clear_thinking` 等其他客户端 `thinking` 子项必须继续透传，不能用新对象整体替换；其他模型默认开启 thinking，但客户端显式禁用时必须尊重。`CODEBUDDY_FORCED_TEMPERATURE` 非空时覆盖客户端值；模型命名空间是否剥离由 `CODEBUDDY_STRIP_MODEL_NAMESPACE` 控制。修改请求转换时注意这些优先级。
-- 系统消息会通过 `src/keyword_replacer.py` 替换 Anthropic/Claude 品牌词；不要在其他层重复替换。
 - 全局上游 HTTP 客户端保持 `trust_env=False`，避免环境中的 SOCKS 代理在缺少 `socksio` 时破坏服务启动。
 
 ## OAuth、凭证与模型缓存

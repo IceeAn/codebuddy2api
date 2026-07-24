@@ -5,8 +5,6 @@ from typing import Any, Dict
 
 from fastapi import HTTPException
 
-from .keyword_replacer import apply_keyword_replacement_to_system_message
-
 
 @dataclass(frozen=True)
 class PreparedCodeBuddyRequest:
@@ -105,10 +103,6 @@ def apply_request_policies(payload: Dict[str, Any], user: Any = None) -> None:
     if len(messages) == 1 and messages[0].get("role") == "user":
         system_msg = {"role": "system", "content": "You are a helpful assistant."}
         payload["messages"] = [system_msg] + messages
-
-    for msg in payload.get("messages", []):
-        if msg.get("role") == "system":
-            msg["content"] = apply_keyword_replacement_to_system_message(msg.get("content"))
 
 
 def adapt_openai_payload_for_codebuddy(payload: Dict[str, Any]) -> None:
