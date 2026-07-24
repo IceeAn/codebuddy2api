@@ -125,6 +125,11 @@ function handleCreate() {
   createMutation.mutate();
 }
 
+function handleCreateFromEnter(event: KeyboardEvent): void {
+  if (event.isComposing) return;
+  handleCreate();
+}
+
 function dismissNewKey(keyId: string): void {
   pendingApiKeys.value = pendingApiKeys.value.filter((pendingKey) => pendingKey.id !== keyId);
 }
@@ -209,7 +214,7 @@ const tableRows = computed(() => rows.value as unknown as Record<string, unknown
               v-model="name"
               placeholder="名称"
               :maxlength="MAX_API_KEY_NAME_LENGTH"
-              @enter="handleCreate"
+              @enter="handleCreateFromEnter"
             />
             <CButton
               variant="primary"

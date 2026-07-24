@@ -159,6 +159,14 @@ describe('CInput', () => {
     expect(wrapper.emitted('enter')).toBeTruthy();
   });
 
+  it('输入法组合输入期间按 Enter 只转发 keyup，不触发 enter', async () => {
+    const wrapper = mount(CInput);
+    await wrapper.find('input').trigger('keyup', { key: 'Enter', isComposing: true });
+
+    expect(wrapper.emitted('keyup')).toHaveLength(1);
+    expect(wrapper.emitted('enter')).toBeUndefined();
+  });
+
   it('autofocus 在 onMounted 时 focus', () => {
     const focusSpy = vi.spyOn(HTMLElement.prototype, 'focus');
     mount(CInput, { props: { autofocus: true } });

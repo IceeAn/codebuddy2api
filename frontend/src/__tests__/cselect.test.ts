@@ -605,6 +605,25 @@ describe('CSelect', () => {
     expect(wrapper.find('.c-select-panel').exists()).toBe(true);
   });
 
+  it('筛选输入处于输入法组合状态时按 Enter 不选择活动项', async () => {
+    const wrapper = mount(CSelect, {
+      props: {
+        filterable: true,
+        options: [
+          { label: '中文', value: 'zh' },
+          { label: '英文', value: 'en' },
+        ],
+      },
+    });
+    await wrapper.get('.c-select-trigger').trigger('click');
+    const filter = wrapper.get('.c-select-filter');
+    await filter.setValue('中');
+    await filter.trigger('keydown', { key: 'Enter', isComposing: true });
+
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined();
+    expect(wrapper.find('.c-select-panel').exists()).toBe(true);
+  });
+
   it('筛选选择后把焦点恢复到触发器', async () => {
     const wrapper = mount(CSelect, {
       attachTo: document.body,

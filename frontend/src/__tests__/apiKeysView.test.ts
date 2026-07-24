@@ -170,6 +170,19 @@ describe('ApiKeysView', () => {
     expect(mutationStates[0].mutate).toHaveBeenCalledOnce();
   });
 
+  it('输入法组合输入期间的 Enter 不创建 API Key', async () => {
+    const wrapper = mountView();
+    const state = (wrapper.vm.$ as any).setupState;
+    state.name = '机器人';
+
+    wrapper
+      .findComponent(CInput)
+      .vm.$emit('enter', new KeyboardEvent('keyup', { key: 'Enter', isComposing: true }));
+    await wrapper.vm.$nextTick();
+
+    expect(mutationStates[0].mutate).not.toHaveBeenCalled();
+  });
+
   it('名称限制为 80 字符并显示长度，程序化超长输入也拒绝创建', async () => {
     const wrapper = mountView();
     const state = (wrapper.vm.$ as any).setupState;

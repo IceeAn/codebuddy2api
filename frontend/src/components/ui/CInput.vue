@@ -82,7 +82,7 @@ function onBlur(): void {
 
 function onKeyup(event: KeyboardEvent): void {
   emit('keyup', event);
-  if (event.key === 'Enter') {
+  if (event.key === 'Enter' && !event.isComposing) {
     emit('enter', event);
   }
 }

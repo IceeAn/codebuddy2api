@@ -155,6 +155,7 @@ function selectActive(): void {
 }
 
 function onComboboxKeydown(event: KeyboardEvent): void {
+  if (event.isComposing) return;
   switch (event.key) {
     case 'ArrowDown':
       event.preventDefault();

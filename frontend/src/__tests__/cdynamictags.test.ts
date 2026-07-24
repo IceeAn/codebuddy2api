@@ -46,6 +46,16 @@ describe('CDynamicTags', () => {
     expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual([['新标签']]);
   });
 
+  it('输入法组合输入期间按 Enter 不添加标签', async () => {
+    const wrapper = mount(CDynamicTags, { props: { modelValue: [] } });
+    const input = wrapper.find('input');
+    await input.setValue('候选词');
+    await input.trigger('keyup', { key: 'Enter', isComposing: true });
+
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined();
+    expect((input.element as HTMLInputElement).value).toBe('候选词');
+  });
+
   it('回车时输入为空不添加', async () => {
     const wrapper = mount(CDynamicTags, { props: { modelValue: ['a'] } });
     const input = wrapper.find('input');
