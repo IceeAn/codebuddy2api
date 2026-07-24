@@ -41,15 +41,40 @@ function mountRing(value: CredentialQuota) {
 }
 
 describe('CredentialQuotaRing', () => {
-  it('在10%和30%边界按剩余额度选择颜色', () => {
+  it('在15%和33.3333%边界按剩余额度选择颜色', () => {
     expect(quotaTone(quota({ remaining_percent: 0 }))).toBe('danger');
-    expect(quotaTone(quota({ remaining_percent: 10 }))).toBe('danger');
-    expect(quotaTone(quota({ remaining_percent: 11 }))).toBe('warning');
-    expect(quotaTone(quota({ remaining_percent: 30 }))).toBe('warning');
-    expect(quotaTone(quota({ remaining_percent: 31 }))).toBe('success');
+    expect(quotaTone(quota({ remaining_percent: 15 }))).toBe('danger');
+    expect(quotaTone(quota({ remaining_percent: 15.0001 }))).toBe('warning');
+    expect(quotaTone(quota({ remaining_percent: 33.3333 }))).toBe('warning');
+    expect(quotaTone(quota({ remaining_percent: 33.3334 }))).toBe('success');
     expect(quotaTone(quota({ remaining_percent: 100 }))).toBe('success');
     expect(quotaTone(quota({ status: 'unknown', remaining_percent: null }))).toBe('muted');
     expect(quotaTone(quota({ status: 'error' }))).toBe('muted');
+  });
+
+  it('已探测额度使用对应状态的淡色底轨，未探测状态保留灰色底轨', () => {
+    const cases = [
+      { remainingPercent: 15, color: 'var(--tone-error)' },
+      { remainingPercent: 33.3333, color: 'var(--tone-warning)' },
+      { remainingPercent: 33.3334, color: 'var(--tone-success)' },
+    ];
+
+    for (const { remainingPercent, color } of cases) {
+      const track = mountRing(quota({ remaining_percent: remainingPercent })).get(
+        '.credential-quota-ring-track',
+      );
+      expect(track.attributes('stroke')).toBe(`color-mix(in oklch, ${color} 20%, var(--surface))`);
+    }
+
+    const unavailableTrack = mountRing(
+      quota({
+        quota_available: false,
+        total: 0,
+        remaining: 0,
+        remaining_percent: 0,
+      }),
+    ).get('.credential-quota-ring-track');
+    expect(unavailableTrack.attributes('stroke')).toBe('var(--border)');
   });
 
   it('渲染无内部数字的紧凑可访问圆环和估算状态', () => {

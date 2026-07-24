@@ -12,8 +12,8 @@ export function quotaTone(quota: CredentialQuota): CredentialQuotaTone {
     quota.status === 'error'
   )
     return 'muted';
-  if (percent <= 10) return 'danger';
-  if (percent <= 30) return 'warning';
+  if (percent <= 15) return 'danger';
+  if (percent <= 33.3333) return 'warning';
   return 'success';
 }
 
@@ -119,6 +119,11 @@ const color = computed(() => {
   };
   return colors[tone.value];
 });
+const trackColor = computed(() =>
+  tone.value === 'muted'
+    ? 'var(--border)'
+    : `color-mix(in oklch, ${color.value} 20%, var(--surface))`,
+);
 const ringStyle = computed(() => ({ color: color.value }));
 </script>
 
@@ -146,7 +151,15 @@ const ringStyle = computed(() => ({ color: color.value }));
       role="img"
       :aria-label="label"
     >
-      <circle cx="8" cy="8" r="6.25" fill="none" stroke="var(--border)" stroke-width="3" />
+      <circle
+        class="credential-quota-ring-track"
+        cx="8"
+        cy="8"
+        r="6.25"
+        fill="none"
+        :stroke="trackColor"
+        stroke-width="3"
+      />
       <circle
         class="credential-quota-ring-value"
         cx="8"
