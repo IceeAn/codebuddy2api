@@ -154,23 +154,57 @@ describe('ApiKeysView', () => {
     expect(mutationStates[0].mutate).toHaveBeenCalledOnce();
   });
 
-  it('mutationFn 使用当前名称，输入回车触发创建', async () => {
+  it('Enter 默认动作在 keydown 后更新名称时使用最终值创建', async () => {
     const createSpy = vi.spyOn(adminApi, 'createApiKey').mockResolvedValue({} as never);
+    const wrapper = mountView();
+    const state = (wrapper.vm.$ as any).setupState;
+    state.name = '旧名称';
+    await wrapper.vm.$nextTick();
+
+    const nameInput = wrapper.findComponent(CInput);
+    const input = nameInput.get('input');
+    await input.trigger('keydown', { key: 'Enter' });
+    await input.setValue('最终名称');
+    expect(mutationStates[0].mutate).not.toHaveBeenCalled();
+
+    await input.trigger('keyup', { key: 'Enter' });
+    await wrapper.vm.$nextTick();
+    expect(mutationStates[0].mutate).toHaveBeenCalledOnce();
+
+    await mutationOptions[0].mutationFn();
+    expect(createSpy).toHaveBeenCalledWith('最终名称');
+  });
+
+  it('组合输入确认后的 keyup 即使 isComposing 已恢复为 false，也不创建 API Key', async () => {
+    const wrapper = mountView();
+    const state = (wrapper.vm.$ as any).setupState;
+    state.name = '机器人';
+
+    const input = wrapper.findComponent(CInput).get('input');
+    await input.trigger('keydown', { key: 'Enter', isComposing: true });
+    await input.trigger('keyup', { key: 'Enter', isComposing: false });
+    await wrapper.vm.$nextTick();
+
+    expect(mutationStates[0].mutate).not.toHaveBeenCalled();
+  });
+
+  it('长按 Enter 不重复创建 API Key', async () => {
     const wrapper = mountView();
     const state = (wrapper.vm.$ as any).setupState;
     state.name = 'robot';
 
-    await mutationOptions[0].mutationFn();
-    expect(createSpy).toHaveBeenCalledWith('robot');
+    const input = wrapper.findComponent(CInput).get('input');
+    await input.trigger('keydown', { key: 'Enter', repeat: false });
+    await input.trigger('keydown', { key: 'Enter', repeat: true });
+    expect(mutationStates[0].mutate).not.toHaveBeenCalled();
 
-    const nameInput = wrapper.findComponent(CInput);
-    nameInput.vm.$emit('update:modelValue', 'robot');
-    nameInput.vm.$emit('enter', new KeyboardEvent('keyup', { key: 'Enter' }));
+    await input.trigger('keyup', { key: 'Enter' });
     await wrapper.vm.$nextTick();
+
     expect(mutationStates[0].mutate).toHaveBeenCalledOnce();
   });
 
-  it('输入法组合输入期间的 Enter 不创建 API Key', async () => {
+  it('页面处理器忽略子组件上报的组合状态 Enter', async () => {
     const wrapper = mountView();
     const state = (wrapper.vm.$ as any).setupState;
     state.name = '机器人';

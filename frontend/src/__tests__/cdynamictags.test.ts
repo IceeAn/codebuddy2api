@@ -41,25 +41,54 @@ describe('CDynamicTags', () => {
     const wrapper = mount(CDynamicTags, { props: { modelValue: [] } });
     const input = wrapper.find('input');
     await input.setValue('新标签');
+    await input.trigger('keydown', { key: 'Enter' });
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined();
+
     await input.trigger('keyup', { key: 'Enter' });
     expect(wrapper.emitted('update:modelValue')).toBeTruthy();
     expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual([['新标签']]);
   });
 
-  it('输入法组合输入期间按 Enter 不添加标签', async () => {
+  it('Enter 默认动作在 keydown 后更新输入时提交最终值', async () => {
+    const wrapper = mount(CDynamicTags, { props: { modelValue: [] } });
+    const input = wrapper.find('input');
+    await input.setValue('旧值');
+    await input.trigger('keydown', { key: 'Enter' });
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined();
+
+    await input.setValue('候选确认后的值');
+    await input.trigger('keyup', { key: 'Enter' });
+
+    expect(wrapper.emitted('update:modelValue')).toEqual([[['候选确认后的值']]]);
+  });
+
+  it('组合输入确认后的 keyup 即使 isComposing 已恢复为 false，也不添加标签', async () => {
     const wrapper = mount(CDynamicTags, { props: { modelValue: [] } });
     const input = wrapper.find('input');
     await input.setValue('候选词');
-    await input.trigger('keyup', { key: 'Enter', isComposing: true });
+    await input.trigger('keydown', { key: 'Enter', isComposing: true });
+    await input.trigger('keyup', { key: 'Enter', isComposing: false });
 
     expect(wrapper.emitted('update:modelValue')).toBeUndefined();
     expect((input.element as HTMLInputElement).value).toBe('候选词');
+  });
+
+  it('长按 Enter 时忽略自动重复的 keydown', async () => {
+    const wrapper = mount(CDynamicTags, { props: { modelValue: [] } });
+    const input = wrapper.find('input');
+    await input.setValue('待添加标签');
+    await input.trigger('keydown', { key: 'Enter', repeat: true });
+    await input.trigger('keyup', { key: 'Enter' });
+
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined();
+    expect((input.element as HTMLInputElement).value).toBe('待添加标签');
   });
 
   it('回车时输入为空不添加', async () => {
     const wrapper = mount(CDynamicTags, { props: { modelValue: ['a'] } });
     const input = wrapper.find('input');
     await input.setValue('');
+    await input.trigger('keydown', { key: 'Enter' });
     await input.trigger('keyup', { key: 'Enter' });
     expect(wrapper.emitted('update:modelValue')).toBeFalsy();
   });
@@ -68,6 +97,7 @@ describe('CDynamicTags', () => {
     const wrapper = mount(CDynamicTags, { props: { modelValue: ['a'] } });
     const input = wrapper.find('input');
     await input.setValue('   ');
+    await input.trigger('keydown', { key: 'Enter' });
     await input.trigger('keyup', { key: 'Enter' });
     expect(wrapper.emitted('update:modelValue')).toBeFalsy();
   });
@@ -76,6 +106,9 @@ describe('CDynamicTags', () => {
     const wrapper = mount(CDynamicTags, { props: { modelValue: [] } });
     const input = wrapper.find('input');
     await input.setValue('x');
+    await input.trigger('keydown', { key: 'Enter' });
+    expect((input.element as HTMLInputElement).value).toBe('x');
+
     await input.trigger('keyup', { key: 'Enter' });
     expect((input.element as HTMLInputElement).value).toBe('');
   });
@@ -131,6 +164,7 @@ describe('CDynamicTags', () => {
     const wrapper = mount(CDynamicTags, { props: { modelValue: [] } });
     const input = wrapper.find('input');
     await input.setValue('x');
+    await input.trigger('keydown', { key: 'Space' });
     await input.trigger('keyup', { key: 'Space' });
     expect(wrapper.emitted('update:modelValue')).toBeFalsy();
   });
@@ -244,6 +278,7 @@ describe('CDynamicTags', () => {
     const wrapper = mount(CDynamicTags, { props: { modelValue: ['alpha'] } });
     const input = wrapper.get('input');
     await input.setValue('  alpha  ');
+    await input.trigger('keydown', { key: 'Enter' });
     await input.trigger('keyup', { key: 'Enter' });
     expect(wrapper.emitted('update:modelValue')).toBeFalsy();
     expect((input.element as HTMLInputElement).value).toBe('');

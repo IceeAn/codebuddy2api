@@ -597,12 +597,50 @@ describe('CSelect', () => {
     await flushPromises();
     expect(scrollIntoView).toHaveBeenCalled();
     await filter.trigger('keydown', { key: 'Enter' });
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined();
+    await filter.trigger('keyup', { key: 'Enter' });
     expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual(['b']);
 
     await wrapper.get('.c-select-trigger').trigger('click');
     await wrapper.get('.c-select-filter').setValue('zzz');
     await wrapper.get('.c-select-filter').trigger('keydown', { key: 'Enter' });
+    await wrapper.get('.c-select-filter').trigger('keyup', { key: 'Enter' });
     expect(wrapper.find('.c-select-panel').exists()).toBe(true);
+  });
+
+  it('筛选输入在 Enter keydown 后更新时选择最终筛选结果', async () => {
+    const wrapper = mount(CSelect, {
+      props: {
+        filterable: true,
+        options: [
+          { label: 'Apple', value: 'apple' },
+          { label: 'Apricot', value: 'apricot' },
+          { label: 'Banana', value: 'banana' },
+        ],
+      },
+    });
+    await wrapper.get('.c-select-trigger').trigger('click');
+    const filter = wrapper.get('.c-select-filter');
+    await filter.setValue('a');
+    await filter.trigger('keydown', { key: 'ArrowDown' });
+    const enterKeydown = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true,
+    });
+    filter.element.dispatchEvent(enterKeydown);
+
+    expect(enterKeydown.defaultPrevented).toBe(false);
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined();
+    expect(wrapper.find('.c-select-panel').exists()).toBe(true);
+
+    const input = filter.element as HTMLInputElement;
+    input.value = 'ban';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.emitted('update:modelValue')).toEqual([['banana']]);
   });
 
   it('筛选输入处于输入法组合状态时按 Enter 不选择活动项', async () => {
@@ -619,9 +657,38 @@ describe('CSelect', () => {
     const filter = wrapper.get('.c-select-filter');
     await filter.setValue('中');
     await filter.trigger('keydown', { key: 'Enter', isComposing: true });
+    await filter.trigger('keyup', { key: 'Enter', isComposing: false });
 
     expect(wrapper.emitted('update:modelValue')).toBeUndefined();
     expect(wrapper.find('.c-select-panel').exists()).toBe(true);
+  });
+
+  it('触发器处于输入法组合状态时忽略 Enter', async () => {
+    const wrapper = mount(CSelect, {
+      props: { options: [{ label: '中文', value: 'zh' }] },
+    });
+
+    await wrapper.get('.c-select-trigger').trigger('keydown', { key: 'Enter', isComposing: true });
+
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined();
+    expect(wrapper.find('.c-select-panel').exists()).toBe(false);
+  });
+
+  it('筛选输入长按 Enter 时只在最终 keyup 选择一次', async () => {
+    const wrapper = mount(CSelect, {
+      props: {
+        filterable: true,
+        options: [{ label: 'Apple', value: 'apple' }],
+      },
+    });
+    await wrapper.get('.c-select-trigger').trigger('click');
+    const filter = wrapper.get('.c-select-filter');
+    await filter.trigger('keydown', { key: 'Enter', repeat: false });
+    await filter.trigger('keydown', { key: 'Enter', repeat: true });
+
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined();
+    await filter.trigger('keyup', { key: 'Enter' });
+    expect(wrapper.emitted('update:modelValue')).toEqual([['apple']]);
   });
 
   it('筛选选择后把焦点恢复到触发器', async () => {
@@ -640,6 +707,8 @@ describe('CSelect', () => {
     await trigger.trigger('click');
     const filter = wrapper.get('.c-select-filter');
     await filter.trigger('keydown', { key: 'Enter' });
+    expect(wrapper.find('.c-select-panel').exists()).toBe(true);
+    await filter.trigger('keyup', { key: 'Enter' });
     await wrapper.vm.$nextTick();
     expect(document.activeElement).toBe(trigger.element);
 
@@ -681,6 +750,7 @@ describe('CSelect', () => {
     await trigger.trigger('click');
     const filter = wrapper.get('.c-select-filter');
     await filter.trigger('keydown', { key: ' ' });
+    await filter.trigger('keyup', { key: ' ' });
     await wrapper.trigger('focusout', { relatedTarget: trigger.element });
     await wrapper.trigger('focusout', { relatedTarget: document.body });
     expect(wrapper.find('.c-select-panel').exists()).toBe(true);

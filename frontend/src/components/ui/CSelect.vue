@@ -50,6 +50,9 @@ const instanceId = useId().replace(/[^A-Za-z0-9_-]/g, '');
 const controlId = computed(() => props.id ?? formItem?.controlId ?? `c-select-${instanceId}`);
 const listboxId = `c-select-listbox-${instanceId}`;
 const activeIndex = ref(-1);
+// keydown 锁存组合与重复状态，等可能晚到的 input 更新完成后再用 keyup 选择。
+let shouldSelectFilterEnterOnKeyup = false;
+let filterQueryAtEnterKeydown = '';
 
 const PANEL_MAX_HEIGHT_PX = 288;
 const PANEL_GAP_PX = 4;
@@ -121,6 +124,8 @@ function closeDropdown(options: { restoreFocus?: boolean; validateBlur?: boolean
   open.value = false;
   query.value = '';
   activeIndex.value = -1;
+  shouldSelectFilterEnterOnKeyup = false;
+  filterQueryAtEnterKeydown = '';
   if (options.validateBlur) formItem?.onBlur();
   if (options.restoreFocus) nextTick(() => triggerRef.value?.focus());
 }
@@ -198,7 +203,25 @@ function onComboboxKeydown(event: KeyboardEvent): void {
 
 function onFilterKeydown(event: KeyboardEvent): void {
   if (event.key === ' ') return;
+  if (event.key === 'Enter') {
+    if (!event.repeat) {
+      shouldSelectFilterEnterOnKeyup = !event.isComposing;
+      filterQueryAtEnterKeydown = query.value;
+    }
+    return;
+  }
   onComboboxKeydown(event);
+}
+
+function onFilterKeyup(event: KeyboardEvent): void {
+  if (event.key !== 'Enter') return;
+  const shouldSelect = shouldSelectFilterEnterOnKeyup;
+  const queryAtKeydown = filterQueryAtEnterKeydown;
+  shouldSelectFilterEnterOnKeyup = false;
+  filterQueryAtEnterKeydown = '';
+  if (!shouldSelect) return;
+  if (query.value !== queryAtKeydown) activeIndex.value = initialActiveIndex();
+  selectActive();
 }
 
 function onFocusout(event: FocusEvent): void {
@@ -311,6 +334,7 @@ onBeforeUnmount(() => {
             class="c-select-filter c-control-focus h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-text"
             placeholder="搜索..."
             @keydown.stop="onFilterKeydown"
+            @keyup.stop="onFilterKeyup"
           />
         </div>
         <div :id="listboxId" class="c-select-options min-h-0 overflow-y-auto" role="listbox">

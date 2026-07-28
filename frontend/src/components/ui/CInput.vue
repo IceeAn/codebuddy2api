@@ -63,6 +63,8 @@ function togglePassword(): void {
 }
 
 const inputRef = ref<HTMLInputElement | HTMLTextAreaElement | null>(null);
+// keyup 时组合状态可能已重置；keydown 只锁存资格，等 input 完成后的 keyup 再触发。
+let shouldEmitEnterOnKeyup = false;
 
 onMounted(() => {
   if (props.autofocus && inputRef.value) {
@@ -80,11 +82,18 @@ function onBlur(): void {
   formItem?.onBlur();
 }
 
+function onKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Enter' && !event.repeat) {
+    shouldEmitEnterOnKeyup = !event.isComposing;
+  }
+}
+
 function onKeyup(event: KeyboardEvent): void {
   emit('keyup', event);
-  if (event.key === 'Enter' && !event.isComposing) {
-    emit('enter', event);
-  }
+  if (event.key !== 'Enter') return;
+  const shouldEmitEnter = shouldEmitEnterOnKeyup;
+  shouldEmitEnterOnKeyup = false;
+  if (shouldEmitEnter) emit('enter', event);
 }
 
 const sizeClasses: Record<InputSize, string> = {
@@ -121,6 +130,7 @@ const textareaStyle = computed(() => {
       :style="textareaStyle"
       @input="onInput"
       @blur="onBlur"
+      @keydown="onKeydown"
       @keyup="onKeyup"
     />
     <input
@@ -145,6 +155,7 @@ const textareaStyle = computed(() => {
       ]"
       @input="onInput"
       @blur="onBlur"
+      @keydown="onKeydown"
       @keyup="onKeyup"
     />
     <button

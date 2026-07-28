@@ -153,17 +153,45 @@ describe('CInput', () => {
     expect(wrapper.emitted('keyup')).toBeTruthy();
   });
 
-  it('enter 事件 emit（keyup.enter）', async () => {
+  it('enter 事件在 keydown 后的 input 更新完成后于 keyup 阶段 emit', async () => {
     const wrapper = mount(CInput);
-    await wrapper.find('input').trigger('keyup', { key: 'Enter' });
+    const input = wrapper.find('input');
+    await input.trigger('keydown', { key: 'Enter' });
+    expect(wrapper.emitted('enter')).toBeUndefined();
+
+    await input.setValue('候选确认后的值');
+    expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual(['候选确认后的值']);
+    expect(wrapper.emitted('enter')).toBeUndefined();
+
+    await input.trigger('keyup', { key: 'Enter' });
     expect(wrapper.emitted('enter')).toBeTruthy();
+    expect(wrapper.emitted<KeyboardEvent[]>('enter')![0][0].type).toBe('keyup');
   });
 
-  it('输入法组合输入期间按 Enter 只转发 keyup，不触发 enter', async () => {
+  it('组合输入确认后的 keyup 即使 isComposing 已恢复为 false，也只转发而不触发 enter', async () => {
     const wrapper = mount(CInput);
-    await wrapper.find('input').trigger('keyup', { key: 'Enter', isComposing: true });
+    const input = wrapper.find('input');
+    await input.trigger('keydown', { key: 'Enter', isComposing: true });
+    await input.trigger('keyup', { key: 'Enter', isComposing: false });
 
     expect(wrapper.emitted('keyup')).toHaveLength(1);
+    expect(wrapper.emitted('enter')).toBeUndefined();
+  });
+
+  it('长按 Enter 时忽略自动重复的 keydown', async () => {
+    const wrapper = mount(CInput);
+    const input = wrapper.find('input');
+    await input.trigger('keydown', { key: 'Enter', repeat: false });
+    await input.trigger('keydown', { key: 'Enter', repeat: true });
+    expect(wrapper.emitted('enter')).toBeUndefined();
+
+    await input.trigger('keyup', { key: 'Enter' });
+    expect(wrapper.emitted('enter')).toHaveLength(1);
+  });
+
+  it('非 Enter 的 keydown 不触发 enter', async () => {
+    const wrapper = mount(CInput);
+    await wrapper.find('input').trigger('keydown', { key: 'a' });
     expect(wrapper.emitted('enter')).toBeUndefined();
   });
 

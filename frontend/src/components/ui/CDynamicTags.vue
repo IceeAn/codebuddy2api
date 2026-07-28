@@ -18,6 +18,8 @@ const emit = defineEmits<{
 }>();
 
 const inputValue = ref('');
+// keydown 只锁存资格，避免 keyup 的组合状态重置，同时让可能的 input 更新先完成。
+let shouldCommitEnterOnKeyup = false;
 
 function appendUniqueTags(candidates: string[]): void {
   const seen = new Set(props.modelValue);
@@ -58,18 +60,21 @@ function commit(): void {
   appendUniqueTags([trimmed]);
 }
 
-function onKeyup(event: KeyboardEvent): void {
-  if (event.key === 'Enter' && !event.isComposing) {
-    commit();
-  }
-}
-
 function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Backspace' && inputValue.value === '') {
+  if (event.key === 'Enter') {
+    if (!event.repeat) shouldCommitEnterOnKeyup = !event.isComposing;
+  } else if (event.key === 'Backspace' && inputValue.value === '') {
     const next = [...props.modelValue];
     next.pop();
     emit('update:modelValue', next);
   }
+}
+
+function onKeyup(event: KeyboardEvent): void {
+  if (event.key !== 'Enter') return;
+  const shouldCommit = shouldCommitEnterOnKeyup;
+  shouldCommitEnterOnKeyup = false;
+  if (shouldCommit) commit();
 }
 
 function removeAt(index: number): void {
@@ -97,8 +102,8 @@ function removeAt(index: number): void {
       :placeholder="placeholder"
       class="h-[22px] w-[5rem] rounded-sm bg-transparent px-1 text-xs text-text outline-none placeholder:text-muted/60"
       @input="onInput"
-      @keyup="onKeyup"
       @keydown="onKeydown"
+      @keyup="onKeyup"
       @blur="commit"
     />
   </div>
