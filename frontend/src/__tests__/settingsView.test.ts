@@ -1,5 +1,5 @@
 import { defineComponent, h } from 'vue';
-import { mount } from '@vue/test-utils';
+import { flushPromises, mount } from '@vue/test-utils';
 import { ref, type Ref } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
@@ -271,27 +271,29 @@ const TooltipStub = defineComponent({
 
 const mountedWrappers: ReturnType<typeof mount>[] = [];
 
-function mountView({ useRealNumberForm = false } = {}) {
+function mountView({ useRealNumberForm = false, useRealHelpInteraction = false } = {}) {
   mutationOptions.length = 0;
   mutationStates.length = 0;
+  const useRealForm = useRealNumberForm || useRealHelpInteraction;
   const stubs = {
     CCard: CardStub,
     CAlert: AlertStub,
     CSpin: SpinStub,
-    CForm: useRealNumberForm ? false : FormStub,
-    CFormItem: useRealNumberForm ? false : FormItemStub,
+    CForm: useRealForm ? false : FormStub,
+    CFormItem: useRealForm ? false : FormItemStub,
     CSelect: SelectStub,
     CSwitch: SwitchStub,
     CInputNumber: useRealNumberForm ? false : InputNumberStub,
     CDynamicTags: DynamicTagsStub,
-    CInput: InputStub,
+    CInput: useRealHelpInteraction ? false : InputStub,
     CButton: ButtonStub,
-    CTooltip: TooltipStub,
+    CTooltip: useRealHelpInteraction ? false : TooltipStub,
     RefreshButton: RefreshButtonStub,
     Save: true,
     CircleHelp: true,
   };
   const wrapper = mount(SettingsView, {
+    ...(useRealHelpInteraction ? { attachTo: document.body } : {}),
     global: {
       stubs,
     },
@@ -411,6 +413,26 @@ describe('SettingsView', () => {
     expect(labelText.classes()).toContain('min-w-0');
     expect(labelText.classes()).toContain('whitespace-normal');
     expect(labelText.classes()).not.toContain('truncate');
+  });
+
+  it('点击标签内的问号时显示说明且不激活对应输入框', async () => {
+    query.data.value = {
+      settings: { described: 'value' },
+      fields: [{ key: 'described', label: '有说明', type: 'text', description: '这里是详细说明' }],
+    };
+    const wrapper = mountView({ useRealHelpInteraction: true });
+    const inputClick = vi.fn<() => void>();
+    wrapper.get('input').element.addEventListener('click', inputClick);
+    const helpClick = new MouseEvent('click', { bubbles: true, cancelable: true });
+
+    const clickResult = wrapper.get('.setting-help-trigger').element.dispatchEvent(helpClick);
+    await flushPromises();
+
+    expect(clickResult).toBe(false);
+    expect(inputClick).not.toHaveBeenCalled();
+    expect(document.body.querySelector('.c-tooltip-popover')?.textContent).toContain(
+      '这里是详细说明',
+    );
   });
 
   it('保存成功后提示并刷新设置与状态', async () => {
