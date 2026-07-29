@@ -149,6 +149,7 @@ class _AccountGate:
     active: Optional[str] = None
     manual_waiter: bool = False
     auto_waiter: bool = False
+    quota_refresh_barrier: Optional[asyncio.Future] = None
 
 
 class CredentialCheckinManager:
@@ -276,8 +277,11 @@ class CredentialCheckinManager:
             gate.active = None
             gate.condition.notify_all()
 
-    def _refresh_account_quotas(self, username: str, manager, account_key: str) -> None:
+    def _refresh_account_quotas(
+            self, username: str, manager, account_key: str,
+    ) -> list[asyncio.Task]:
         endpoint = get_codebuddy_api_endpoint()
+        tasks = []
         for info in manager.get_credentials_info():
             credential_id = info.get("credential_id")
             if not credential_id:
@@ -292,9 +296,12 @@ class CredentialCheckinManager:
             if related_account_key != account_key:
                 continue
             self._quota_manager.invalidate_credential(username, credential_id)
-            self._quota_manager.schedule_probe_if_running(
+            task = self._quota_manager.schedule_probe_if_running(
                 username, manager, credential_id,
             )
+            if task is not None:
+                tasks.append(task)
+        return tasks
 
     async def _perform_checkin(
             self,
@@ -385,6 +392,9 @@ class CredentialCheckinManager:
         if not claimed:
             record = self._today_record(username, account_key)
             return self._public_detail(record) if record is not None else None
+        refresh_barrier = None
+        deferred_conflict = None
+        result = None
         try:
             current_credential, current_account_key = self._eligible_snapshot(
                 manager, credential_id,
@@ -394,18 +404,34 @@ class CredentialCheckinManager:
             existing = self._today_record(username, account_key)
             if existing is not None and existing["success"]:
                 if source == "manual":
-                    raise CredentialCheckinConflict("already_checked_in")
-                return self._public_detail(existing)
-            if source == "auto" and not self._auto_enabled_provider(username):
-                return None
-            result = await self._perform_checkin(
-                username, account_key, current_credential,
-            )
-            if result["success"]:
-                self._refresh_account_quotas(username, manager, account_key)
-            return result
+                    refresh_barrier = gate.quota_refresh_barrier
+                    deferred_conflict = CredentialCheckinConflict(
+                        "already_checked_in",
+                    )
+                else:
+                    result = self._public_detail(existing)
+            elif source == "auto" and not self._auto_enabled_provider(username):
+                result = None
+            else:
+                result = await self._perform_checkin(
+                    username, account_key, current_credential,
+                )
+                if result["code"] == 0 and result.get("credit") is not None:
+                    refresh_tasks = self._refresh_account_quotas(
+                        username, manager, account_key,
+                    )
+                    if refresh_tasks:
+                        refresh_barrier = asyncio.gather(
+                            *refresh_tasks, return_exceptions=True,
+                        )
+                        gate.quota_refresh_barrier = refresh_barrier
         finally:
             await self._release(gate)
+        if source == "manual" and refresh_barrier is not None:
+            await asyncio.shield(refresh_barrier)
+        if deferred_conflict is not None:
+            raise deferred_conflict
+        return result
 
     async def manual_checkin(self, username: str, manager, credential_id: str) -> Dict[str, Any]:
         return await self._checkin("manual", username, manager, credential_id)

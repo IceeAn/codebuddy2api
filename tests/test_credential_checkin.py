@@ -239,14 +239,63 @@ class CredentialCheckinManagerTests(ConfigIsolationMixin, unittest.IsolatedAsync
             for info in self.token_manager.get_credentials_info()
             if info.get("user_id") in {"upstream-user", "alias"}
         ]
+        self.assertEqual(len(related_ids), 2)
+        probe_started = {
+            credential_id: asyncio.Event()
+            for credential_id in related_ids
+        }
+        probe_release = {
+            credential_id: asyncio.Event()
+            for credential_id in related_ids
+        }
+        probe_tasks = {}
+
+        async def probe(credential_id):
+            probe_started[credential_id].set()
+            await probe_release[credential_id].wait()
+
+        def schedule_probe(_username, _manager, credential_id):
+            task = asyncio.create_task(probe(credential_id))
+            probe_tasks[credential_id] = task
+            return task
+
         quota_manager = mock.Mock()
+        quota_manager.schedule_probe_if_running.side_effect = schedule_probe
         manager, _client = self.manager(
             [FakeResponse({"code": 0, "msg": "OK", "data": {"credit": 100}})],
             quota_manager=quota_manager,
         )
 
-        await manager.manual_checkin("alice", self.token_manager, self.credential_id)
+        checkin = asyncio.create_task(
+            manager.manual_checkin("alice", self.token_manager, self.credential_id)
+        )
+        try:
+            for credential_id in related_ids:
+                await asyncio.wait_for(probe_started[credential_id].wait(), timeout=1)
+            self.assertFalse(checkin.done())
 
+            credential = self.token_manager.get_credential_by_id(self.credential_id)
+            account_key = account_key_for_credential(
+                credential, "https://copilot.tencent.com",
+            )
+            gate = manager._gates[manager._gate_key("alice", account_key)]
+            self.assertIsNone(gate.active)
+
+            probe_release[related_ids[0]].set()
+            await probe_tasks[related_ids[0]]
+            await asyncio.sleep(0)
+            self.assertFalse(checkin.done())
+
+            probe_release[related_ids[1]].set()
+            result = await checkin
+        finally:
+            for event in probe_release.values():
+                event.set()
+            await asyncio.gather(
+                checkin, *tuple(probe_tasks.values()), return_exceptions=True,
+            )
+
+        self.assertTrue(result["success"])
         self.assertEqual(
             quota_manager.invalidate_credential.call_args_list,
             [mock.call("alice", credential_id) for credential_id in related_ids],
@@ -258,6 +307,76 @@ class CredentialCheckinManagerTests(ConfigIsolationMixin, unittest.IsolatedAsync
                 for credential_id in related_ids
             ],
         )
+
+    async def test_automatic_checkin_does_not_wait_for_quota_refresh(self):
+        probe_started = asyncio.Event()
+        probe_release = asyncio.Event()
+
+        async def probe():
+            probe_started.set()
+            await probe_release.wait()
+
+        quota_manager = mock.Mock()
+        probe_task = None
+
+        def schedule_probe(*_args):
+            nonlocal probe_task
+            probe_task = asyncio.create_task(probe())
+            return probe_task
+
+        quota_manager.schedule_probe_if_running.side_effect = schedule_probe
+        manager, _client = self.manager(
+            [FakeResponse({"code": 0, "msg": "OK", "data": {"credit": 100}})],
+            quota_manager=quota_manager,
+        )
+
+        result = await manager.automatic_checkin(
+            "alice", self.token_manager, self.credential_id,
+        )
+        await asyncio.wait_for(probe_started.wait(), timeout=1)
+        try:
+            self.assertTrue(result["success"])
+            self.assertFalse(probe_task.done())
+        finally:
+            probe_release.set()
+            await probe_task
+
+    async def test_quota_refresh_requires_code_zero_and_valid_credit(self):
+        responses = [
+            FakeResponse({"code": 7, "msg": "failed", "data": {"credit": 100}}),
+            FakeResponse({"code": 1001, "msg": "今天已签到，请勿重复"}),
+            FakeResponse({"code": 0, "msg": "OK", "data": None}),
+            FakeResponse({"code": 0, "msg": "OK", "data": {"credit": True}}),
+            FakeResponse({"code": 0, "msg": "OK", "data": {"credit": float("nan")}}),
+            FakeResponse({"code": 0, "msg": "OK", "data": {"credit": "100"}}),
+        ]
+        credential_ids = []
+        for index in range(len(responses)):
+            before_ids = {
+                info["credential_id"]
+                for info in self.token_manager.get_credentials_info()
+            }
+            self.assertTrue(self.token_manager.add_credential_with_data(
+                {
+                    "bearer_token": f"token-{index}",
+                    "user_id": f"upstream-user-{index}",
+                },
+                f"invalid-credit-{index}.json",
+            ))
+            credential_ids.append(next(
+                info["credential_id"]
+                for info in self.token_manager.get_credentials_info()
+                if info["credential_id"] not in before_ids
+            ))
+
+        quota_manager = mock.Mock()
+        manager, _client = self.manager(responses, quota_manager=quota_manager)
+
+        for credential_id in credential_ids:
+            await manager.manual_checkin("alice", self.token_manager, credential_id)
+
+        quota_manager.invalidate_credential.assert_not_called()
+        quota_manager.schedule_probe_if_running.assert_not_called()
 
     async def test_failed_checkin_does_not_refresh_quota(self):
         quota_manager = mock.Mock()
@@ -293,9 +412,14 @@ class CredentialCheckinManagerTests(ConfigIsolationMixin, unittest.IsolatedAsync
                 0,
             ),
         }.get
+        scheduled_task = mock.sentinel.scheduled_task
+        quota_manager.schedule_probe_if_running.return_value = scheduled_task
 
-        manager._refresh_account_quotas("alice", candidate_manager, account_key)
+        tasks = manager._refresh_account_quotas(
+            "alice", candidate_manager, account_key,
+        )
 
+        self.assertEqual(tasks, [scheduled_task])
         quota_manager.invalidate_credential.assert_called_once_with(
             "alice", self.credential_id,
         )
@@ -434,6 +558,76 @@ class CredentialCheckinManagerTests(ConfigIsolationMixin, unittest.IsolatedAsync
         release.set()
         await auto
         self.assertEqual((await manual)["code"], 7)
+
+    async def test_manual_waiting_for_successful_auto_waits_for_its_quota_refresh(self):
+        checkin_started = asyncio.Event()
+        checkin_release = asyncio.Event()
+        probe_started = asyncio.Event()
+        probe_release = asyncio.Event()
+
+        class BlockingClient:
+            async def post(_self, _url, **_kwargs):
+                checkin_started.set()
+                await checkin_release.wait()
+                return FakeResponse({
+                    "code": 0,
+                    "msg": "OK",
+                    "data": {"credit": 1},
+                })
+
+        probe_task = None
+
+        async def probe():
+            probe_started.set()
+            await probe_release.wait()
+
+        def schedule_probe(*_args):
+            nonlocal probe_task
+            probe_task = asyncio.create_task(probe())
+            return probe_task
+
+        quota_manager = mock.Mock()
+        quota_manager.schedule_probe_if_running.side_effect = schedule_probe
+        manager, _client = self.manager(
+            [],
+            http_client_factory=BlockingClient,
+            quota_manager=quota_manager,
+        )
+        automatic = asyncio.create_task(manager.automatic_checkin(
+            "alice", self.token_manager, self.credential_id,
+        ))
+        await checkin_started.wait()
+        manual = asyncio.create_task(manager.manual_checkin(
+            "alice", self.token_manager, self.credential_id,
+        ))
+        await asyncio.sleep(0)
+
+        try:
+            checkin_release.set()
+            automatic_result = await automatic
+            await asyncio.wait_for(probe_started.wait(), timeout=1)
+
+            self.assertTrue(automatic_result["success"])
+            self.assertFalse(manual.done())
+            credential = self.token_manager.get_credential_by_id(self.credential_id)
+            account_key = account_key_for_credential(
+                credential, "https://copilot.tencent.com",
+            )
+            gate = manager._gates[manager._gate_key("alice", account_key)]
+            self.assertIsNone(gate.active)
+
+            probe_release.set()
+            await probe_task
+            with self.assertRaises(CredentialCheckinConflict) as conflict:
+                await manual
+            self.assertEqual(str(conflict.exception), "already_checked_in")
+        finally:
+            checkin_release.set()
+            probe_release.set()
+            tasks = [automatic, manual]
+            if probe_task is not None:
+                tasks.append(probe_task)
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def test_auto_waits_for_manual_then_skips_after_success(self):
         started = asyncio.Event()

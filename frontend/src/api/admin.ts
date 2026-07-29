@@ -28,8 +28,8 @@ import { buildStatsSearchParams } from '../utils/stats';
 // 覆盖后端串行执行的 30 秒模型查询与 300 秒聊天请求，并预留响应处理时间。
 const CREDENTIAL_TEST_TIMEOUT_MS = 335_000;
 const ACCOUNT_SWITCH_TIMEOUT_MS = 70_000;
-// 手动签到可能先等待一轮自动签到，再执行自身的连接池、连接和读取阶段。
-const DAILY_CHECKIN_TIMEOUT_MS = 225_000;
+// 手动签到可能依次等待自动签到、自身签到与随后并发执行的一轮额度探测。
+const DAILY_CHECKIN_TIMEOUT_MS = 335_000;
 const OAUTH_START_TIMEOUT_MS = 35_000;
 const OAUTH_POLL_TIMEOUT_MS = 100_000;
 const MODEL_LIST_TIMEOUT_MS = 35_000;
