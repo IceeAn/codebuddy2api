@@ -356,8 +356,8 @@ class SQLiteDatabaseTests(unittest.TestCase):
             connection.set_authorizer(deny_event_backfill)
             with self.assertRaises(sqlite3.DatabaseError):
                 SQLiteDatabase(self.database_path)._initialize_schema(connection)
-            connection.set_authorizer(None)
 
+        with sqlite3.connect(self.database_path) as connection:
             version = connection.execute("PRAGMA user_version").fetchone()[0]
             columns = {
                 row[1] for row in connection.execute("PRAGMA table_info(usage_events)")
@@ -395,8 +395,8 @@ class SQLiteDatabaseTests(unittest.TestCase):
             connection.set_authorizer(deny_hourly_table)
             with self.assertRaises(sqlite3.DatabaseError):
                 SQLiteDatabase(self.database_path)._initialize_schema(connection)
-            connection.set_authorizer(None)
 
+        with sqlite3.connect(self.database_path) as connection:
             version = connection.execute("PRAGMA user_version").fetchone()[0]
             value = connection.execute(
                 "SELECT value_json FROM user_settings WHERE username = 'alice'"
@@ -438,8 +438,8 @@ class SQLiteDatabaseTests(unittest.TestCase):
             connection.set_authorizer(deny_user_settings_table)
             with self.assertRaises(sqlite3.DatabaseError):
                 SQLiteDatabase(self.database_path)._initialize_schema(connection)
-            connection.set_authorizer(None)
 
+        with sqlite3.connect(self.database_path) as connection:
             objects = set(connection.execute(
                 "SELECT type, name FROM sqlite_master WHERE name IN (?, ?)",
                 ("api_keys", "idx_api_keys_username"),
