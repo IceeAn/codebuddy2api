@@ -113,7 +113,7 @@ class CredentialRefreshManager:
             try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=self._interval_seconds)
                 return
-            except TimeoutError:
+            except asyncio.TimeoutError:
                 pass
 
     @staticmethod

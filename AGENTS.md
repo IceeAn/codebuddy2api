@@ -39,6 +39,7 @@ docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:
 
 - **测试驱动开发**：开发流程须完全遵循 TDD，保证单元测试100%覆盖、且尽可能覆盖真实用例。
 - **后端测试**：使用标准库 `unittest` 与 `coverage.py`；`venv/bin/python3 -m coverage report` 对 `config.py`、`release_runtime_lock.py`、`web.py` 和 `src/` 生产代码强制执行行/分支综合 100% 覆盖率门槛。
+- **Python 异步超时兼容**：项目后端同时支持 Python 3.10 和 3.12；捕获 `asyncio.wait_for()` 超时必须使用 `asyncio.TimeoutError`，不能使用内置 `TimeoutError`，因为 Python 3.10 中两者并非别名。模拟该路径的测试也必须抛出 `asyncio.TimeoutError`，并应避免被新版本的别名关系掩盖兼容性问题。
 - **前端测试**：Vitest 使用 jsdom 与 Vue Test Utils；`pnpm run test:coverage` 对 `src/` 生产代码强制执行 statements、branches、functions、lines 四项 100% 覆盖率门槛。
 - **前端修改后流程**：前端修改后依次执行格式检查、lint、构建和覆盖率测试；格式检查失败时先执行 `pnpm run format`。`pnpm run build` 已包含类型检查和生产构建。
 - **保证需求的正确性**：若我需要你实现的需求存在不明确的部分，请直接提问；若工作过程中出现重要的选择，停下来说明并等待回复。尽可能地不要自行推测意图和需求。
@@ -73,13 +74,20 @@ docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:
 - `CODEBUDDY_ALLOWED_API_ENDPOINTS` 是硬白名单：为空、含非法 URL 或当前端点不在其中时必须在启动阶段失败，禁止自动补入或回退。`X-Domain` 只允许 `[A-Za-z0-9.-]+`。
 - 用户认证必须对不存在或无效用户执行虚拟密码哈希，避免时序枚举。密码文件只接受规范的 `pbkdf2_sha256$迭代数$盐$摘要`：默认迭代数为 600000，只允许 600000 至 1000000；盐固定 16 字节，摘要固定 32 字节，Base64URL 必须规范且无填充。修改格式时必须同步所有读写入口。
 
-## CodeBuddy 与 OpenAI 兼容层
+## CodeBuddy 与下游协议兼容层
 
 - CodeBuddy 上游只支持流式响应。即使客户端请求非流式，也必须用 `client.stream()` 增量消费 SSE，再由 `StreamResponseAggregator` 聚合；禁止先缓冲完整上游响应体。`RequestProcessor.prepare_request()` 必须强制注入 `stream=True`。
 - 上游响应采用宽松事件提取，不在事件模型层承担完整协议验证。流式与非流式路径共享首个 choice 语义；`OpenAIStreamNormalizer` 负责拆分混合的 reasoning/content delta，并在首块补 `role: assistant`。
 - 上游工具调用 ID 原样透传，只为 OpenAI 流式兼容补充缺失的 `index`，不要重新生成 ID。
 - 强制推理模型会覆盖为最大推理并启用 thinking，但 `clear_thinking` 等其他客户端 `thinking` 子项必须继续透传，不能用新对象整体替换；其他模型默认开启 thinking，但客户端显式禁用时必须尊重。`CODEBUDDY_FORCED_TEMPERATURE` 非空时覆盖客户端值；模型命名空间是否剥离由 `CODEBUDDY_STRIP_MODEL_NAMESPACE` 控制。修改请求转换时注意这些优先级。
 - 全局上游 HTTP 客户端保持 `trust_env=False`，避免环境中的 SOCKS 代理在缺少 `socksio` 时破坏服务启动。
+- Anthropic 兼容面是 `/anthropic/v1/*` 下的 Messages wire protocol，不是 Anthropic 原生模型或 provider；不得增加 root `/v1/*`、伪造 Anthropic 计费/限流/cache 字段或把运行时改成多 provider 网关。模型、token usage 和账单语义始终来自 CodeBuddy。
+- Anthropic 第一版只承诺文本、流式、thinking、自定义客户端工具和模型发现。请求转换以兼容为先：`anthropic-beta`、`output_config` 和未知字段必须接受并忽略，不能转发或记录；空 `tool_result` 必须转换为空 tool message；非空 `stop_sequences`、媒体、服务端工具、Anthropic 原生 thinking signature 等无法无损转换的语义仍需失败。`messages/count_tokens` 固定 404 以触发客户端本地回退。
+- CodeBuddy 原始 SSE 必须只解析一次为 `codebuddy_events` 中的协议中立事件，再由 OpenAI/Anthropic 下游适配器消费。OpenAI 继续以 `[DONE]` 结束；Anthropic 必须按 Messages SSE 状态机以 `message_stop` 结束且不发送 `[DONE]`。Anthropic 流式工具调用只缓冲连续工具组，在 text/thinking 边界或流结束时完整校验并按上游 index 输出，不能按元数据到达顺序改变工具顺序。
+- Anthropic 响应 usage 以 CodeBuddy 观测为准；正常完成缺失 usage 仍是协议错误，但 `content_filter` 已知可能不带 usage，为避免 Claude Code 无限重试可返回零 usage，且必须在文档中声明该值不是实际上游 token。
+- Anthropic 外部路由接受 `x-api-key` 或 Bearer API Key，两者并存时必须一致且只验证一次摘要；只接受 `anthropic-version: 2023-06-01`。playground 仅接受会话 Cookie并隐藏于 OpenAPI。不得记录 metadata、beta、被忽略字段、Claude Code session/agent ID、thinking/tool 内容或认证头。
+- `anthropic/codebuddy/` 是供 Claude Code 模型列表发现使用的网关保留合成前缀。Messages 请求接受真实 ID 与合成 ID，但不查询模型列表，也不校验模型是否存在或可用；合成 ID 必须先严格匹配并移除该前缀一次，空后缀必须失败。剩余模型名再进入与 OpenAI 兼容接口相同的请求策略，由 `CODEBUDDY_STRIP_MODEL_NAMESPACE` 决定按最后一个 `/` 截断或原样保留，最终交由上游判断，不能回退到列表首项。
+- 聊天请求正常路径只在准备成功后实际选择一次凭证。请求准备发生服务端异常时才补做一次不读取轮换设置、不推进轮换状态的凭证快照检查：明确无凭证则返回 401，检查成功或无法判断则保留原准备异常；协议校验 4xx 不得被凭证状态覆盖。
 
 ## OAuth、凭证与模型缓存
 

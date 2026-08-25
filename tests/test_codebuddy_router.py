@@ -11,6 +11,7 @@ from src.openai_router import (
     list_v1_models,
 )
 from src.request_processor import PreparedCodeBuddyRequest
+from src.stream_service import UpstreamAPIError
 
 
 class FakeChatRequest:
@@ -167,6 +168,7 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
             response_model="glm-5.2",
         )
         service.handle_non_stream_response.assert_not_awaited()
+        token_manager.has_usable_credential.assert_not_called()
 
     async def test_chat_completion_forwards_non_stream_request(self):
         request_body = {
@@ -374,6 +376,171 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
                     _user=self.user,
                 )
         self.assertEqual(without_stats.exception.status_code, 401)
+
+    async def test_prepare_failure_checks_credentials_only_on_server_errors(self):
+        request_body = {
+            "model": "model",
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+        cases = [
+            (False, None, 401, "no_credential"),
+            (True, None, 500, "internal_error"),
+            (None, RuntimeError("credential check failed"), 500, "internal_error"),
+        ]
+        for available, check_error, status, stats_error in cases:
+            with self.subTest(available=available, check_error=check_error):
+                stats = mock.Mock()
+                manager = mock.Mock()
+                if check_error is None:
+                    manager.has_usable_credential.return_value = available
+                else:
+                    manager.has_usable_credential.side_effect = check_error
+                with (
+                    mock.patch(
+                        "src.openai_router.RequestProcessor.prepare_request",
+                        side_effect=RuntimeError("prepare failed"),
+                    ),
+                    mock.patch(
+                        "src.openai_router.get_token_manager_for_user",
+                        return_value=manager,
+                    ),
+                ):
+                    with self.assertRaises(HTTPException) as raised:
+                        await chat_completions(
+                            FakeChatRequest(request_body),
+                            _user=self.user,
+                            stats_context=stats,
+                        )
+
+                self.assertEqual(raised.exception.status_code, status)
+                if check_error is not None:
+                    self.assertIn("prepare failed", raised.exception.detail)
+                    self.assertNotIn("credential check failed", raised.exception.detail)
+                manager.has_usable_credential.assert_called_once_with()
+                manager.select_next_credential.assert_not_called()
+                stats.mark_failure.assert_called_once_with(stats_error, status)
+
+        for available, status, stats_error in (
+            (False, 401, "no_credential"),
+            (True, 503, "internal_error"),
+        ):
+            with self.subTest(http_error_available=available):
+                stats = mock.Mock()
+                manager = mock.Mock()
+                manager.has_usable_credential.return_value = available
+                with (
+                    mock.patch(
+                        "src.openai_router.RequestProcessor.prepare_request",
+                        side_effect=HTTPException(status_code=503, detail="settings unavailable"),
+                    ),
+                    mock.patch(
+                        "src.openai_router.get_token_manager_for_user",
+                        return_value=manager,
+                    ),
+                ):
+                    with self.assertRaises(HTTPException) as raised:
+                        await chat_completions(
+                            FakeChatRequest(request_body),
+                            _user=self.user,
+                            stats_context=stats,
+                        )
+
+                self.assertEqual(raised.exception.status_code, status)
+                manager.has_usable_credential.assert_called_once_with()
+                stats.mark_failure.assert_called_once_with(stats_error, status)
+
+        manager = mock.Mock()
+        stats = mock.Mock()
+        with (
+            mock.patch(
+                "src.openai_router.RequestProcessor.prepare_request",
+                side_effect=HTTPException(status_code=422, detail="policy rejected"),
+            ),
+            mock.patch(
+                "src.openai_router.get_token_manager_for_user",
+                return_value=manager,
+            ),
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                await chat_completions(
+                    FakeChatRequest(request_body),
+                    _user=self.user,
+                    stats_context=stats,
+                )
+        self.assertEqual(raised.exception.status_code, 422)
+        manager.has_usable_credential.assert_not_called()
+        stats.mark_failure.assert_called_once_with("validation_error", 422)
+
+        for available, prepare_error, expected_status in (
+            (False, HTTPException(status_code=503, detail="settings unavailable"), 401),
+            (True, HTTPException(status_code=503, detail="settings unavailable"), 503),
+            (False, HTTPException(status_code=422, detail="policy rejected"), 422),
+        ):
+            with self.subTest(
+                no_stats_available=available,
+                prepare_status=prepare_error.status_code,
+            ):
+                manager = mock.Mock()
+                manager.has_usable_credential.return_value = available
+                with (
+                    mock.patch(
+                        "src.openai_router.RequestProcessor.prepare_request",
+                        side_effect=prepare_error,
+                    ),
+                    mock.patch(
+                        "src.openai_router.get_token_manager_for_user",
+                        return_value=manager,
+                    ),
+                ):
+                    with self.assertRaises(HTTPException) as raised:
+                        await chat_completions(
+                            FakeChatRequest(request_body),
+                            _user=self.user,
+                        )
+                self.assertEqual(raised.exception.status_code, expected_status)
+
+        manager = mock.Mock()
+        manager.has_usable_credential.return_value = False
+        with (
+            mock.patch(
+                "src.openai_router.RequestProcessor.prepare_request",
+                side_effect=RuntimeError("prepare failed"),
+            ),
+            mock.patch(
+                "src.openai_router.get_token_manager_for_user",
+                return_value=manager,
+            ),
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                await chat_completions(
+                    FakeChatRequest(request_body),
+                    _user=self.user,
+                )
+        self.assertEqual(raised.exception.status_code, 401)
+
+    async def test_chat_completion_does_not_classify_upstream_401_as_missing_credential(self):
+        stats_context = mock.Mock()
+        upstream_error = UpstreamAPIError(
+            status_code=401,
+            message="upstream rejected credential",
+            error_type="authentication_error",
+            upstream_status_code=401,
+        )
+        with mock.patch(
+            "src.openai_router.execute_codebuddy_chat",
+            new=mock.AsyncMock(side_effect=upstream_error),
+        ):
+            with self.assertRaises(UpstreamAPIError):
+                await chat_completions(
+                    FakeChatRequest({
+                        "model": "model",
+                        "messages": [{"role": "user", "content": "hello"}],
+                    }),
+                    _user=self.user,
+                    stats_context=stats_context,
+                )
+
+        stats_context.mark_failure.assert_not_called()
 
     async def test_chat_completion_succeeds_without_optional_stats_context(self):
         request_body = {

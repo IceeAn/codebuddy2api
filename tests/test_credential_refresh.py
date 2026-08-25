@@ -226,11 +226,16 @@ class CredentialRefreshManagerTests(ConfigIsolationMixin, unittest.IsolatedAsync
             wait_count += 1
             awaitable.close()
             if wait_count == 1:
-                raise TimeoutError
+                raise asyncio.TimeoutError
 
         with (
             self.assertLogs("src.credential_refresh", level="ERROR"),
             mock.patch("src.credential_refresh.asyncio.wait_for", side_effect=immediate_wait),
+            mock.patch(
+                "src.credential_refresh.TimeoutError",
+                new=type("DifferentBuiltinTimeout", (Exception,), {}),
+                create=True,
+            ),
         ):
             await refresher._run()
         self.assertEqual(scan.await_count, 2)

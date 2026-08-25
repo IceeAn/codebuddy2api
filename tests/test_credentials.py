@@ -438,6 +438,19 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
             with mock.patch.object(reloaded.store, "load_manager_state", side_effect=RuntimeError("bad state")):
                 reloaded.load_state()
 
+    def test_registry_cold_initialization_does_not_read_rotation_setting(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config._config_cache["CODEBUDDY_DATA_DIR"] = tmp_dir
+            manager = CodeBuddyTokenManagerRegistry().for_username("alice")
+            self.assertTrue(add_credential(manager, "token", "user", "a"))
+            manager.save_state()
+
+            with mock.patch("config.get_auto_rotation_enabled") as get_rotation_setting:
+                reloaded = CodeBuddyTokenManagerRegistry().for_username("alice")
+                self.assertTrue(reloaded.has_usable_credential())
+
+            get_rotation_setting.assert_not_called()
+
     def test_save_state_swallows_store_error(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
@@ -906,6 +919,39 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
                     "auto_rotation_enabled": True,
                 },
             )
+
+    def test_has_usable_credential_is_a_side_effect_free_snapshot_check(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
+            manager.token_expiry = FakeTokenExpiry()
+            manager.current_index = 4
+            manager.usage_count = 7
+
+            self.assertFalse(manager.has_usable_credential())
+            manager.credentials = [
+                credential_record("expired", expired=True),
+                {
+                    "file_path": "/tmp/missing-bearer.json",
+                    "data": {"user_id": "missing-bearer"},
+                },
+            ]
+            with (
+                mock.patch.object(
+                    manager,
+                    "_is_auto_rotation_enabled",
+                    side_effect=AssertionError("不应读取轮换开关"),
+                ),
+                mock.patch(
+                    "config.get_rotation_count",
+                    side_effect=AssertionError("不应读取轮换次数"),
+                ),
+            ):
+                self.assertFalse(manager.has_usable_credential())
+                manager.credentials.append(credential_record("usable"))
+                self.assertTrue(manager.has_usable_credential())
+
+            self.assertEqual(manager.current_index, 4)
+            self.assertEqual(manager.usage_count, 7)
 
     def test_token_manager_exposes_stable_credential_ids(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

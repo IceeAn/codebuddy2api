@@ -1898,12 +1898,17 @@ class UsageStatsRetentionManagerTests(unittest.IsolatedAsyncioTestCase):
             retry_seconds=0.005,
         )
 
-        await manager.startup()
-        for _ in range(100):
-            if len(store.calls) >= 2:
-                break
-            await asyncio.sleep(0.005)
-        await manager.shutdown()
+        with mock.patch(
+            "src.usage_stats_store.TimeoutError",
+            new=type("DifferentBuiltinTimeout", (Exception,), {}),
+            create=True,
+        ):
+            await manager.startup()
+            for _ in range(100):
+                if len(store.calls) >= 2:
+                    break
+                await asyncio.sleep(0.005)
+            await manager.shutdown()
         calls_after_shutdown = len(store.calls)
         await asyncio.sleep(0.02)
 

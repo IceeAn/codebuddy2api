@@ -219,6 +219,12 @@ function copyApiBaseUrl() {
   copy(value, '客户端入口地址已复制');
 }
 
+function copyAnthropicApiBaseUrl() {
+  const value = statusData.value?.anthropic_api_base_url;
+  if (!value) return;
+  copy(value, 'Claude Code 入口地址已复制');
+}
+
 function openStats() {
   return chunkLoadRecovery.push({ name: 'stats' });
 }
@@ -308,16 +314,43 @@ function openStats() {
       />
     </div>
 
-    <CCard title="客户端入口">
+    <CCard title="OpenAI 客户端入口">
       <CInputGroup>
         <CInput :model-value="statusData?.api_base_url || ''" readonly />
-        <CButton variant="secondary" @click="copyApiBaseUrl">
+        <CButton
+          variant="secondary"
+          aria-label="复制 OpenAI 客户端入口地址"
+          @click="copyApiBaseUrl"
+        >
           <template #icon>
             <Link :size="16" />
           </template>
           复制
         </CButton>
       </CInputGroup>
+    </CCard>
+
+    <CCard title="Anthropic 客户端入口">
+      <div class="flex flex-col gap-3">
+        <CInputGroup>
+          <CInput :model-value="statusData?.anthropic_api_base_url || ''" readonly />
+          <CButton
+            variant="secondary"
+            aria-label="复制 Anthropic 客户端入口地址"
+            @click="copyAnthropicApiBaseUrl"
+          >
+            <template #icon>
+              <Link :size="16" />
+            </template>
+            复制
+          </CButton>
+        </CInputGroup>
+        <CAlert type="info">
+          Anthropic SDK 可直接使用真实模型 ID；Claude Code 请使用模型列表返回的
+          anthropic/codebuddy/&lt;真实模型 ID&gt;。为了提高部分 Claude Code
+          版本下的输入缓存命中率，建议关闭 attribution header。
+        </CAlert>
+      </div>
     </CCard>
   </div>
 </template>

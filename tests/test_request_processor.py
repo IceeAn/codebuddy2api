@@ -326,6 +326,47 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
         self.assertEqual(content[0]["text"], "Claude and Anthropic")
         self.assertEqual(content[1]["text"], "Claude")
 
+    def test_prepare_payload_rewrites_only_known_system_prompt_fingerprints(self):
+        identity = "You are Claude Code, Anthropic's official CLI for Claude."
+        branch = "Main branch (you will usually use this for PRs): feature/test"
+        request_body = {
+            "model": "lite",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": f"{identity}\n{branch}\nClaude and Anthropic remain.",
+                },
+                {
+                    "role": "user",
+                    "content": f"{identity}\n{branch}",
+                },
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "claude_agent",
+                        "description": identity,
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                },
+            ],
+        }
+        original_body = json.loads(json.dumps(request_body))
+
+        payload = self._prepare_payload(request_body)
+
+        self.assertEqual(request_body, original_body)
+        self.assertEqual(
+            payload["messages"][0]["content"],
+            "You are an interactive software engineering assistant operating in a "
+            "command-line environment.\n"
+            "Main branch: feature/test\n"
+            "Claude and Anthropic remain.",
+        )
+        self.assertEqual(payload["messages"][1]["content"], f"{identity}\n{branch}")
+        self.assertEqual(payload["tools"], request_body["tools"])
+
     def test_prepare_payload_adds_default_system_message_for_single_user_message(self):
         payload = self._prepare_payload({
             "model": "lite",

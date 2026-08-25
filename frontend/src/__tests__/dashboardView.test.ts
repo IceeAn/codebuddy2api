@@ -109,8 +109,11 @@ describe('DashboardView', () => {
     expect(wrapper.text()).toContain('-');
     expect(wrapper.findComponent(CProgress).props('label')).toBe('-');
 
-    const copyButton = wrapper.findAll('button').find((button) => button.text().includes('复制'));
-    await copyButton?.trigger('click');
+    for (const copyButton of wrapper
+      .findAll('button')
+      .filter((button) => button.text().includes('复制'))) {
+      await copyButton.trigger('click');
+    }
     expect(copyMock).not.toHaveBeenCalled();
   });
 
@@ -120,6 +123,7 @@ describe('DashboardView', () => {
       status: 'healthy',
       uptime_seconds: 65,
       api_base_url: 'http://localhost/openai/v1',
+      anthropic_api_base_url: 'http://localhost/anthropic',
       credentials: {
         valid: 2,
         total: 3,
@@ -162,9 +166,28 @@ describe('DashboardView', () => {
       '成功 4 / 总请求 7（60.0%）',
     );
 
-    const copyButton = wrapper.findAll('button').find((button) => button.text().includes('复制'));
-    await copyButton?.trigger('click');
+    const entryCards = wrapper
+      .findAll('.c-card')
+      .filter((card) => card.find('.c-card-title').text().endsWith('客户端入口'));
+    expect(entryCards).toHaveLength(2);
+    expect(entryCards.map((card) => card.get('button').text().trim())).toEqual(['复制', '复制']);
+    expect(entryCards.map((card) => card.get('button').attributes('aria-label'))).toEqual([
+      '复制 OpenAI 客户端入口地址',
+      '复制 Anthropic 客户端入口地址',
+    ]);
+    expect(entryCards[1].text()).toContain('Anthropic SDK 可直接使用真实模型 ID');
+    expect(entryCards[1].text()).toContain(
+      'Claude Code 请使用模型列表返回的 anthropic/codebuddy/<真实模型 ID>',
+    );
+
+    await entryCards[0].get('button').trigger('click');
     expect(copyMock).toHaveBeenCalledWith('http://localhost/openai/v1', '客户端入口地址已复制');
+
+    await entryCards[1].get('button').trigger('click');
+    expect(copyMock).toHaveBeenCalledWith(
+      'http://localhost/anthropic',
+      'Claude Code 入口地址已复制',
+    );
 
     await todayRequestTile.trigger('click');
     expect(pushMock).toHaveBeenCalledWith({ name: 'stats' });

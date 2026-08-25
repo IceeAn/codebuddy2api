@@ -11,7 +11,8 @@ describe('adminQueryKeys', () => {
       alice.credentials,
       alice.apiKeys,
       alice.settings,
-      alice.playgroundModels,
+      alice.playgroundModels('openai'),
+      alice.playgroundModels('anthropic'),
       alice.statsOverview('today'),
       alice.statsRequests({ cursor: null }),
       alice.statsDimension('models', { search: '' }),
@@ -23,6 +24,7 @@ describe('adminQueryKeys', () => {
       expect(key).not.toEqual(expect.arrayContaining(['bob']));
     }
     expect(bob.credentials).not.toEqual(alice.credentials);
-    expect(bob.playgroundModels).not.toEqual(alice.playgroundModels);
+    expect(bob.playgroundModels('openai')).not.toEqual(alice.playgroundModels('openai'));
+    expect(alice.playgroundModels('openai')).not.toEqual(alice.playgroundModels('anthropic'));
   });
 });
