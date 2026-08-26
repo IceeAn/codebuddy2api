@@ -31,7 +31,7 @@ describe('ApiDocsView', () => {
     expect(wrapper.get('header').text()).toBe('Swagger API 文档');
     expect(wrapper.find('header a').exists()).toBe(false);
 
-    const link = wrapper.get('section > div > a');
+    const link = wrapper.get(':scope > div > a');
     expect(link.text()).toContain('打开 Swagger 文档');
     expect(link.attributes('href')).toBe('/docs');
     expect(link.attributes('target')).toBe('_blank');

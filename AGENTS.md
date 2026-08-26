@@ -131,7 +131,7 @@ docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:
 - 路由页面的主动导航统一使用 `chunkLoadRecovery.push()` / `replace()`；恢复器必须在 `app.use(router)` 前安装。Vite 的 `vite:preloadError` 也会覆盖 chunk 下载成功后的模块求值异常，不能单凭该事件判断资源加载失败；恢复器只处理已确认的路由资源获取或预加载错误，其他路由错误必须保留原始 Promise 拒绝、写入控制台并显示通用提示。
 - chunk 首次失败最多自动刷新一次，并在新文档按原 push/replace 语义续接目标；刷新仍在进行时，后发 chunk 失败只更新为最新恢复目标，不得启动第二次刷新。成功、重定向、守卫中止或更新导航会消费记录。刷新取消或重复失败时允许留在当前页；用户选择留下后，本页后续失败只能手动刷新。退出等临界操作用 `deferReload()` 延迟刷新。
 - 修改 chunk 恢复流程后必须运行 `pnpm run e2e`，用 Chromium 验证跨版本资源失效、历史栈、`beforeunload` 取消和防循环行为。
-- 前端开发/构建要求 Node.js 24.11+。Vite 8/Rolldown 手动分包使用 `rollupOptions.output.codeSplitting.groups`，不要恢复对象形式 `manualChunks`；TypeScript 配置保留 `vite/client` 类型。
+- 前端开发/构建要求 Node.js 24.15+。Vite 8/Rolldown 手动分包使用 `rollupOptions.output.codeSplitting.groups`，不要恢复对象形式 `manualChunks`；TypeScript 配置保留 `vite/client` 类型。
 
 ## Docker 与发布
 
