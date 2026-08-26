@@ -53,6 +53,24 @@ async function observePageStop(page: Page): Promise<void> {
 }
 
 test.describe('生产构建的 chunk 恢复', () => {
+  test('控制端拒绝超出上限的文档延迟', async ({ request }) => {
+    const resetResponse = await request.post('/__control/reset');
+    expect(resetResponse.ok()).toBe(true);
+
+    const response = await request.post('/__control/switch?missing=0&document-delay-ms=2001');
+
+    expect(response.status()).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'document-delay-ms 必须是 0 到 2000 的安全整数',
+    });
+    expect(await state(request)).toEqual({
+      phase: 'a',
+      targetMissing: false,
+      documentDelayMs: 0,
+      documentRequests: 0,
+    });
+  });
+
   test('push 失败只刷新一次、续接 B 版本目标并保留来源历史', async ({ page, request }) => {
     await reset(request, page);
     await expect(page.getByRole('heading', { name: '来源页面 A' })).toBeVisible();

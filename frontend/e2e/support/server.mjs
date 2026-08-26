@@ -7,6 +7,7 @@ import vue from '@vitejs/plugin-vue';
 import { build } from 'vite';
 
 const port = 4174;
+const MAX_DOCUMENT_DELAY_MS = 2_000;
 const fixtureRoot = fileURLToPath(new URL('../fixture', import.meta.url));
 const temporaryRoot = await mkdtemp(join(tmpdir(), 'codebuddy2api-chunk-e2e-'));
 const builds = {
@@ -81,8 +82,14 @@ const server = createServer(async (request, response) => {
     }
     if (request.method === 'POST' && url.pathname === '/__control/switch') {
       const requestedDelay = Number(url.searchParams.get('document-delay-ms') ?? '0');
-      if (!Number.isSafeInteger(requestedDelay) || requestedDelay < 0) {
-        sendJson(response, 400, { error: 'document-delay-ms 必须是非负安全整数' });
+      if (
+        !Number.isSafeInteger(requestedDelay) ||
+        requestedDelay < 0 ||
+        requestedDelay > MAX_DOCUMENT_DELAY_MS
+      ) {
+        sendJson(response, 400, {
+          error: `document-delay-ms 必须是 0 到 ${MAX_DOCUMENT_DELAY_MS} 的安全整数`,
+        });
         return;
       }
       phase = 'b';
