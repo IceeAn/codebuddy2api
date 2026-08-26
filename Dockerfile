@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1
 
-ARG NODE_VERSION=24.11.1
+ARG NODE_VERSION=24.15.0
 ARG PYTHON_VERSION=3.12
 
-# 使用满足 Babel 8 / Vite 8 最低版本要求的 Node 构建 Vue 管理台。
+# 使用满足前端工具链最低版本要求的 Node 构建 Vue 管理台。
 FROM --platform=$BUILDPLATFORM node:${NODE_VERSION}-slim AS frontend-build
 
 WORKDIR /frontend

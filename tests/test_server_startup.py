@@ -112,6 +112,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
         dockerfile = (self.repository_root / "Dockerfile").read_text(encoding="utf-8")
 
         self.assertIn("ARG PYTHON_VERSION=3.12", dockerfile)
+        self.assertIn("ARG NODE_VERSION=24.15.0", dockerfile)
         self.assertIn(
             "FROM --platform=$BUILDPLATFORM node:${NODE_VERSION}-slim AS frontend-build",
             dockerfile,
@@ -153,6 +154,15 @@ class RepositoryConfigurationTests(unittest.TestCase):
 
         self.assertEqual(package["version"], web.app.version)
 
+    def test_frontend_package_requires_supported_node_version(self):
+        package = json.loads(
+            (self.repository_root / "frontend" / "package.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        self.assertEqual(package["engines"]["node"], ">=24.15.0")
+
     def test_readme_documents_releases_frontend_toolchain_and_openai_dependency(self):
         readme = (self.repository_root / "README.md").read_text(encoding="utf-8")
 
@@ -160,7 +170,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
             "[releases](https://github.com/IceeAn/codebuddy2api/releases)",
             readme,
         )
-        self.assertIn("Node.js 24.11+", readme)
+        self.assertIn("Node.js 24.15+", readme)
         self.assertIn("pnpm 10.29+", readme)
         self.assertIn("python3 -m pip install openai", readme)
         self.assertIn("#### 使用更新脚本更新", readme)

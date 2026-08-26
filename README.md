@@ -550,7 +550,7 @@ python3 web.py
 
 ### 前端开发运行
 
-前端开发和构建要求 Node.js 24.11+ 与 pnpm 10.29+。
+前端开发和构建要求 Node.js 24.15+ 与 pnpm 10.29+。
 
 前端开发服务器会把 `/auth`、`/api`、`/codebuddy`、`/openai`、`/anthropic`、`/health`、`/docs`、`/redoc` 和 `/openapi.json` 代理到本地后端 `127.0.0.1:8001`。
 
