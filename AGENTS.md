@@ -40,6 +40,7 @@ docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:
 - **测试驱动开发**：开发流程须完全遵循 TDD，保证单元测试100%覆盖、且尽可能覆盖真实用例。
 - **后端测试**：使用标准库 `unittest` 与 `coverage.py`；`venv/bin/python3 -m coverage report` 对 `config.py`、`release_runtime_lock.py`、`web.py` 和 `src/` 生产代码强制执行行/分支综合 100% 覆盖率门槛。
 - **Python 异步超时兼容**：项目后端同时支持 Python 3.10 和 3.12；捕获 `asyncio.wait_for()` 超时必须使用 `asyncio.TimeoutError`，不能使用内置 `TimeoutError`，因为 Python 3.10 中两者并非别名。模拟该路径的测试也必须抛出 `asyncio.TimeoutError`，并应避免被新版本的别名关系掩盖兼容性问题。
+- **Python 3.10 异步上下文覆盖率兼容**：条件分支不要直接跳出 `async with` 代码块；应先在代码块内汇合到可跟踪语句，否则 `coverage.py` 可能把已执行分支误报为跳向下一行或函数出口的缺失分支。不能用覆盖率排除标记掩盖该问题。
 - **Python SQLite authorizer 兼容**：Python 3.10 不支持通过 `sqlite3.Connection.set_authorizer(None)` 禁用 authorizer；需要移除测试故障注入器时，应关闭注入连接并用新连接继续验证，不能依赖新版本行为掩盖兼容性问题。
 - **前端测试**：Vitest 使用 jsdom 与 Vue Test Utils；`pnpm run test:coverage` 对 `src/` 生产代码强制执行 statements、branches、functions、lines 四项 100% 覆盖率门槛。
 - **前端修改后流程**：前端修改后依次执行格式检查、lint、构建和覆盖率测试；格式检查失败时先执行 `pnpm run format`。`pnpm run build` 已包含类型检查和生产构建。

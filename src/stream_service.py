@@ -143,20 +143,23 @@ _client_lock = asyncio.Lock()
 async def get_http_client() -> httpx.AsyncClient:
     """获取全局 HTTP 客户端池。"""
     global _http_client_pool
-    if _http_client_pool is None:
+    client = _http_client_pool
+    if client is None:
         async with _client_lock:
             if _http_client_pool is None:
                 _http_client_pool = httpx.AsyncClient(**HTTP_CLIENT_CONFIG)
-    return _http_client_pool
+            client = _http_client_pool
+    return client
 
 
 async def close_http_client():
     """关闭全局 HTTP 客户端池。"""
     global _http_client_pool
     async with _client_lock:
-        if _http_client_pool is not None:
-            await _http_client_pool.aclose()
-            _http_client_pool = None
+        client = _http_client_pool
+        if client is not None:
+            await client.aclose()
+        _http_client_pool = None
 
 
 class AppLifecycleManager:
