@@ -73,7 +73,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.4.0"
 
 
 @asynccontextmanager

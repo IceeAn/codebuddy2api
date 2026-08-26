@@ -23,12 +23,6 @@
 - `POST /anthropic/v1/messages`：兼容 Anthropic Messages wire protocol，支持流式、thinking 和客户端工具调用。
 - `GET /anthropic/v1/models`：返回供 Claude Code 发现的 `anthropic/codebuddy/<真实模型 ID>` 合成模型列表。
 - CodeBuddy 上游只提供流式响应；非流式客户端请求由本服务聚合后返回。
-- 暂未提供 Responses 等其他 OpenAI API。Anthropic 兼容面不实现 beta 能力、图片、文档、服务端工具、prompt cache、结构化输出或精确 token counting；`anthropic-beta`、`output_config` 和其他未知字段会被接受并忽略。
-
-Anthropic 模型发现只用于 `GET /anthropic/v1/models`。Messages 请求接受真实 ID 与合成 ID，但不查询或校验模型列表：`anthropic/codebuddy/` 是网关保留的合成模型前缀，Messages 请求会始终先移除该前缀一次；剩余模型名与 OpenAI 兼容接口共用 `CODEBUDDY_STRIP_MODEL_NAMESPACE` 策略，开启时截断最后一个 `/` 之前的命名空间，关闭时原样保留，最终由 CodeBuddy 上游判断是否可用。仅有保留前缀而没有真实模型 ID 的请求会被拒绝。
-
-> [!IMPORTANT]
-> Anthropic 兼容的是 Messages 网络协议，不是 Anthropic 原生模型。模型能力、token usage、限流和账单均来自 CodeBuddy；本服务生成的 `cb2a_` thinking 签名只用于回传完整性，不是 Anthropic 原生签名。
 
 ## 本地运行
 
@@ -400,22 +394,19 @@ Claude Code 推荐配置如下。模型 ID 请以 `GET /anthropic/v1/models` 的
 
 ```bash
 export ANTHROPIC_BASE_URL="http://127.0.0.1:8001/anthropic"
-export ANTHROPIC_AUTH_TOKEN="sk-your-api-key"
+export ANTHROPIC_AUTH_TOKEN="此处改成你在 web 端创建的API key"
 
-export ANTHROPIC_MODEL="anthropic/codebuddy/glm-5.2"
-export ANTHROPIC_DEFAULT_OPUS_MODEL="anthropic/codebuddy/glm-5.2"
-export ANTHROPIC_DEFAULT_SONNET_MODEL="anthropic/codebuddy/glm-5.2"
-export ANTHROPIC_DEFAULT_HAIKU_MODEL="anthropic/codebuddy/glm-5.2"
-export ANTHROPIC_DEFAULT_FABLE_MODEL="anthropic/codebuddy/glm-5.2"
+export ANTHROPIC_MODEL="anthropic/codebuddy/glm-5.3"
+export ANTHROPIC_DEFAULT_OPUS_MODEL="anthropic/codebuddy/glm-5.3"
+export ANTHROPIC_DEFAULT_SONNET_MODEL="anthropic/codebuddy/glm-5.3"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="anthropic/codebuddy/glm-5.3"
+export ANTHROPIC_DEFAULT_FABLE_MODEL="anthropic/codebuddy/glm-5.3"
 
 export CLAUDE_CODE_ATTRIBUTION_HEADER=0
 export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1
 ```
 
-`POST /anthropic/v1/messages/count_tokens` 固定返回 404，让支持该行为的 Claude Code 版本回退到本地估算；该估算以及响应 usage 都不等同于 Anthropic tokenizer 或账单。CodeBuddy 的 `content_filter` 响应可能不带 usage，此时兼容层会返回零 usage 以正常结束 Claude Code 重试，该值不代表实际上游 token。Claude Code 会持续增加协议能力，本项目只承诺本文列出的稳定核心兼容面。
-
-> [!NOTE]
-> 为兼容 Claude Code 的协议演进，服务会接受并忽略 `anthropic-beta`、`output_config` 及其他未知字段；这只表示请求不会因此失败，不表示网关实现了对应 beta 或结构化输出能力。图片、文档、服务端工具、legacy `function_call` 等无法无损转换的内容仍会返回 400 或上游协议错误。
+`POST /anthropic/v1/messages/count_tokens` 固定返回 404，让支持该行为的 Claude Code 版本回退到本地估算。
 
 ## 端点与鉴权边界
 
