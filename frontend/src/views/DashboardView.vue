@@ -346,9 +346,8 @@ function openStats() {
           </CButton>
         </CInputGroup>
         <CAlert type="info">
-          Anthropic SDK 可直接使用真实模型 ID；Claude Code 请使用模型列表返回的
-          anthropic/codebuddy/&lt;真实模型 ID&gt;。为了提高部分 Claude Code
-          版本下的输入缓存命中率，建议关闭 attribution header。
+          Claude Code 配置的模型 ID 须使用 anthropic/codebuddy/&lt;真实模型 ID&gt; 形式，可参考 API
+          测试页模型列表。
         </CAlert>
       </div>
     </CCard>

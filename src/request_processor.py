@@ -5,7 +5,7 @@ from typing import Any, Dict
 
 from fastapi import HTTPException
 
-from .system_prompt_rewriter import rewrite_system_prompt_content
+from .system_prompt_rewriter import rewrite_system_prompt_messages
 
 
 @dataclass(frozen=True)
@@ -106,11 +106,7 @@ def apply_request_policies(payload: Dict[str, Any], user: Any = None) -> None:
         system_msg = {"role": "system", "content": "You are a helpful assistant."}
         payload["messages"] = [system_msg] + messages
 
-    for message in payload.get("messages", []):
-        if message.get("role") == "system":
-            message["content"] = rewrite_system_prompt_content(
-                message.get("content")
-            )
+    rewrite_system_prompt_messages(payload.get("messages", []))
 
 
 def adapt_openai_payload_for_codebuddy(payload: Dict[str, Any]) -> None:

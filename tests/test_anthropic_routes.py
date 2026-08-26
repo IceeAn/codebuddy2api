@@ -276,6 +276,43 @@ class AnthropicRouteTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.assertGreater(stats.capture_request_bytes.call_args.args[0], 0)
 
     @mock.patch("src.anthropic_router.execute_codebuddy_chat", new_callable=mock.AsyncMock)
+    async def test_message_request_removes_claude_code_attribution_system_block(
+            self,
+            execute,
+    ):
+        execute.return_value = {"type": "message"}
+        response = await self._request(
+            "POST",
+            "/anthropic/v1/messages",
+            headers=self._x_api_key(),
+            json={
+                "model": "anthropic/codebuddy/glm-5.2",
+                "max_tokens": 64,
+                "system": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "x-anthropic-billing-header: "
+                            "cc_version=2.1.246.0c3; cc_entrypoint=sdk-cli;"
+                        ),
+                    },
+                    {"type": "text", "text": "You are Claude."},
+                ],
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        prepared = execute.await_args.args[0]
+        self.assertEqual(prepared.payload["messages"], [
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": "You are Claude."}],
+            },
+            {"role": "user", "content": "hello"},
+        ])
+
+    @mock.patch("src.anthropic_router.execute_codebuddy_chat", new_callable=mock.AsyncMock)
     @mock.patch("src.anthropic_router._available_models", new_callable=mock.AsyncMock)
     async def test_message_model_skips_discovery_and_follows_namespace_setting(
             self,

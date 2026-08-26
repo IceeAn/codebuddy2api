@@ -367,6 +367,32 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
         self.assertEqual(payload["messages"][1]["content"], f"{identity}\n{branch}")
         self.assertEqual(payload["tools"], request_body["tools"])
 
+    def test_prepare_payload_removes_claude_code_attribution_system_block(self):
+        attribution = (
+            "x-anthropic-billing-header: cc_version=2.1.246.0c3; "
+            "cc_entrypoint=sdk-cli;"
+        )
+        request_body = {
+            "model": "lite",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": [{"type": "text", "text": attribution}],
+                },
+                {"role": "system", "content": "Keep this policy."},
+                {"role": "user", "content": attribution},
+            ],
+        }
+        original_body = json.loads(json.dumps(request_body))
+
+        payload = self._prepare_payload(request_body)
+
+        self.assertEqual(request_body, original_body)
+        self.assertEqual(payload["messages"], [
+            {"role": "system", "content": "Keep this policy."},
+            {"role": "user", "content": attribution},
+        ])
+
     def test_prepare_payload_adds_default_system_message_for_single_user_message(self):
         payload = self._prepare_payload({
             "model": "lite",

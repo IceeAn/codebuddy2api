@@ -613,10 +613,6 @@ pnpm run test:coverage
 - 管理台测试请求必须访问 `/api/admin/playground/<协议>/v1/*` 并携带有效会话 Cookie。
 - API Key 所属系统用户从 `users.txt` 删除后，该 Key 也会失效。
 
-#### Claude Code 返回 attribution 相关错误
-
-设置 `CLAUDE_CODE_ATTRIBUTION_HEADER=0`，避免发送本服务无法转换的 Anthropic 专用 attribution 内容块。`anthropic-beta` 请求头本身可以发送，但对应实验能力不会生效。
-
 #### `凭证获取失败` 或没有可用模型
 
 当前系统用户没有可用的 CodeBuddy 上游凭证。登录管理台重新认证、添加凭证，并使用凭证测试功能确认状态。

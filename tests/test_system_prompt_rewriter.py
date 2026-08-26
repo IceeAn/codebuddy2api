@@ -1,6 +1,9 @@
 import unittest
 
-from src.system_prompt_rewriter import rewrite_system_prompt_content
+from src.system_prompt_rewriter import (
+    rewrite_system_prompt_content,
+    rewrite_system_prompt_messages,
+)
 
 
 IDENTITY_PROMPT = "You are Claude Code, Anthropic's official CLI for Claude."
@@ -9,9 +12,118 @@ NEUTRAL_IDENTITY_PROMPT = (
     "command-line environment."
 )
 MAIN_BRANCH_PREFIX = "Main branch (you will usually use this for PRs):"
+ATTRIBUTION_HEADER = (
+    "x-anthropic-billing-header: cc_version=2.1.246.0c3; "
+    "cc_entrypoint=sdk-cli;"
+)
 
 
 class SystemPromptRewriterTests(unittest.TestCase):
+    def test_removes_attribution_only_system_message(self):
+        messages = [
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": ATTRIBUTION_HEADER}],
+            },
+            {"role": "system", "content": IDENTITY_PROMPT},
+            {"role": "user", "content": ATTRIBUTION_HEADER},
+        ]
+
+        rewrite_system_prompt_messages(messages)
+
+        self.assertEqual(messages, [
+            {"role": "system", "content": NEUTRAL_IDENTITY_PROMPT},
+            {"role": "user", "content": ATTRIBUTION_HEADER},
+        ])
+
+    def test_removes_attribution_line_but_preserves_following_system_text(self):
+        messages = [
+            {
+                "role": "system",
+                "content": f"{ATTRIBUTION_HEADER}\r\nKeep this policy.",
+            },
+        ]
+
+        rewrite_system_prompt_messages(messages)
+
+        self.assertEqual(
+            messages,
+            [{"role": "system", "content": "Keep this policy."}],
+        )
+
+    def test_removes_attribution_text_block_but_preserves_siblings(self):
+        messages = [
+            {
+                "role": "system",
+                "content": [
+                    {"type": "text", "text": ATTRIBUTION_HEADER},
+                    {"type": "text", "text": "Keep this policy."},
+                    {"type": "image", "text": ATTRIBUTION_HEADER},
+                ],
+            },
+        ]
+
+        rewrite_system_prompt_messages(messages)
+
+        self.assertEqual(messages, [
+            {
+                "role": "system",
+                "content": [
+                    {"type": "text", "text": "Keep this policy."},
+                    {"type": "image", "text": ATTRIBUTION_HEADER},
+                ],
+            },
+        ])
+
+    def test_preserves_attribution_near_matches(self):
+        messages = [
+            {
+                "role": "system",
+                "content": "X-Anthropic-Billing-Header: keep this text",
+            },
+            {"role": "assistant", "content": ATTRIBUTION_HEADER},
+        ]
+
+        rewrite_system_prompt_messages(messages)
+
+        self.assertEqual(messages, [
+            {
+                "role": "system",
+                "content": "X-Anthropic-Billing-Header: keep this text",
+            },
+            {"role": "assistant", "content": ATTRIBUTION_HEADER},
+        ])
+
+    def test_handles_other_system_content_shapes_without_broadening_match(self):
+        marker = object()
+        messages = [
+            {"role": "system", "content": marker},
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": 123}],
+            },
+            {
+                "role": "system",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"{ATTRIBUTION_HEADER}\nKeep this policy.",
+                    },
+                ],
+            },
+            {"role": "system", "content": ATTRIBUTION_HEADER},
+        ]
+
+        rewrite_system_prompt_messages(messages)
+
+        self.assertIs(messages[0]["content"], marker)
+        self.assertEqual(messages[1]["content"], [{"type": "text", "text": 123}])
+        self.assertEqual(
+            messages[2]["content"],
+            [{"type": "text", "text": "Keep this policy."}],
+        )
+        self.assertEqual(len(messages), 3)
+
     def test_rewrites_only_exact_fingerprints_in_string_content(self):
         content = (
             f"{IDENTITY_PROMPT}\n"

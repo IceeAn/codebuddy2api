@@ -175,9 +175,8 @@ describe('DashboardView', () => {
       '复制 OpenAI 客户端入口地址',
       '复制 Anthropic 客户端入口地址',
     ]);
-    expect(entryCards[1].text()).toContain('Anthropic SDK 可直接使用真实模型 ID');
     expect(entryCards[1].text()).toContain(
-      'Claude Code 请使用模型列表返回的 anthropic/codebuddy/<真实模型 ID>',
+      'Claude Code 配置的模型 ID 须使用 anthropic/codebuddy/<真实模型 ID> 形式',
     );
 
     await entryCards[0].get('button').trigger('click');
