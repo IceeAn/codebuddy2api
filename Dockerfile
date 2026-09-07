@@ -20,11 +20,16 @@ FROM python:${PYTHON_VERSION}-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
+# 容器内无外部时区配置时使用上海时区，签到等本地自然日调度依赖它。
+ENV TZ=Asia/Shanghai
+
 WORKDIR /app
 
 # gosu 用于入口脚本完成挂载目录准备后降权运行服务。
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends gosu && \
+    apt-get install -y --no-install-recommends gosu tzdata && \
+    ln -fs /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
+    echo "Asia/Shanghai" > /etc/timezone && \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./

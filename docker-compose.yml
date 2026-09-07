@@ -7,6 +7,8 @@ services:
     environment:
       # 容器运行数据必须写入持久化挂载点，不接受 .env 覆盖。
       CODEBUDDY_DATA_DIR: /app/data
+      # 签到等本地自然日调度的时区；与 Dockerfile 默认值保持一致。
+      TZ: Asia/Shanghai
     volumes:
       # SQLite 与 CodeBuddy 凭证持久化
       - ./data:/app/data
