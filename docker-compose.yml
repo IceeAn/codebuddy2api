@@ -12,7 +12,7 @@ services:
     volumes:
       # SQLite 与 CodeBuddy 凭证持久化
       - ./data:/app/data
-      # 多用户认证目录；服务只读，add-user 命令使用单独的可写挂载。
+      # 仅供旧版 users.txt 首次迁移；账号迁移完成后可删除该文件。
       - ./secrets:/app/secrets:ro
     env_file:
       - path: .env

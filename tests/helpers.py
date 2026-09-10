@@ -14,6 +14,7 @@ class ConfigIsolationMixin:
         super().setUp()
         self._database_dir = tempfile.TemporaryDirectory()
         self._original_config = config._config_cache.copy()
+        self._original_explicit_config_keys = config._explicit_config_keys.copy()
         self._original_user_settings = deepcopy(config._user_settings_cache)
         runtime_root = Path(self._database_dir.name)
         config._config_cache["CODEBUDDY_DATA_DIR"] = str(runtime_root / "data")
@@ -24,6 +25,7 @@ class ConfigIsolationMixin:
         reset_runtime_stores()
         config._user_settings_cache = deepcopy(self._original_user_settings)
         config._config_cache = self._original_config.copy()
+        config._explicit_config_keys = self._original_explicit_config_keys.copy()
         self._database_dir.cleanup()
         super().tearDown()
 
@@ -45,8 +47,10 @@ class TempConfigMixin(ConfigIsolationMixin):
 def reset_runtime_stores():
     session_store.sessions.clear()
     from src.login_security import login_attempt_guard
+    from src.users_store import users_store
 
     login_attempt_guard.reset()
+    users_store.reset_runtime()
 
 
 def write_users_file(directory: Path, users=None) -> Path:
@@ -63,6 +67,15 @@ def write_users_file(directory: Path, users=None) -> Path:
 def configure_users_file(directory: Path, users=None) -> Path:
     users_file = write_users_file(directory, users)
     config._config_cache["CODEBUDDY_USERS_FILE"] = str(users_file)
+    config.initialize_database()
+    from src.users_store import users_store
+
+    users_store.initialize_service(
+        bootstrap_enabled=True,
+        bootstrap_username="admin",
+        bootstrap_password="admin",
+        bootstrap_password_explicit=False,
+    )
     return users_file
 
 

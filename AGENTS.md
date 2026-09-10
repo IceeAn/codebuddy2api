@@ -28,11 +28,11 @@ cd frontend && pnpm run e2e
 docker compose up -d
 docker build -t codebuddy2api:local .
 
-# 原子新增系统用户或更新密码
-venv/bin/python3 scripts/hash_password.py <用户名> --output secrets/users.txt
+# 原子新增系统用户或更新密码（add-user 是等价别名）
+venv/bin/python3 scripts/manage_users.py set-user <用户名>
 
 # 使用发布镜像管理用户
-docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:latest add-user <用户名>
+docker compose run --rm codebuddy2api set-user <用户名>
 ```
 
 ## 开发规定
@@ -75,6 +75,9 @@ docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:
 - 凭证写入使用 `O_NOFOLLOW`，加载时忽略凭证目录中的符号链接，所有文件名都必须防路径穿越。新凭证文件名使用 NFC 规范化并允许 Unicode 字母数字，但不得以 `.` 开头，否则 `glob("*.json")` 无法发现。
 - `CODEBUDDY_ALLOWED_API_ENDPOINTS` 是硬白名单：为空、含非法 URL 或当前端点不在其中时必须在启动阶段失败，禁止自动补入或回退。`X-Domain` 只允许 `[A-Za-z0-9.-]+`。
 - 用户认证必须对不存在或无效用户执行虚拟密码哈希，避免时序枚举。密码文件只接受规范的 `pbkdf2_sha256$迭代数$盐$摘要`：默认迭代数为 600000，只允许 600000 至 1000000；盐固定 16 字节，摘要固定 32 字节，Base64URL 必须规范且无填充。修改格式时必须同步所有读写入口。
+- 系统账号以 SQLite `system_users` 为唯一运行时权威；旧 `CODEBUDDY_USERS_FILE` 只允许在账号状态尚未初始化时原子迁移一次，完成后即使文件仍存在也只告警并忽略。既有安装缺少可迁移文件时必须失败，不能意外创建 `admin/admin`。
+- 仅真正全新的安装可按启动配置创建一次性引导账号；内置默认密码与显式自定义初始密码必须使用不同 WARNING。引导账号在每次启动 1 小时后失效，首次登录只能访问改密所需页面和端点。
+- 系统账号密码变更通过随机认证代次使该账号所有管理会话失效，但不删除 API Key 或其他用户数据。CLI 写入同样必须推进代次；删除账号认证记录后用户数据保持休眠，重建同名账号可重新使用，且禁止删除最后一个账号。
 
 ## CodeBuddy 与下游协议兼容层
 
@@ -137,8 +140,8 @@ docker run --rm -it -v "$PWD/secrets:/app/secrets" ghcr.io/iceean/codebuddy2api:
 ## Docker 与发布
 
 - 容器入口必须先以 root 准备挂载目录和用户文件副本，再通过 `gosu` 切换到 UID 1001 的 `appuser`。不要用 Compose `user` 或 `docker run --user` 绕过入口准备。
-- 运行时挂载 `./data` 和只读 `./secrets`；入口固定数据目录为 `/app/data`，并将宿主 `users.txt` 复制成运行时私有只读文件。服务启动后修改用户文件必须重启容器才会生效。
-- 用户文件以同目录临时文件原子替换，不支持符号链接、非普通文件或多硬链接；重复用户名会替换全部旧记录，并发写入不提供锁。
+- 运行时挂载 `./data` 和只读 `./secrets`；入口固定数据目录为 `/app/data`，只在旧 `users.txt` 存在时将其复制成运行时私有只读迁移源。账号管理命令直接写共享 SQLite，无需重启服务。
+- 旧用户迁移文件不支持符号链接、非普通文件或多硬链接；迁移必须完整校验全部记录后与认证状态在同一事务提交，重复用户名以最后一条为准。
 - 发布只接受稳定语义版本 tag。tag、`web.py` 的 `APP_VERSION`、`frontend/package.json` 版本及 `CHANGELOG.md` 对应版本必须一致。
 - 发布镜像必须同时支持 `linux/amd64`、`linux/arm64` 和 `linux/arm/v7`，构建时生成 SBOM/provenance，并使用 Cosign keyless signing 对最终镜像 digest 签名。发布顺序必须保持“完整验证 → 多架构按 digest 推送 → 每个架构漏洞扫描 → 对 digest 加版本/`latest` tag → 签名与 GitHub Release”；任一架构存在 `CRITICAL` 漏洞都应阻断发布。Trivy 默认包含尚无修复版本的漏洞，手动发布仅可通过 `ignore_unfixed=true` 忽略这类漏洞。只有最高稳定版本更新 `latest`。
 - 发布归档必须可复现：使用 tag commit 时间，规范成员顺序、时间、权限和 owner 元数据；只收录生产文件，拒绝输入路径中的符号链接及其他非普通文件。输出目录不能位于任何输入目录内，所有产物先在临时目录完整生成再原子替换，checksum 最后发布。

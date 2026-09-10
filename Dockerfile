@@ -39,6 +39,7 @@ COPY LICENSE LICENSING.md ./
 COPY config.py release_runtime_lock.py web.py ./
 COPY src ./src
 COPY scripts/hash_password.py ./scripts/hash_password.py
+COPY scripts/manage_users.py ./scripts/manage_users.py
 COPY frontend/public ./frontend/public
 COPY --from=frontend-build /frontend/dist /app/frontend/dist
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
@@ -47,8 +48,9 @@ COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN useradd --create-home --uid 1001 appuser && \
     mkdir -p /app/data /app/secrets && \
     chown -R appuser:appuser /app/data && \
-    chmod +x /usr/local/bin/entrypoint.sh /app/scripts/hash_password.py && \
-    ln -s /app/scripts/hash_password.py /usr/local/bin/codebuddy2api-hash-password
+    chmod +x /usr/local/bin/entrypoint.sh /app/scripts/hash_password.py /app/scripts/manage_users.py && \
+    ln -s /app/scripts/hash_password.py /usr/local/bin/codebuddy2api-hash-password && \
+    ln -s /app/scripts/manage_users.py /usr/local/bin/codebuddy2api-manage-users
 
 EXPOSE 8001
 

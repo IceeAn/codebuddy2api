@@ -46,7 +46,7 @@ class SQLiteDatabaseTests(unittest.TestCase):
                 if path.name != DATABASE_FILENAME
             }
 
-        self.assertEqual(version, 4)
+        self.assertEqual(version, 5)
         self.assertTrue({
             "api_keys",
             "user_settings",
@@ -56,6 +56,8 @@ class SQLiteDatabaseTests(unittest.TestCase):
             "usage_retention_state",
             "usage_known_models",
             "credential_daily_checkins",
+            "system_users",
+            "authentication_state",
         }.issubset(tables))
         with sqlite3.connect(database_path) as connection:
             api_key_columns = {
@@ -169,7 +171,7 @@ class SQLiteDatabaseTests(unittest.TestCase):
                 )
             }
 
-        self.assertEqual(version, 4)
+        self.assertEqual(version, 5)
         self.assertEqual(value, "true")
         self.assertTrue({
             "usage_events",
@@ -204,7 +206,7 @@ class SQLiteDatabaseTests(unittest.TestCase):
                 "AND name = 'credential_daily_checkins'"
             ).fetchone()
 
-        self.assertEqual(version, 4)
+        self.assertEqual(version, 5)
         self.assertEqual(value, "true")
         self.assertIsNotNone(checkin_table)
 
@@ -305,7 +307,7 @@ class SQLiteDatabaseTests(unittest.TestCase):
                 "SELECT SUM(request_count), SUM(total_tokens_sum) FROM usage_hourly"
             ).fetchone())
 
-        self.assertEqual(version, 4)
+        self.assertEqual(version, 5)
         self.assertEqual(event_buckets, [
             ("model-a", "success", "known", "model-a"),
             ("model-a", "failure", "known", "model-a"),
@@ -413,9 +415,11 @@ class SQLiteDatabaseTests(unittest.TestCase):
         connection = mock.Mock()
         version_result = mock.Mock()
         version_result.fetchone.return_value = (1,)
+        objects_result = mock.Mock()
+        objects_result.fetchone.return_value = (1,)
         journal_result = mock.Mock()
         journal_result.fetchone.return_value = ("delete",)
-        connection.execute.side_effect = [version_result, journal_result]
+        connection.execute.side_effect = [version_result, objects_result, journal_result]
 
         with self.assertRaisesRegex(RuntimeError, "WAL"):
             SQLiteDatabase(self.database_path)._initialize_schema(connection)
@@ -424,6 +428,10 @@ class SQLiteDatabaseTests(unittest.TestCase):
             connection.execute.call_args_list,
             [
                 mock.call("PRAGMA user_version"),
+                mock.call(
+                    "SELECT 1 FROM sqlite_master "
+                    "WHERE name NOT LIKE 'sqlite_%' LIMIT 1"
+                ),
                 mock.call("PRAGMA journal_mode = WAL"),
             ],
         )

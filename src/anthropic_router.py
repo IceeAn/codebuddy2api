@@ -155,7 +155,7 @@ def require_anthropic_api_key_user(
 ) -> AuthenticatedUser:
     """严格解析 x-api-key/Bearer，并只验证最终确定的一个 Key。"""
     del _x_api_key, _bearer
-    if not users_store.has_users_file():
+    if not users_store.has_users():
         raise _error(request, 500, "api_error", "No authentication users are configured")
 
     header_key = request.headers.get("x-api-key")
@@ -200,6 +200,14 @@ def require_anthropic_session_user(request: Request) -> AuthenticatedUser:
                 "authentication_error",
                 "Invalid authentication credentials",
                 headers={"WWW-Authenticate": "Bearer"},
+            ) from error
+        if status_code == 403:
+            raise _error(
+                request,
+                403,
+                "permission_error",
+                str(getattr(error, "detail", "Permission denied")),
+                headers=getattr(error, "headers", None),
             ) from error
         raise _error(request, 500, "api_error", "Session authentication failed") from error
 

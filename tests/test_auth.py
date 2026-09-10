@@ -2,7 +2,6 @@ import base64
 import asyncio
 import threading
 import unittest
-from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
 import config
@@ -32,12 +31,6 @@ from src.password_hashing import (
     verify_password,
 )
 from src.login_security import LoginAttemptGuard
-from src.users_store import (
-    UsersFileConfigurationError,
-    UsersFileStore,
-    validate_configured_users_file,
-)
-
 from tests.helpers import TempConfigMixin, configure_users_file, make_request
 from web import app
 
@@ -124,206 +117,6 @@ class PasswordHashingTests(unittest.TestCase):
         for value in (None, "", "plaintext", "bcrypt$bad", DUMMY_PASSWORD_HASH + "="):
             with self.subTest(value=value):
                 self.assertFalse(is_supported_password_hash(value))
-
-
-class UsersFileStoreTests(TempConfigMixin, unittest.TestCase):
-    def test_list_usernames_returns_password_free_snapshot(self):
-        users_file = self.temp_path / "users.txt"
-        users_file.write_text(
-            f"alice:{create_password_hash('secret-password')}\n",
-            encoding="utf-8",
-        )
-        config._config_cache["CODEBUDDY_USERS_FILE"] = str(users_file)
-
-        self.assertEqual(UsersFileStore().list_usernames(), ("alice",))
-
-    def test_users_file_store_verifies_pbkdf2_hashes(self):
-        configure_users_file(self.temp_path)
-
-        store = UsersFileStore()
-
-        self.assertTrue(store.verify("admin", "secret-password"))
-        self.assertFalse(store.verify("admin", "bad-password"))
-        self.assertFalse(store.verify("missing", "secret-password"))
-
-    def test_concurrent_user_file_cache_loads_are_serialized(self):
-        configure_users_file(self.temp_path)
-        store = UsersFileStore()
-        original_load = store._load_if_needed
-        first_inside = threading.Event()
-        second_inside = threading.Event()
-        release_first = threading.Event()
-        call_lock = threading.Lock()
-        call_count = 0
-
-        def controlled_load():
-            nonlocal call_count
-            with call_lock:
-                call_count += 1
-                current_call = call_count
-            if current_call == 1:
-                first_inside.set()
-                if not release_first.wait(timeout=2):
-                    raise TimeoutError("first cache load was not released")
-            else:
-                second_inside.set()
-            return original_load()
-
-        with (
-            mock.patch.object(store, "_load_if_needed", side_effect=controlled_load),
-            ThreadPoolExecutor(max_workers=2) as executor,
-        ):
-            first = executor.submit(store.has_username, "admin")
-            try:
-                self.assertTrue(first_inside.wait(timeout=1))
-                second = executor.submit(store.has_username, "admin")
-                self.assertFalse(second_inside.wait(timeout=0.1))
-            finally:
-                release_first.set()
-
-            self.assertTrue(first.result(timeout=1))
-            self.assertTrue(second.result(timeout=1))
-
-    def test_password_comparison_runs_outside_user_file_cache_lock(self):
-        configure_users_file(self.temp_path)
-        store = UsersFileStore()
-        self.assertTrue(store.has_users_file())
-        both_started = threading.Event()
-        release_comparisons = threading.Event()
-        call_lock = threading.Lock()
-        call_count = 0
-
-        def blocking_verify(_password, _password_hash):
-            nonlocal call_count
-            with call_lock:
-                call_count += 1
-                if call_count == 2:
-                    both_started.set()
-            if not release_comparisons.wait(timeout=2):
-                raise TimeoutError("password comparisons were not released")
-            return False
-
-        with (
-            mock.patch("src.users_store.verify_password", side_effect=blocking_verify),
-            ThreadPoolExecutor(max_workers=2) as executor,
-        ):
-            first = executor.submit(store.verify, "admin", "wrong")
-            second = executor.submit(store.verify, "admin", "wrong")
-            try:
-                self.assertTrue(both_started.wait(timeout=1))
-            finally:
-                release_comparisons.set()
-
-            self.assertFalse(first.result(timeout=1))
-            self.assertFalse(second.result(timeout=1))
-
-    def test_missing_user_still_runs_hash_verification(self):
-        configure_users_file(self.temp_path)
-        store = UsersFileStore()
-
-        with mock.patch("src.users_store.verify_password", return_value=False) as verify_mock:
-            self.assertFalse(store.verify("missing", "bad-password"))
-
-        self.assertEqual(verify_mock.call_count, 1)
-
-    def test_users_file_ignores_blank_comments_and_malformed_lines(self):
-        users_file = self.temp_path / "users.txt"
-        users_file.write_text(
-            "\n"
-            "# comment\n"
-            "missing-separator\n"
-            ":missing-username\n"
-            "missing-hash:\n"
-            f" admin : {create_password_hash('secret-password')} \n",
-            encoding="utf-8",
-        )
-        config._config_cache["CODEBUDDY_USERS_FILE"] = str(users_file)
-
-        store = UsersFileStore()
-
-        self.assertTrue(store.verify("admin", "secret-password"))
-        self.assertFalse(store.has_username("missing-separator"))
-
-    def test_missing_users_file_reports_no_configured_users(self):
-        config._config_cache["CODEBUDDY_USERS_FILE"] = str(self.temp_path / "missing.txt")
-
-        store = UsersFileStore()
-
-        self.assertFalse(store.has_users_file())
-        self.assertFalse(store.verify("admin", "secret-password"))
-
-    def test_startup_validation_fails_when_users_file_is_missing(self):
-        users_file = self.temp_path / "missing.txt"
-        config._config_cache["CODEBUDDY_USERS_FILE"] = str(users_file)
-
-        store = UsersFileStore()
-
-        with self.assertRaisesRegex(
-            UsersFileConfigurationError,
-            f"Authentication users file not found: {users_file}",
-        ):
-            store.validate_configured_users_file()
-
-    def test_relative_users_file_path_is_resolved_from_working_directory(self):
-        store = UsersFileStore()
-        with (
-            mock.patch("src.users_store.get_users_file_path", return_value="secrets/users.txt"),
-            mock.patch("src.users_store.Path.cwd", return_value=self.temp_path),
-        ):
-            path = store._resolve_users_file()
-
-        self.assertEqual(path, self.temp_path / "secrets" / "users.txt")
-
-    def test_users_file_store_ignores_invalid_password_hashes(self):
-        users_file = self.temp_path / "users.txt"
-        users_file.write_text("admin:not-a-pbkdf2-hash\n", encoding="utf-8")
-        config._config_cache["CODEBUDDY_USERS_FILE"] = str(users_file)
-
-        store = UsersFileStore()
-
-        self.assertFalse(store.has_users_file())
-        self.assertFalse(store.has_username("admin"))
-        with self.assertRaisesRegex(
-            UsersFileConfigurationError,
-            f"Authentication users file has no valid users: {users_file}",
-        ):
-            store.validate_configured_users_file()
-
-    def test_users_file_store_rejects_non_regular_path(self):
-        users_dir = self.temp_path / "users"
-        users_dir.mkdir()
-        config._config_cache["CODEBUDDY_USERS_FILE"] = str(users_dir)
-
-        store = UsersFileStore()
-
-        self.assertFalse(store.has_users_file())
-
-        with self.assertRaisesRegex(
-            UsersFileConfigurationError,
-            f"Authentication users file is not a regular file: {users_dir}",
-        ):
-            store.validate_configured_users_file()
-
-    def test_startup_validation_fails_when_users_file_has_no_valid_users(self):
-        users_file = self.temp_path / "users.txt"
-        users_file.write_text("# comment\nmissing-separator\n", encoding="utf-8")
-        config._config_cache["CODEBUDDY_USERS_FILE"] = str(users_file)
-
-        store = UsersFileStore()
-
-        with self.assertRaisesRegex(
-            UsersFileConfigurationError,
-            f"Authentication users file has no valid users: {users_file}",
-        ):
-            store.validate_configured_users_file()
-
-    def test_startup_validation_accepts_valid_users_file(self):
-        configure_users_file(self.temp_path)
-
-        store = UsersFileStore()
-
-        store.validate_configured_users_file()
-        validate_configured_users_file()
 
 
 class AuthDependencyTests(TempConfigMixin, unittest.TestCase):
@@ -511,7 +304,7 @@ class AuthSessionTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
                     started_hashes.set()
             if not release_hashes.wait(timeout=2):
                 raise TimeoutError("password verification was not released")
-            return False
+            return None
 
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(
@@ -520,7 +313,10 @@ class AuthSessionTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         ) as client:
             with (
                 mock.patch("src.auth_router.login_attempt_guard", guard),
-                mock.patch("src.auth_router.users_store.verify", side_effect=blocking_verify),
+                mock.patch(
+                    "src.auth_router.users_store.verify_record",
+                    side_effect=blocking_verify,
+                ),
             ):
                 first = asyncio.create_task(
                     client.post("/auth/login", json={"username": "admin", "password": "wrong"})
@@ -593,6 +389,7 @@ class AuthSessionTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
             "authenticated": True,
             "username": "admin",
             "source": "session_cookie",
+            "password_change_required": False,
         })
 
 

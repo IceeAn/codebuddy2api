@@ -39,7 +39,15 @@ Thumbs.db
 config/
 data/
 .codebuddy_creds/
+.codebuddy_debug/
 secrets/users.txt
+
+# 本地开发与诊断产物
+.codegraph/
+dogfood-output/
+.coverage
+.coverage.*
+htmlcov/
 
 # Log files
 *.log

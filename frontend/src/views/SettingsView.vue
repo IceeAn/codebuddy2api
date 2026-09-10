@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
-import { onBeforeRouteLeave } from 'vue-router';
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute } from 'vue-router';
 import { CircleHelp, Save } from '@lucide/vue';
 import { adminApi } from '../api/admin';
 import type { SettingField, SettingsResponse } from '../types';
@@ -22,9 +22,12 @@ import CTooltip from '../components/ui/CTooltip.vue';
 import RefreshButton from '../components/RefreshButton.vue';
 import { useSessionStore } from '../stores/session';
 import { adminQueryKeys } from '../utils/adminQueryKeys';
+import { chunkLoadRecovery } from '../utils/chunkLoadRecovery';
+import PasswordChangeForm from '../components/PasswordChangeForm.vue';
 
 const queryClient = useQueryClient();
 const session = useSessionStore();
+const route = useRoute();
 const queryKeys = adminQueryKeys(session.username);
 const toast = useToast();
 const form = reactive<Record<string, string | number | boolean | null>>({});
@@ -32,10 +35,17 @@ const tagValues = reactive<Record<string, string[]>>({});
 const formRef = ref<InstanceType<typeof CForm> | null>(null);
 const AUTO_ROTATION_KEY = 'CODEBUDDY_AUTO_ROTATION_ENABLED';
 const ROTATION_COUNT_KEY = 'CODEBUDDY_ROTATION_COUNT';
+const activeTab = computed<'service' | 'account'>(() =>
+  route.query.tab === 'account' ? 'account' : 'service',
+);
+const passwordForm = ref<InstanceType<typeof PasswordChangeForm> | null>(null);
 
 const settingsQuery = useQuery({
   queryKey: queryKeys.settings,
   queryFn: adminApi.settings,
+  enabled: computed(() => activeTab.value === 'service'),
+  networkMode: 'always',
+  refetchOnReconnect: false,
 });
 
 const fields = computed(() => settingsQuery.data.value?.fields || []);
@@ -242,8 +252,31 @@ async function saveSettings(): Promise<void> {
   saveMutation.mutate();
 }
 
+function discardServiceEdits(message: string): boolean {
+  if (!isDirty.value) return true;
+  if (!window.confirm(message)) return false;
+  applyServerSettings(settingsQuery.data.value!, true);
+  return true;
+}
+
 function confirmLeave(): boolean {
-  return !isDirty.value || window.confirm('当前有未保存的设置，确定放弃修改并离开吗？');
+  if (activeTab.value === 'account') {
+    return passwordForm.value!.confirmDiscard();
+  }
+  return discardServiceEdits('当前有未保存的设置，确定放弃修改并离开吗？');
+}
+
+async function switchTab(tab: 'service' | 'account'): Promise<void> {
+  if (tab === activeTab.value) return;
+  const canSwitch =
+    activeTab.value === 'service'
+      ? discardServiceEdits('当前有未保存的设置，确定放弃修改并切换吗？')
+      : passwordForm.value!.confirmDiscard();
+  if (!canSwitch) return;
+  await chunkLoadRecovery.replace({
+    name: 'settings',
+    query: { tab },
+  });
 }
 
 function handleBeforeUnload(event: BeforeUnloadEvent): void {
@@ -253,120 +286,162 @@ function handleBeforeUnload(event: BeforeUnloadEvent): void {
 }
 
 onBeforeRouteLeave(confirmLeave);
+onBeforeRouteUpdate((to) => {
+  const targetTab = to.query?.tab === 'account' ? 'account' : 'service';
+  if (targetTab === activeTab.value) return true;
+  return confirmLeave();
+});
 onMounted(() => window.addEventListener('beforeunload', handleBeforeUnload));
 onBeforeUnmount(() => window.removeEventListener('beforeunload', handleBeforeUnload));
 </script>
 
 <template>
-  <CCard title="服务配置">
-    <template #header-extra>
-      <div class="toolbar-actions flex items-center gap-2">
-        <RefreshButton :query="settingsRefreshQuery" @success="handleRefreshSuccess" />
-        <CButton
-          variant="primary"
-          :loading="saveMutation.isPending.value"
-          :disabled="!settingsLoaded || saveMutation.isPending.value"
-          :class="{ 'animate-success': savedFlash }"
-          @click="saveSettings"
-        >
-          <template #icon>
-            <Save :size="16" />
-          </template>
-          保存
-        </CButton>
-      </div>
-    </template>
-
-    <CAlert v-if="settingsQuery.isError.value" type="error" :show-icon="true">
-      <div class="toolbar flex items-center gap-2">
-        <span>{{ settingsLoaded ? '刷新配置失败，当前显示已有配置' : '加载配置失败' }}</span>
-        <RefreshButton :query="settingsQuery" label="重试" size="sm" />
-      </div>
-    </CAlert>
-
-    <CAlert
-      v-if="!settingsQuery.isError.value && !settingsQuery.isLoading.value && fields.length === 0"
-      type="info"
-      :show-icon="false"
-    >
-      暂无可配置项
-    </CAlert>
-
+  <div>
     <div
-      v-else-if="settingsQuery.isLoading.value && !settingsLoaded"
-      class="settings-loading grid min-h-24 place-items-center"
+      class="mb-5 inline-flex rounded-lg border border-border bg-surface p-1"
+      role="tablist"
+      aria-label="设置分类"
     >
-      <CSpin size="lg" />
+      <button
+        type="button"
+        role="tab"
+        :aria-selected="activeTab === 'service'"
+        :class="[
+          'rounded-md px-4 py-2 text-sm transition-[color,background-color]',
+          activeTab === 'service' ? 'bg-brand-500 text-white' : 'text-muted hover:text-text',
+        ]"
+        @click="switchTab('service')"
+      >
+        服务配置
+      </button>
+      <button
+        type="button"
+        role="tab"
+        :aria-selected="activeTab === 'account'"
+        :class="[
+          'rounded-md px-4 py-2 text-sm transition-[color,background-color]',
+          activeTab === 'account' ? 'bg-brand-500 text-white' : 'text-muted hover:text-text',
+        ]"
+        @click="switchTab('account')"
+      >
+        账号安全
+      </button>
     </div>
 
-    <div v-else-if="settingsLoaded">
-      <CForm
-        ref="formRef"
-        :model="form"
-        :rules="formRules"
-        label-placement="left"
-        label-width="fit-content(14rem)"
+    <CCard v-if="activeTab === 'service'" title="服务配置">
+      <template #header-extra>
+        <div class="toolbar-actions flex items-center gap-2">
+          <RefreshButton :query="settingsRefreshQuery" @success="handleRefreshSuccess" />
+          <CButton
+            variant="primary"
+            :loading="saveMutation.isPending.value"
+            :disabled="!settingsLoaded || saveMutation.isPending.value"
+            :class="{ 'animate-success': savedFlash }"
+            @click="saveSettings"
+          >
+            <template #icon>
+              <Save :size="16" />
+            </template>
+            保存
+          </CButton>
+        </div>
+      </template>
+
+      <CAlert v-if="settingsQuery.isError.value" type="error" :show-icon="true">
+        <div class="toolbar flex items-center gap-2">
+          <span>{{ settingsLoaded ? '刷新配置失败，当前显示已有配置' : '加载配置失败' }}</span>
+          <RefreshButton :query="settingsQuery" label="重试" size="sm" />
+        </div>
+      </CAlert>
+
+      <CAlert
+        v-if="!settingsQuery.isError.value && !settingsQuery.isLoading.value && fields.length === 0"
+        type="info"
+        :show-icon="false"
       >
-        <CFormItem
-          v-for="field in visibleFields"
-          :key="field.key"
-          :label="field.label"
-          :path="field.key"
+        暂无可配置项
+      </CAlert>
+
+      <div
+        v-else-if="settingsQuery.isLoading.value && !settingsLoaded"
+        class="settings-loading grid min-h-24 place-items-center"
+      >
+        <CSpin size="lg" />
+      </div>
+
+      <div v-else-if="settingsLoaded">
+        <CForm
+          ref="formRef"
+          :model="form"
+          :rules="formRules"
+          label-placement="left"
+          label-width="fit-content(14rem)"
         >
-          <template v-if="field.description" #label>
-            <span
-              class="inline-flex w-full max-w-full min-w-0 items-start justify-start gap-1.5 md:justify-end"
-            >
-              <span class="max-w-full min-w-0 break-words whitespace-normal">{{
-                field.label
-              }}</span>
-              <CTooltip :content="field.description" placement="top" clickable>
-                <span
-                  class="setting-help-trigger inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted transition-[color] duration-(--duration-fast) hover:text-text"
-                  :aria-label="`${field.label}说明`"
-                  role="button"
-                  tabindex="0"
-                  @click.prevent
-                >
-                  <CircleHelp :size="15" />
-                </span>
-              </CTooltip>
-            </span>
-          </template>
-          <CSelect
-            v-if="field.type === 'select'"
-            :model-value="form[field.key] as string | number"
-            :options="selectOptions(field)"
-            @update:model-value="updateField(field, $event)"
-          />
-          <CSwitch
-            v-else-if="field.type === 'boolean'"
-            :model-value="form[field.key] as boolean"
-            @update:model-value="updateBooleanField(field, $event)"
-          />
-          <div v-else-if="field.type === 'number'" class="w-full">
-            <CInputNumber
-              class="settings-number-input md:max-w-64"
-              :model-value="form[field.key] as number | null"
-              :min="field.min"
-              :max="field.max"
-              :step="field.step || 1"
-              :clearable="field.key !== ROTATION_COUNT_KEY"
-              @update:model-value="updateNumberField(field, $event)"
+          <CFormItem
+            v-for="field in visibleFields"
+            :key="field.key"
+            :label="field.label"
+            :path="field.key"
+          >
+            <template v-if="field.description" #label>
+              <span
+                class="inline-flex w-full max-w-full min-w-0 items-start justify-start gap-1.5 md:justify-end"
+              >
+                <span class="max-w-full min-w-0 break-words whitespace-normal">{{
+                  field.label
+                }}</span>
+                <CTooltip :content="field.description" placement="top" clickable>
+                  <span
+                    class="setting-help-trigger inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted transition-[color] duration-(--duration-fast) hover:text-text"
+                    :aria-label="`${field.label}说明`"
+                    role="button"
+                    tabindex="0"
+                    @click.prevent
+                  >
+                    <CircleHelp :size="15" />
+                  </span>
+                </CTooltip>
+              </span>
+            </template>
+            <CSelect
+              v-if="field.type === 'select'"
+              :model-value="form[field.key] as string | number"
+              :options="selectOptions(field)"
+              @update:model-value="updateField(field, $event)"
             />
-          </div>
-          <CDynamicTags
-            v-else-if="field.type === 'tags'"
-            :model-value="tagValues[field.key]"
-            @update:model-value="updateTags(field, $event)"
-          />
-          <CInput
-            v-else
-            :model-value="(form[field.key] as string | null) ?? ''"
-            @update:model-value="updateField(field, $event)"
-          />
-        </CFormItem>
-      </CForm>
-    </div>
-  </CCard>
+            <CSwitch
+              v-else-if="field.type === 'boolean'"
+              :model-value="form[field.key] as boolean"
+              @update:model-value="updateBooleanField(field, $event)"
+            />
+            <div v-else-if="field.type === 'number'" class="w-full">
+              <CInputNumber
+                class="settings-number-input md:max-w-64"
+                :model-value="form[field.key] as number | null"
+                :min="field.min"
+                :max="field.max"
+                :step="field.step || 1"
+                :clearable="field.key !== ROTATION_COUNT_KEY"
+                @update:model-value="updateNumberField(field, $event)"
+              />
+            </div>
+            <CDynamicTags
+              v-else-if="field.type === 'tags'"
+              :model-value="tagValues[field.key]"
+              @update:model-value="updateTags(field, $event)"
+            />
+            <CInput
+              v-else
+              :model-value="(form[field.key] as string | null) ?? ''"
+              @update:model-value="updateField(field, $event)"
+            />
+          </CFormItem>
+        </CForm>
+      </div>
+    </CCard>
+
+    <CCard v-else title="账号安全">
+      <PasswordChangeForm ref="passwordForm" />
+    </CCard>
+  </div>
 </template>

@@ -50,13 +50,11 @@ python3 -m venv venv
 source venv/bin/activate
 python3 -m pip install -r requirements.txt
 
-mkdir -p secrets data
-python3 scripts/hash_password.py admin --output secrets/users.txt
-
+mkdir -p data
 python3 web.py
 ```
 
-`python3 scripts/hash_password.py admin --output secrets/users.txt` 会提示输入密码。输入并按下回车后，会将密码哈希写入 `secrets/users.txt`。重复执行并将 `admin` 改为新用户名可添加多个用户；使用已有用户名重复执行会删除旧记录并更新该用户的密码。
+真正的全新安装会创建一次性初始账号 `admin` / `admin`。它只在本次启动后的 1 小时内有效，首次登录后会强制修改密码；启动 WARNING 会明确标明正在使用内置默认密码。若不想启用公开的默认值，可在首次启动前运行 `python3 scripts/manage_users.py set-user admin`，隐藏输入两次密码并直接创建正式账号。
 
 启动后访问 `http://127.0.0.1:8001`，继续执行 [开始使用](#开始使用)。
 
@@ -82,18 +80,18 @@ PowerShell 示例使用 Python Launcher `py -3`。如不可用，可以尝试将
 py -3 -m venv venv
 .\venv\Scripts\python.exe -m pip install -r requirements.txt
 
-New-Item -ItemType Directory -Force secrets | Out-Null
 New-Item -ItemType Directory -Force data | Out-Null
-.\venv\Scripts\python.exe scripts\hash_password.py admin --output secrets\users.txt
-
 .\venv\Scripts\python.exe web.py
 ```
 
-`.\venv\Scripts\python.exe scripts\hash_password.py admin --output secrets\users.txt` 会提示输入密码。输入并按下回车后，会将密码哈希写入 `secrets/users.txt`。重复执行并将 `admin` 改为新用户名可添加多个用户；使用已有用户名重复执行会删除旧记录并更新该用户的密码。
+真正的全新安装会创建一次性初始账号 `admin` / `admin`。它只在本次启动后的 1 小时内有效，首次登录后会强制修改密码；启动 WARNING 会明确标明正在使用内置默认密码。若不想启用公开的默认值，可在首次启动前运行 `.\venv\Scripts\python.exe scripts\manage_users.py set-user admin`，隐藏输入两次密码并直接创建正式账号。
 
 启动后访问 `http://127.0.0.1:8001`，继续执行 [开始使用](#开始使用)。
 
 ### 更新
+
+> [!NOTE]
+> 从使用 `secrets/users.txt`（<= v0.4.0）的旧版本升级时，建议先阅读 [账号系统迁移说明](doc/账号系统迁移.md)，并保留旧文件直到首次迁移成功。
 
 #### 使用更新脚本更新（建议，要求当前安装版本为 v0.2.0 或更高版本）
 
@@ -243,21 +241,23 @@ curl -fsSL -o docker-compose.yml https://raw.githubusercontent.com/iceean/codebu
 
 > 也可以从本仓库的 [docker-compose.yml](docker-compose.yml) 复制内容并手动创建 `docker-compose.yml` 文件。
 
-### 2. 创建管理台用户
+### 2. 初始化管理台账号
+
+推荐在首次启动前创建一个正式账号：
 
 ```bash
-docker run --rm -it \
-  -v "$PWD/secrets:/app/secrets" \
-  ghcr.io/iceean/codebuddy2api:latest \
-  add-user admin
+mkdir -p data secrets
+docker compose run --rm codebuddy2api set-user admin
 ```
 
-命令会提示输入密码，并原子更新 `secrets/users.txt`。需要多个管理台用户时，重复执行并替换用户名；再次使用已有用户名会删除旧记录并更新密码。`add-user` 容器需要可写目录挂载，正式服务只读挂载该目录。
+命令会隐藏输入两次密码，并直接写入 `data/codebuddy2api.sqlite3`。`add-user` 是 `set-user` 的完全等价别名。
 
-若服务已在运行，新增用户或更新密码后需要重启容器才能生效：
+也可以跳过此步直接启动。真正的全新安装会创建仅在本次启动后 1 小时内有效的 `admin` / `admin` 初始账号，并在首次登录后强制修改密码。
+
+服务运行后可用同一命令新增账号或重置密码，无需重启：
 
 ```bash
-docker compose restart codebuddy2api
+docker compose run --rm codebuddy2api set-user <用户名>
 ```
 
 ### 3. 启动服务
@@ -268,7 +268,7 @@ docker compose up -d
 
 启动后访问 `http://127.0.0.1:8001`，继续执行 [开始使用](#开始使用)。
 
-SQLite 与 CodeBuddy 凭证保存在当前目录的 `data` 中，系统用户保存在 `secrets/users.txt`。
+SQLite、系统账号与 CodeBuddy 凭证都保存在当前目录的 `data` 中。只读 `secrets` 挂载仅用于从旧版 `users.txt` 完成一次性迁移；迁移细节见 [账号系统迁移说明](doc/账号系统迁移.md)。
 
 若需要通过域名、服务器 IP 访问服务、配置反向代理或修改其他配置，可参考 [.env.example](.env.example) 创建 `.env` 并配置相关环境变量后再启动。
 
@@ -276,10 +276,11 @@ SQLite 与 CodeBuddy 凭证保存在当前目录的 `data` 中，系统用户保
 
 服务启动后，按此顺序操作：
 
-1. 使用刚创建的系统用户名和密码登录。
-2. 在“凭证管理”中启动 CodeBuddy 认证并完成官方登录授权，也可以手动添加凭证。
-3. 确认凭证列表中至少有一个有效凭证。
-4. 在“API 密钥”中创建一个 `sk-...` API Key；请及时复制，明文只会在创建时展示一次。
+1. 使用正式账号登录；若使用 `admin` / `admin` 初始账号，按页面要求先修改密码并重新登录。
+2. 正式账号以后可在“设置 → 账号安全”修改自身密码。
+3. 在“凭证管理”中启动 CodeBuddy 认证并完成官方登录授权，也可以手动添加凭证。
+4. 确认凭证列表中至少有一个有效凭证。
+5. 在“API 密钥”中创建一个 `sk-...` API Key；请及时复制，明文只会在创建时展示一次。
 
 拿到 API Key 后，可以先用 `curl` 验证：
 
@@ -414,12 +415,14 @@ export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1
 | ---------- | ---------------------------------- | ----------------------- | -------------------------------- |
 | 外部客户端 | `/openai/v1/*`                     | `sk-...` Bearer API Key | 对外 OpenAI 兼容入口             |
 | 外部客户端 | `/anthropic/v1/*`                  | `x-api-key` 或 Bearer   | 对外 Anthropic Messages 兼容入口 |
-| Web 管理台 | `/auth/*`                          | 登录接口或会话 Cookie   | 登录、恢复会话、退出             |
+| Web 管理台 | `/auth/*`                          | 公开状态或会话 Cookie   | 初始状态、登录、改密、会话、退出 |
 | Web 管理台 | `/api/admin/*`                     | 会话 Cookie             | 凭证、API Key、设置和状态管理    |
 | 开发文档   | `/docs`、`/redoc`、`/openapi.json` | 会话 Cookie             | Swagger、ReDoc 与 OpenAPI schema |
 | 监控系统   | `GET /health`                      | 无                      | 健康检查                         |
 
 登录管理台后，可从“开发文档”页面的按钮在新标签页打开 `/docs`；也可以在保持登录会话的浏览器中直接访问 `/docs` 或 `/redoc`。未登录请求会返回 401，`sk-...` API Key 不能代替管理台会话访问文档。
+
+一次性初始账号登录后只能访问首次改密所需的前端、`/health`、`/auth/bootstrap-status`、`/auth/login`、`/auth/session`、`/auth/change-password` 和 `/auth/logout`。其他 Cookie 管理接口在完成改密前返回 403；外部 API Key 请求不受影响。
 
 OpenAPI 文档会展示外部 `/openai/v1/*` 和 `/anthropic/v1/*` 的请求体与鉴权。使用 Swagger 调试外部接口时，仍需通过 Authorize 填写管理台生成的 `sk-...` API Key。管理台测试入口 `/api/admin/playground/<协议>/v1/*` 不会出现在 schema 中。
 
@@ -442,13 +445,18 @@ OpenAPI 文档会展示外部 `/openai/v1/*` 和 `/anthropic/v1/*` 的请求体�
 
 #### 服务启动与存储
 
-| 环境变量               | 默认值              | 说明                                                                                               |
-| ---------------------- | ------------------- | -------------------------------------------------------------------------------------------------- |
-| `CODEBUDDY_USERS_FILE` | `secrets/users.txt` | 系统用户文件路径；启动时必须存在且至少包含一个有效用户                                             |
-| `CODEBUDDY_HOST`       | `127.0.0.1`         | 本地启动监听地址                                                                                   |
-| `CODEBUDDY_PORT`       | `8001`              | 本地启动监听端口                                                                                   |
-| `CODEBUDDY_DATA_DIR`   | `data`              | 运行数据目录，包含 SQLite 和 `credentials/`；相对路径以应用根目录为基准，Docker 固定为 `/app/data` |
-| `CODEBUDDY_LOG_LEVEL`  | `INFO`              | `DEBUG`、`INFO`、`WARNING`、`ERROR` 或 `CRITICAL`                                                  |
+| 环境变量                       | 默认值              | 说明                                                                                               |
+| ------------------------------ | ------------------- | -------------------------------------------------------------------------------------------------- |
+| `CODEBUDDY_USERS_FILE`         | `secrets/users.txt` | 仅用于首次迁移的旧用户文件；缺失对全新安装合法，正式初始化后永久忽略                               |
+| `CODEBUDDY_BOOTSTRAP_ENABLED`  | `true`              | 真正全新安装是否创建一次性初始账号；关闭后须用账号管理命令初始化                                   |
+| `CODEBUDDY_BOOTSTRAP_USERNAME` | `admin`             | 一次性初始用户名；仅在账号系统尚未初始化时读取                                                     |
+| `CODEBUDDY_BOOTSTRAP_PASSWORD` | `admin`             | 一次性初始密码；仅在账号系统尚未初始化时读取，首次登录后必须修改                                   |
+| `CODEBUDDY_HOST`               | `127.0.0.1`         | 本地启动监听地址                                                                                   |
+| `CODEBUDDY_PORT`               | `8001`              | 本地启动监听端口                                                                                   |
+| `CODEBUDDY_DATA_DIR`           | `data`              | 运行数据目录，包含 SQLite 和 `credentials/`；相对路径以应用根目录为基准，Docker 固定为 `/app/data` |
+| `CODEBUDDY_LOG_LEVEL`          | `INFO`              | `DEBUG`、`INFO`、`WARNING`、`ERROR` 或 `CRITICAL`                                                  |
+
+`CODEBUDDY_BOOTSTRAP_PASSWORD` 未显式配置时，启动 WARNING 会标明正在使用“内置默认密码”；显式配置时会标明“自定义初始密码”。引导账号每次启动只有 1 小时有效期。密码和账号迁移的完整规则见 [账号系统迁移说明](doc/账号系统迁移.md)。
 
 #### 上游连接安全
 
@@ -479,12 +487,12 @@ OpenAPI 文档会展示外部 `/openai/v1/*` 和 `/anthropic/v1/*` 的请求体�
 
 | 环境变量                                | 默认值     | 说明                                                         |
 | --------------------------------------- | ---------- | ------------------------------------------------------------ |
-| `CODEBUDDY_MAX_REQUEST_BODY_BYTES`      | `16777216` | 全局 HTTP 请求体上限；登录接口另有固定 8 KiB 上限            |
-| `CODEBUDDY_LOGIN_RATE_WINDOW_SECONDS`   | `60`       | 登录全局、IP、用户名三个独立速率桶共用的滑动窗口秒数         |
+| `CODEBUDDY_MAX_REQUEST_BODY_BYTES`      | `16777216` | 全局 HTTP 请求体上限；登录和改密接口另有固定 8 KiB 上限      |
+| `CODEBUDDY_LOGIN_RATE_WINDOW_SECONDS`   | `60`       | 登录/改密全局、IP、用户名三个独立速率桶共用的滑动窗口秒数    |
 | `CODEBUDDY_LOGIN_GLOBAL_MAX_ATTEMPTS`   | `60`       | 每个登录限流窗口允许的进程全局尝试数                         |
 | `CODEBUDDY_LOGIN_IP_MAX_ATTEMPTS`       | `10`       | 每个登录限流窗口允许的单一客户端 IP 尝试数                   |
 | `CODEBUDDY_LOGIN_USERNAME_MAX_ATTEMPTS` | `5`        | 每个登录限流窗口允许的单一用户名尝试数                       |
-| `CODEBUDDY_LOGIN_MAX_CONCURRENCY`       | `2`        | 同时进入工作线程或等待线程池的 PBKDF2 登录校验数；超限不排队 |
+| `CODEBUDDY_LOGIN_MAX_CONCURRENCY`       | `2`        | 同时进入线程池的登录/改密 PBKDF2 校验数；超限不排队          |
 | `CODEBUDDY_MAX_CONCURRENT_REQUESTS`     | 空         | Uvicorn 全局连接/任务并发上限；空表示不限制                  |
 
 `CODEBUDDY_API_ENDPOINT`、白名单 URL 或其他强类型配置无效时，服务会在启动阶段直接失败；不会回退到其他站点，也不会把真实 Token 转发到未明确授权的地址。
@@ -533,9 +541,8 @@ python3 -m venv venv
 source venv/bin/activate
 python3 -m pip install -r requirements-dev.txt
 
-mkdir -p secrets data
-python3 scripts/hash_password.py admin --output secrets/users.txt
-
+mkdir -p data
+python3 scripts/manage_users.py set-user admin
 python3 web.py
 ```
 
@@ -559,7 +566,7 @@ pnpm run dev
 docker build -t codebuddy2api:local .
 ```
 
-可复用 [Docker 部署](#docker-部署) 中创建的 `data` 和 `secrets/users.txt` 启动本地镜像：
+可复用 [Docker 部署](#docker-部署) 中创建的 `data` 启动本地镜像；`secrets` 只为兼容旧用户文件迁移而只读挂载：
 
 ```bash
 docker run -d \
@@ -593,16 +600,20 @@ pnpm run test:coverage
 
 ## 故障排除
 
-#### `Authentication users file not found` / `No authentication users configured`
+#### `检测到既有安装但没有可迁移的旧用户文件`
 
-确认 `CODEBUDDY_USERS_FILE` 指向可读的用户文件，并且文件中至少有一条有效的 `用户名:PBKDF2哈希` 记录。
+这是为了避免在旧安装中意外启用公开的 `admin/admin`。恢复旧 `users.txt` 后重新启动，或使用同一数据目录运行 `scripts/manage_users.py set-user <用户名>` 创建正式账号；Docker 使用 `docker compose run --rm codebuddy2api set-user <用户名>`。
+
+#### `初始账号已过期`
+
+未完成首次改密的一次性引导账号已超过本次启动的 1 小时有效期。重启服务获得新的 1 小时窗口，登录后立即完成改密；也可用 `manage_users.py set-user` 直接把账号设为正式账号。
 
 #### `Invalid authentication credentials`
 
 - 外部客户端必须请求 `/openai/v1/*` 并发送 `Authorization: Bearer sk-...`。
 - Anthropic 客户端必须请求 `/anthropic/v1/*`，发送 `x-api-key` 或 Bearer API Key，并带 `anthropic-version: 2023-06-01`。
 - 管理台测试请求必须访问 `/api/admin/playground/<协议>/v1/*` 并携带有效会话 Cookie。
-- API Key 所属系统用户从 `users.txt` 删除后，该 Key 也会失效。
+- API Key 所属系统账号从 SQLite 删除后，该 Key 会暂时失效；重建同名账号后会恢复可用。
 
 #### `凭证获取失败` 或没有可用模型
 

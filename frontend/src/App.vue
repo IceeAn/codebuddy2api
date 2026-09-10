@@ -16,6 +16,7 @@ import {
   TerminalSquare,
 } from '@lucide/vue';
 import LoginView from './views/LoginView.vue';
+import ForcedPasswordChangeView from './views/ForcedPasswordChangeView.vue';
 import CButton from './components/ui/CButton.vue';
 import CSpin from './components/ui/CSpin.vue';
 import CDrawer from './components/ui/CDrawer.vue';
@@ -48,7 +49,11 @@ const activeRoute = computed(() => String(route.name || 'dashboard'));
 const pageTitle = computed(
   () => navItems.find((item) => item.routeName === activeRoute.value)?.label || '总览',
 );
-const routeKey = computed(() => route.fullPath || activeRoute.value);
+const routeKey = computed(() =>
+  activeRoute.value === 'settings'
+    ? route.path || '/settings'
+    : route.fullPath || activeRoute.value,
+);
 
 /** 移动端导航：与 Tailwind md 断点保持一致，< 48rem 用 CDrawer 承载导航。 */
 const mobileNavOpen = ref(false);
@@ -215,6 +220,8 @@ function retrySessionRestore(): void {
   </div>
 
   <LoginView v-else-if="!session.authenticated" />
+
+  <ForcedPasswordChangeView v-else-if="session.passwordChangeRequired" />
 
   <div v-else class="flex min-h-screen bg-bg">
     <aside

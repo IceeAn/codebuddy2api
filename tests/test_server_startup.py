@@ -23,6 +23,9 @@ class RepositoryConfigurationTests(unittest.TestCase):
         }
 
         self.assertIn("data/", entries)
+        self.assertIn(".codebuddy_debug/", entries)
+        self.assertIn(".codegraph/", entries)
+        self.assertIn("dogfood-output/", entries)
 
     def test_compose_forces_all_runtime_data_into_single_persistent_mount(self):
         compose_text = (self.repository_root / "docker-compose.yml").read_text(
@@ -74,6 +77,16 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("# 默认值: Asia/Shanghai", example_text)
         self.assertIn("# TZ=Asia/Shanghai", example_text)
 
+    def test_environment_example_documents_bootstrap_account_controls(self):
+        example_text = (self.repository_root / ".env.example").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("CODEBUDDY_BOOTSTRAP_ENABLED", example_text)
+        self.assertIn("CODEBUDDY_BOOTSTRAP_USERNAME", example_text)
+        self.assertIn("CODEBUDDY_BOOTSTRAP_PASSWORD", example_text)
+        self.assertIn("仅用于首次迁移", example_text)
+
     def test_release_workflow_uploads_local_runtime_packages(self):
         workflow = (
             self.repository_root / ".github" / "workflows" / "release.yml"
@@ -111,13 +124,12 @@ class RepositoryConfigurationTests(unittest.TestCase):
     def test_container_entrypoint_supports_user_setup_commands(self):
         entrypoint = (self.repository_root / "entrypoint.sh").read_text(encoding="utf-8")
 
-        self.assertIn("hash-password)", entrypoint)
-        self.assertIn("add-user)", entrypoint)
-        self.assertIn('users_file="/app/secrets/users.txt"', entrypoint)
-        self.assertIn('mkdir -p "${users_dir}"', entrypoint)
-        self.assertIn('exec codebuddy2api-hash-password "$@"', entrypoint)
-        self.assertIn(
-            'codebuddy2api-hash-password "$@" --output "${users_file}"', entrypoint
+        self.assertIn("set-user|add-user|list-users|delete-user)", entrypoint)
+        self.assertIn('exec gosu "${APP_USER}" codebuddy2api-manage-users', entrypoint)
+        self.assertIn("hash-password|codebuddy2api-hash-password)", entrypoint)
+        self.assertLess(
+            entrypoint.index("hash-password|codebuddy2api-hash-password)"),
+            entrypoint.index('CODEBUDDY_DATA_DIR="/app/data"'),
         )
         self.assertNotIn("chmod 644", entrypoint)
 
@@ -125,11 +137,17 @@ class RepositoryConfigurationTests(unittest.TestCase):
         entrypoint = (self.repository_root / "entrypoint.sh").read_text(encoding="utf-8")
 
         self.assertIn('runtime_users_file="/run/codebuddy2api/users.txt"', entrypoint)
+        self.assertIn('rm -f "${runtime_users_file}"', entrypoint)
         self.assertIn('CODEBUDDY_USERS_FILE="${runtime_users_file}"', entrypoint)
         self.assertIn("export CODEBUDDY_USERS_FILE", entrypoint)
-        self.assertIn('-m 400 -o "${APP_USER}" -g "${APP_USER}"', entrypoint)
+        self.assertIn(
+            'install -m 400 -o "${APP_USER}" -g "${APP_USER}" "${users_file}" "${runtime_users_file}"',
+            entrypoint,
+        )
+        self.assertIn('hard_link_count="$(stat -c %h "${users_file}")"', entrypoint)
+        self.assertIn('if [ -e "${users_file}" ] || [ -L "${users_file}" ]', entrypoint)
 
-    def test_dockerfile_uses_recommended_runtime_and_hash_command(self):
+    def test_dockerfile_uses_recommended_runtime_and_user_commands(self):
         dockerfile = (self.repository_root / "Dockerfile").read_text(encoding="utf-8")
 
         self.assertIn("ARG PYTHON_VERSION=3.12", dockerfile)
@@ -144,6 +162,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
             "COPY config.py release_runtime_lock.py web.py ./",
             "COPY src ./src",
             "COPY scripts/hash_password.py ./scripts/hash_password.py",
+            "COPY scripts/manage_users.py ./scripts/manage_users.py",
             "COPY frontend/public ./frontend/public",
         ):
             with self.subTest(runtime_copy=runtime_copy):
@@ -151,6 +170,10 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertNotIn("frontend/admin.html", dockerfile)
         self.assertIn(
             "ln -s /app/scripts/hash_password.py /usr/local/bin/codebuddy2api-hash-password",
+            dockerfile,
+        )
+        self.assertIn(
+            "ln -s /app/scripts/manage_users.py /usr/local/bin/codebuddy2api-manage-users",
             dockerfile,
         )
         self.assertNotIn(".codebuddy_creds", dockerfile)
@@ -198,6 +221,9 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("#### 手动更新", readme)
         self.assertIn("`--yes`", readme)
         self.assertNotIn("--confirm-stopped", readme)
+        self.assertIn("scripts/manage_users.py set-user", readme)
+        self.assertIn("doc/账号系统迁移.md", readme)
+        self.assertNotIn("scripts/hash_password.py admin --output", readme)
 
     def test_release_lock_is_acquired_before_application_imports(self):
         entrypoint = (self.repository_root / "web.py").read_text(encoding="utf-8")
@@ -259,7 +285,7 @@ class ServerStartupTests(unittest.TestCase):
 class ServerLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_lifespan_starts_and_stops_resources(self):
         with (
-            mock.patch.object(web, "validate_configured_users_file") as validate_users,
+            mock.patch.object(web, "initialize_system_users") as initialize_users,
             mock.patch.object(web, "initialize_database") as initialize_database,
             mock.patch.object(
                 web.usage_stats_retention_manager,
@@ -295,8 +321,8 @@ class ServerLifecycleTests(unittest.IsolatedAsyncioTestCase):
             ) as checkin_shutdown,
         ):
             async with web.lifespan(web.app):
-                validate_users.assert_called_once_with()
                 initialize_database.assert_called_once_with()
+                initialize_users.assert_called_once_with()
                 retention_startup.assert_awaited_once_with()
                 startup.assert_awaited_once_with()
                 refresh_startup.assert_awaited_once_with()
@@ -313,13 +339,13 @@ class ServerLifecycleTests(unittest.IsolatedAsyncioTestCase):
         checkin_shutdown.assert_awaited_once_with()
         shutdown.assert_awaited_once_with()
 
-    async def test_lifespan_stops_before_resource_startup_when_users_file_is_invalid(self):
+    async def test_lifespan_stops_before_resource_startup_when_users_are_invalid(self):
         with (
             mock.patch.object(
                 web,
-                "validate_configured_users_file",
+                "initialize_system_users",
                 side_effect=RuntimeError("missing users"),
-            ) as validate_users,
+            ) as initialize_users,
             mock.patch.object(web, "initialize_database") as initialize_database,
             mock.patch.object(
                 web.usage_stats_retention_manager,
@@ -358,8 +384,8 @@ class ServerLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 async with web.lifespan(web.app):
                     pass
 
-        validate_users.assert_called_once_with()
-        initialize_database.assert_not_called()
+        initialize_database.assert_called_once_with()
+        initialize_users.assert_called_once_with()
         retention_startup.assert_not_awaited()
         startup.assert_not_awaited()
         refresh_startup.assert_not_awaited()

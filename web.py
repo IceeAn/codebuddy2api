@@ -28,6 +28,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 # Import the routers
 from src.auth_router import router as service_auth_router
 from src.auth_router import require_session_user
+from src.auth_error_codes import AuthBusinessError, auth_business_error_response
 from src.admin_router import router as admin_router
 from src.anthropic_compat import SUPPORTED_ANTHROPIC_VERSION
 from src.anthropic_errors import (
@@ -52,7 +53,7 @@ from src.request_limits import RequestBodyLimitMiddleware
 from src.stats_router import router as stats_router
 from src.stream_service import UpstreamAPIError, lifecycle_manager
 from src.usage_stats_store import usage_stats_retention_manager
-from src.users_store import validate_configured_users_file
+from src.users_store import initialize_system_users
 from src.uvicorn_limits import to_uvicorn_limit_concurrency
 
 from config import (
@@ -82,8 +83,8 @@ async def lifespan(app: FastAPI):
     logger.info("Starting CodeBuddy2API Service")
     try:
         # 启动时初始化资源
-        validate_configured_users_file()
         initialize_database()
+        initialize_system_users()
         await usage_stats_retention_manager.startup()
         await lifecycle_manager.startup()
         await credential_refresh_manager.startup()
@@ -125,6 +126,12 @@ docs_router = APIRouter(route_class=PrivateNoStoreRoute)
 async def anthropic_api_error_handler(_request, error: AnthropicAPIError):
     """返回带稳定 request-id 的 Anthropic 错误信封。"""
     return anthropic_error_response(error)
+
+
+@app.exception_handler(AuthBusinessError)
+async def auth_business_error_handler(_request, error: AuthBusinessError):
+    """返回前后端共享的顶层账号业务错误码。"""
+    return auth_business_error_response(error)
 
 
 @app.exception_handler(RequestValidationError)
@@ -348,7 +355,7 @@ def run_server():
     logger.info(f"   Admin API: GET http://{host}:{port}/api/admin/status")
     logger.info("=" * 60)
     logger.info("Authentication:")
-    logger.info("   Mount secrets/users.txt for multi-user authentication")
+    logger.info("   System accounts are stored in SQLite")
     logger.info("   Web UI uses HttpOnly session cookies")
     logger.info("   API clients must use Bearer sk-... keys generated in the Web UI")
     logger.info("=" * 60)

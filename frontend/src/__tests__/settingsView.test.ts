@@ -10,6 +10,11 @@ const {
   invalidateQueries,
   toastMock,
   routeLeaveGuards,
+  routeUpdateGuards,
+  routeMock,
+  queryOptions,
+  replaceRouteMock,
+  passwordConfirmDiscardMock,
   formValidateMock,
   formRestoreValidationMock,
 } = vi.hoisted(() => ({
@@ -35,6 +40,11 @@ const {
     info: vi.fn<(message: string, duration?: number) => void>(),
   },
   routeLeaveGuards: [] as Array<() => boolean | void>,
+  routeUpdateGuards: [] as Array<(to: { query?: Record<string, unknown> }) => boolean | void>,
+  routeMock: { name: 'settings', path: '/settings', query: {} as Record<string, unknown> },
+  queryOptions: [] as Array<Record<string, unknown>>,
+  replaceRouteMock: vi.fn<(target: Record<string, unknown>) => Promise<void>>(),
+  passwordConfirmDiscardMock: vi.fn<() => boolean>(() => true),
   formValidateMock: vi.fn<() => Promise<void>>(),
   formRestoreValidationMock: vi.fn<() => void>(),
 }));
@@ -43,7 +53,10 @@ const {
 const createRef = ref;
 
 vi.mock('@tanstack/vue-query', () => ({
-  useQuery: () => query,
+  useQuery: (options: Record<string, unknown>) => {
+    queryOptions.push(options);
+    return query;
+  },
   useQueryClient: () => ({ invalidateQueries }),
   useMutation: (options: Record<string, (...args: any[]) => any>) => {
     mutationOptions.push(options);
@@ -63,6 +76,13 @@ vi.mock('../composables/useToast', () => ({
 
 vi.mock('vue-router', () => ({
   onBeforeRouteLeave: (guard: () => boolean | void) => routeLeaveGuards.push(guard),
+  onBeforeRouteUpdate: (guard: (to: { query?: Record<string, unknown> }) => boolean | void) =>
+    routeUpdateGuards.push(guard),
+  useRoute: () => routeMock,
+}));
+
+vi.mock('../utils/chunkLoadRecovery', () => ({
+  chunkLoadRecovery: { replace: replaceRouteMock },
 }));
 
 import SettingsView from '../views/SettingsView.vue';
@@ -268,12 +288,20 @@ const TooltipStub = defineComponent({
       );
   },
 });
+const PasswordChangeFormStub = defineComponent({
+  name: 'PasswordChangeForm',
+  setup(_, { expose }) {
+    expose({ confirmDiscard: passwordConfirmDiscardMock });
+    return () => h('div', { class: 'password-change-form-stub' }, '账号密码表单');
+  },
+});
 
 const mountedWrappers: ReturnType<typeof mount>[] = [];
 
 function mountView({ useRealNumberForm = false, useRealHelpInteraction = false } = {}) {
   mutationOptions.length = 0;
   mutationStates.length = 0;
+  queryOptions.length = 0;
   const useRealForm = useRealNumberForm || useRealHelpInteraction;
   const stubs = {
     CCard: CardStub,
@@ -288,6 +316,7 @@ function mountView({ useRealNumberForm = false, useRealHelpInteraction = false }
     CInput: useRealHelpInteraction ? false : InputStub,
     CButton: ButtonStub,
     CTooltip: useRealHelpInteraction ? false : TooltipStub,
+    PasswordChangeForm: PasswordChangeFormStub,
     RefreshButton: RefreshButtonStub,
     Save: true,
     CircleHelp: true,
@@ -323,6 +352,12 @@ describe('SettingsView', () => {
     formValidateMock.mockResolvedValue(undefined);
     formRestoreValidationMock.mockReset();
     routeLeaveGuards.length = 0;
+    routeUpdateGuards.length = 0;
+    routeMock.query = {};
+    replaceRouteMock.mockReset();
+    replaceRouteMock.mockResolvedValue(undefined);
+    passwordConfirmDiscardMock.mockReset();
+    passwordConfirmDiscardMock.mockReturnValue(true);
     vi.spyOn(window, 'confirm').mockReturnValue(true);
   });
 
@@ -333,6 +368,81 @@ describe('SettingsView', () => {
   it('没有配置项时显示空状态', () => {
     const wrapper = mountView();
     expect(wrapper.text()).toContain('暂无可配置项');
+  });
+
+  it('支持 URL 驱动的服务配置与账号安全标签，账号直达不查询配置', () => {
+    routeMock.query = { tab: 'account' };
+    const account = mountView();
+
+    expect(account.find('.password-change-form-stub').exists()).toBe(true);
+    expect((queryOptions[0].enabled as Ref<boolean>).value).toBe(false);
+    expect(account.text()).toContain('账号安全');
+
+    routeMock.query = { tab: 'unknown' };
+    const fallback = mountView();
+    expect(fallback.text()).toContain('暂无可配置项');
+    expect((queryOptions[0].enabled as Ref<boolean>).value).toBe(true);
+  });
+
+  it('标签点击使用 replace，服务配置脏数据先确认并按服务端快照重置', async () => {
+    query.data.value = {
+      settings: { text: 'server' },
+      fields: [{ key: 'text', label: '文本', type: 'text' }],
+    };
+    const wrapper = mountView();
+    await wrapper.vm.$nextTick();
+    await wrapper.findComponent(InputStub).vm.$emit('update:modelValue', 'edited');
+    vi.mocked(window.confirm).mockReturnValueOnce(false);
+
+    const accountTab = wrapper
+      .findAll('button')
+      .find((button) => button.text().includes('账号安全'))!;
+    await accountTab.trigger('click');
+    expect(replaceRouteMock).not.toHaveBeenCalled();
+
+    vi.mocked(window.confirm).mockReturnValueOnce(true);
+    await accountTab.trigger('click');
+    expect(replaceRouteMock).toHaveBeenCalledWith({
+      name: 'settings',
+      query: { tab: 'account' },
+    });
+    expect((wrapper.vm.$ as any).setupState.form.text).toBe('server');
+  });
+
+  it('账号标签离开和路由更新复用密码表单保护', () => {
+    routeMock.query = { tab: 'account' };
+    const wrapper = mountView();
+    passwordConfirmDiscardMock.mockReturnValue(false);
+
+    expect(routeLeaveGuards[0]()).toBe(false);
+    expect(routeUpdateGuards[0]({ query: { tab: 'service' } })).toBe(false);
+    expect(routeUpdateGuards[0]({ query: { tab: 'account' } })).toBe(true);
+    expect(wrapper.find('.password-change-form-stub').exists()).toBe(true);
+  });
+
+  it('账号页点击当前标签不导航，切回服务配置也受密码表单保护', async () => {
+    routeMock.query = { tab: 'account' };
+    const wrapper = mountView();
+    const tabs = wrapper.findAll('[role="tab"]');
+
+    await tabs[1].trigger('click');
+    expect(replaceRouteMock).not.toHaveBeenCalled();
+
+    passwordConfirmDiscardMock.mockReturnValueOnce(false);
+    await tabs[0].trigger('click');
+    expect(replaceRouteMock).not.toHaveBeenCalled();
+
+    passwordConfirmDiscardMock.mockReturnValueOnce(true);
+    await tabs[0].trigger('click');
+    expect(replaceRouteMock).toHaveBeenCalledWith({
+      name: 'settings',
+      query: { tab: 'service' },
+    });
+  });
+
+  it('服务页路由更新到账号页沿用服务脏数据确认', () => {
+    mountView();
+    expect(routeUpdateGuards[0]({ query: { tab: 'account' } })).toBe(true);
   });
 
   it('初始化各种字段并构造保存 payload', async () => {

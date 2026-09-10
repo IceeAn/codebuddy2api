@@ -1,4 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router';
+import { useSessionStore } from './stores/session';
 
 const DashboardView = () => import('./views/DashboardView.vue');
 const StatsView = () => import('./views/StatsView.vue');
@@ -39,10 +40,37 @@ const router = createRouter({
   ],
 });
 
-router.afterEach((to, _from, failure) => {
-  if (failure) return;
+function updateDocumentTitle(to = router.currentRoute.value, session = useSessionStore()): void {
+  if (session.ready && !session.authenticated) {
+    document.title = '登录 · CodeBuddy2API';
+    return;
+  }
+  if (session.ready && session.passwordChangeRequired) {
+    document.title = '修改密码 · CodeBuddy2API';
+    return;
+  }
   const title = typeof to.meta.title === 'string' ? to.meta.title : '管理台';
   document.title = `${title} · CodeBuddy2API`;
+}
+
+let subscribedSession: ReturnType<typeof useSessionStore> | undefined;
+let stopWatchingSession: (() => void) | undefined;
+
+function subscribeToSessionTitle(session: ReturnType<typeof useSessionStore>): void {
+  if (subscribedSession === session) return;
+  stopWatchingSession?.();
+  subscribedSession = session;
+  stopWatchingSession = session.$subscribe(
+    () => updateDocumentTitle(router.currentRoute.value, session),
+    { detached: true },
+  );
+}
+
+router.afterEach((to, _from, failure) => {
+  const session = useSessionStore();
+  subscribeToSessionTitle(session);
+  if (failure) return;
+  updateDocumentTitle(to, session);
 });
 
 export default router;

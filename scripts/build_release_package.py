@@ -38,7 +38,7 @@ REQUIRED_FILES = (
     "config.py",
     "web.py",
     "frontend/package.json",
-    "secrets/users.txt.example",
+    "doc/账号系统迁移.md",
 )
 
 REQUIRED_DIRS = (

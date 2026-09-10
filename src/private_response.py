@@ -8,7 +8,13 @@ from starlette.routing import Match
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .usage_stats_middleware import UsageStatsMiddleware
-from .auth_types import SESSION_COOKIE_NAME, SESSION_REFRESH_STATE_KEY, SESSION_TTL_SECONDS
+from .auth_types import (
+    SESSION_COOKIE_NAME,
+    SESSION_DELETE_STATE_KEY,
+    SESSION_REFRESH_STATE_KEY,
+    SESSION_SUPPRESS_REFRESH_STATE_KEY,
+    SESSION_TTL_SECONDS,
+)
 from .session_store import session_store
 
 PRIVATE_NO_STORE_VALUE = "private, no-store"
@@ -108,6 +114,18 @@ def _session_cookie_header(session_id: str, secure: bool) -> str:
     return response.headers["Set-Cookie"]
 
 
+def _deleted_session_cookie_header(secure: bool) -> str:
+    response = Response()
+    response.delete_cookie(
+        key=SESSION_COOKIE_NAME,
+        path="/",
+        secure=secure,
+        httponly=True,
+        samesite="lax",
+    )
+    return response.headers["Set-Cookie"]
+
+
 class PrivateNoStoreRoute(APIRoute):
     """标记最终响应不得缓存的 HTTP 路由。"""
 
@@ -139,7 +157,15 @@ class PrivateNoStoreMiddleware:
                 if private_response_state.get(_PRIVATE_NO_STORE_STATE_KEY):
                     response_headers["Cache-Control"] = PRIVATE_NO_STORE_VALUE
 
-                refresh = private_response_state.get(SESSION_REFRESH_STATE_KEY)
+                suppress_refresh = bool(
+                    private_response_state.get(SESSION_SUPPRESS_REFRESH_STATE_KEY)
+                )
+                delete_cookie = bool(private_response_state.get(SESSION_DELETE_STATE_KEY))
+                refresh = (
+                    None
+                    if suppress_refresh or delete_cookie
+                    else private_response_state.get(SESSION_REFRESH_STATE_KEY)
+                )
                 status = int(message.get("status", 0))
                 if (
                     refresh is None
@@ -152,7 +178,12 @@ class PrivateNoStoreMiddleware:
                             "session_id": redirect_session_id,
                             "secure": _is_secure_scope(scope),
                         }
-                if refresh is not None:
+                if delete_cookie:
+                    response_headers.append(
+                        "Set-Cookie",
+                        _deleted_session_cookie_header(_is_secure_scope(scope)),
+                    )
+                elif refresh is not None:
                     response_headers.append(
                         "Set-Cookie",
                         _session_cookie_header(

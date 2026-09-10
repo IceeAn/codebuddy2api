@@ -210,6 +210,8 @@ class ApiDocumentationTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.assertIn("/anthropic/v1/messages", paths)
         self.assertIn("/anthropic/v1/messages/count_tokens", paths)
         self.assertIn("/auth/login", paths)
+        self.assertIn("/auth/bootstrap-status", paths)
+        self.assertIn("/auth/change-password", paths)
         self.assertIn("/api/admin/status", paths)
         self.assertIn("/codebuddy/auth/start", paths)
         self.assertIn("/codebuddy/auth/cancel", paths)

@@ -1,239 +1,131 @@
 import contextlib
 import io
-import os
-import stat
-import tempfile
+import json
 import unittest
-from pathlib import Path
 from unittest import mock
 
-from scripts import hash_password
-from src.password_hashing import create_password_hash
-from src.users_store import UsersFileStore
+import config
+from scripts import hash_password, manage_users
+from src.users_store import AUTH_STATE_INITIALIZED, users_store
+from tests.helpers import TempConfigMixin
 
 
-class UsersFileWriterTests(unittest.TestCase):
+class ManageUsersCliTests(TempConfigMixin, unittest.TestCase):
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.temp_path = Path(self.temp_dir.name)
-        self.users_file = self.temp_path / "users.txt"
+        super().setUp()
+        config._config_cache["CODEBUDDY_USERS_FILE"] = str(self.temp_path / "missing.txt")
+        config.initialize_database()
 
-    def tearDown(self):
-        self.temp_dir.cleanup()
+    def _run(self, *arguments):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            result = manage_users.main(list(arguments))
+        return result, stdout.getvalue(), stderr.getvalue()
 
-    def test_creates_private_users_file(self):
-        hash_password.replace_user_record(
-            self.users_file,
-            "admin",
-            "new-hash",
-        )
+    def test_set_user_and_add_user_alias_write_sqlite_accounts(self):
+        first = self._run("set-user", "alice", "--password", "alice-password")
+        second = self._run("add-user", "bob", "--password", "bob-password")
 
-        self.assertEqual(self.users_file.read_text(encoding="utf-8"), "admin:new-hash\n")
-        if os.name == "posix":
-            self.assertEqual(stat.S_IMODE(self.users_file.stat().st_mode), 0o600)
+        self.assertEqual((first[0], second[0]), (0, 0))
+        self.assertIn("alice", first[1])
+        self.assertIn("bob", second[1])
+        self.assertEqual(first[2] + second[2], "")
+        self.assertEqual(users_store.state(), AUTH_STATE_INITIALIZED)
+        self.assertTrue(users_store.verify("alice", "alice-password"))
+        self.assertTrue(users_store.verify("bob", "bob-password"))
 
-    def test_adds_separator_when_existing_file_has_no_final_newline(self):
-        self.users_file.write_text("alice:alice-hash", encoding="utf-8")
-
-        hash_password.replace_user_record(self.users_file, "bob", "bob-hash")
-
-        self.assertEqual(
-            self.users_file.read_text(encoding="utf-8"),
-            "alice:alice-hash\nbob:bob-hash\n",
-        )
-
-    def test_replaces_all_records_for_existing_username(self):
-        self.users_file.write_text(
-            "# 系统用户\n"
-            "admin:old-hash-1\n"
-            "invalid-line\n"
-            "alice:alice-hash\n"
-            " admin :old-hash-2\n",
-            encoding="utf-8",
-        )
-
-        hash_password.replace_user_record(self.users_file, "admin", "new-hash")
-
-        self.assertEqual(
-            self.users_file.read_text(encoding="utf-8"),
-            "# 系统用户\n"
-            "invalid-line\n"
-            "alice:alice-hash\n"
-            "admin:new-hash\n",
-        )
-
-    def test_replacing_user_record_updates_the_effective_password(self):
-        old_hash = create_password_hash("old-password")
-        new_hash = create_password_hash("new-password")
-        hash_password.replace_user_record(self.users_file, "admin", old_hash)
-
-        with mock.patch(
-            "src.users_store.get_users_file_path", return_value=str(self.users_file)
-        ):
-            self.assertTrue(UsersFileStore().verify("admin", "old-password"))
-
-        hash_password.replace_user_record(self.users_file, "admin", new_hash)
-
-        with mock.patch(
-            "src.users_store.get_users_file_path", return_value=str(self.users_file)
-        ):
-            store = UsersFileStore()
-            self.assertTrue(store.verify("admin", "new-password"))
-            self.assertFalse(store.verify("admin", "old-password"))
-        self.assertEqual(
-            sum(
-                line.startswith("admin:")
-                for line in self.users_file.read_text(encoding="utf-8").splitlines()
-            ),
-            1,
-        )
-
-    @unittest.skipUnless(os.name == "posix", "POSIX 文件权限测试")
-    def test_preserves_or_tightens_posix_permissions(self):
-        for initial_mode, expected_mode in (
-            (0o400, 0o400),
-            (0o600, 0o600),
-            (0o444, 0o400),
-            (0o644, 0o600),
-            (0o700, 0o600),
-        ):
-            with self.subTest(initial_mode=oct(initial_mode)):
-                if self.users_file.exists():
-                    self.users_file.chmod(0o600)
-                self.users_file.write_text("alice:hash\n", encoding="utf-8")
-                self.users_file.chmod(initial_mode)
-                original_stat = self.users_file.stat()
-
-                hash_password.replace_user_record(self.users_file, "bob", "hash")
-
-                updated_stat = self.users_file.stat()
-                self.assertEqual(stat.S_IMODE(updated_stat.st_mode), expected_mode)
-                self.assertEqual(updated_stat.st_uid, original_stat.st_uid)
-                self.assertEqual(updated_stat.st_gid, original_stat.st_gid)
-
-    def test_replace_failure_keeps_original_file(self):
-        self.users_file.write_text("admin:old-hash\n", encoding="utf-8")
-
+    def test_set_user_prompts_twice_only_on_a_tty(self):
         with (
-            mock.patch("scripts.hash_password.os.replace", side_effect=OSError("boom")),
-            self.assertRaisesRegex(OSError, "boom"),
-        ):
-            hash_password.replace_user_record(self.users_file, "admin", "new-hash")
-
-        self.assertEqual(
-            self.users_file.read_text(encoding="utf-8"), "admin:old-hash\n"
-        )
-        self.assertEqual(list(self.temp_path.iterdir()), [self.users_file])
-
-    @unittest.skipUnless(os.name == "posix", "POSIX 文件类型测试")
-    def test_rejects_symbolic_links_and_hard_links(self):
-        source = self.temp_path / "source.txt"
-        source.write_text("admin:old-hash\n", encoding="utf-8")
-        self.users_file.symlink_to(source)
-
-        with self.assertRaisesRegex(RuntimeError, "symbolic link"):
-            hash_password.replace_user_record(self.users_file, "admin", "new-hash")
-
-        self.users_file.unlink()
-        os.link(source, self.users_file)
-        with self.assertRaisesRegex(RuntimeError, "multiple hard links"):
-            hash_password.replace_user_record(self.users_file, "admin", "new-hash")
-
-    def test_rejects_non_regular_file(self):
-        self.users_file.mkdir()
-
-        with self.assertRaisesRegex(RuntimeError, "regular file"):
-            hash_password.replace_user_record(self.users_file, "admin", "new-hash")
-
-    def test_rejects_usernames_that_cannot_form_one_valid_record(self):
-        invalid_usernames = (
-            "",
-            "   ",
-            "#admin",
-            "  #admin",
-            "admin:root",
-            "admin\nroot",
-            "admin\rroot",
-        )
-        for username in invalid_usernames:
-            with self.subTest(username=username):
-                self.users_file.write_text("admin:old-hash\n", encoding="utf-8")
-
-                with self.assertRaisesRegex(ValueError, "用户名"):
-                    hash_password.replace_user_record(
-                        self.users_file, username, "new-hash"
-                    )
-
-                self.assertEqual(
-                    self.users_file.read_text(encoding="utf-8"), "admin:old-hash\n"
-                )
-
-
-class HashPasswordCliTests(unittest.TestCase):
-    def test_stdout_mode_remains_compatible(self):
-        with (
-            mock.patch.object(hash_password, "create_password_hash", return_value="hash"),
+            mock.patch.object(manage_users.sys.stdin, "isatty", return_value=True),
             mock.patch.object(
-                hash_password.sys,
-                "argv",
-                ["hash_password.py", "admin", "--password", "secret"],
-            ),
-            contextlib.redirect_stdout(io.StringIO()) as stdout,
+                manage_users.getpass,
+                "getpass",
+                side_effect=["prompt-password", "prompt-password"],
+            ) as prompt,
         ):
-            hash_password.main()
+            result, _stdout, stderr = self._run("set-user", "alice")
 
-        self.assertEqual(stdout.getvalue(), "admin:hash\n")
+        self.assertEqual(result, 0)
+        self.assertEqual(prompt.call_count, 2)
+        self.assertEqual(stderr, "")
 
-    def test_output_mode_updates_users_file_without_printing_secret_material(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            users_file = Path(temp_dir) / "users.txt"
-            with (
-                mock.patch.object(
-                    hash_password, "create_password_hash", return_value="hash"
-                ),
-                mock.patch.object(hash_password, "replace_user_record") as replace,
-                mock.patch.object(
-                    hash_password.sys,
-                    "argv",
-                    [
-                        "hash_password.py",
-                        "admin",
-                        "--password",
-                        "secret",
-                        "--output",
-                        str(users_file),
-                    ],
-                ),
-                contextlib.redirect_stdout(io.StringIO()) as stdout,
-            ):
-                hash_password.main()
+    def test_set_user_rejects_non_tty_or_mismatched_prompt(self):
+        with mock.patch.object(manage_users.sys.stdin, "isatty", return_value=False):
+            result, _stdout, stderr = self._run("set-user", "alice")
+        self.assertEqual(result, 1)
+        self.assertIn("--password", stderr)
 
-        replace.assert_called_once_with(users_file, "admin", "hash")
+        with (
+            mock.patch.object(manage_users.sys.stdin, "isatty", return_value=True),
+            mock.patch.object(
+                manage_users.getpass,
+                "getpass",
+                side_effect=["one-password", "other-password"],
+            ),
+        ):
+            result, _stdout, stderr = self._run("set-user", "alice")
+        self.assertEqual(result, 1)
+        self.assertIn("不一致", stderr)
+
+    def test_list_users_human_and_json_are_sorted_without_hashes(self):
+        users_store.set_user("bob", "bob-password")
+        users_store.set_user("alice", "alice-password")
+
+        human = self._run("list-users")
+        encoded = self._run("list-users", "--json")
+
+        self.assertEqual((human[0], encoded[0]), (0, 0))
+        self.assertLess(human[1].index("alice"), human[1].index("bob"))
+        self.assertNotIn("pbkdf2", human[1] + encoded[1])
+        body = json.loads(encoded[1])
+        self.assertEqual([item["username"] for item in body["users"]], ["alice", "bob"])
+        self.assertEqual(
+            set(body["users"][0]),
+            {"username", "password_change_required", "updated_at"},
+        )
+
+    def test_delete_requires_confirmation_and_preserves_last_user(self):
+        users_store.set_user("alice", "alice-password")
+        users_store.set_user("bob", "bob-password")
+        with mock.patch("builtins.input", return_value="wrong"):
+            cancelled = self._run("delete-user", "bob")
+        deleted = self._run("delete-user", "bob", "--yes")
+        last = self._run("delete-user", "alice", "--yes")
+
+        self.assertEqual(cancelled[0], 1)
+        self.assertIn("取消", cancelled[2])
+        self.assertEqual(deleted[0], 0)
+        self.assertIn("bob", deleted[1])
+        self.assertEqual(last[0], 1)
+        self.assertIn("最后一个", last[2])
+
+    def test_list_before_initialization_returns_exit_one(self):
+        result, _stdout, stderr = self._run("list-users")
+        self.assertEqual(result, 1)
+        self.assertIn("set-user", stderr)
+
+    def test_list_before_database_exists_returns_same_initialization_guidance(self):
+        config.get_database_path().unlink()
+
+        result, _stdout, stderr = self._run("list-users")
+
+        self.assertEqual(result, 1)
+        self.assertIn("账号系统尚未初始化", stderr)
+
+
+class RetiredHashPasswordCliTests(unittest.TestCase):
+    def test_old_command_only_prints_migration_guidance_and_returns_one(self):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with (
+            mock.patch.object(hash_password.sys, "argv", ["hash_password.py", "ignored"]),
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+        ):
+            result = hash_password.main()
+
+        self.assertEqual(result, 1)
         self.assertEqual(stdout.getvalue(), "")
-
-    def test_rejects_invalid_username_before_reading_or_hashing_password(self):
-        for username in ("", "#admin", "admin:root", "admin\nroot"):
-            with self.subTest(username=username):
-                with (
-                    mock.patch.object(
-                        hash_password.getpass, "getpass"
-                    ) as get_password,
-                    mock.patch.object(
-                        hash_password, "create_password_hash"
-                    ) as create_hash,
-                    mock.patch.object(
-                        hash_password.sys,
-                        "argv",
-                        ["hash_password.py", username],
-                    ),
-                    contextlib.redirect_stderr(io.StringIO()),
-                    self.assertRaises(SystemExit) as raised,
-                ):
-                    hash_password.main()
-
-                self.assertEqual(raised.exception.code, 2)
-                get_password.assert_not_called()
-                create_hash.assert_not_called()
+        self.assertIn("manage_users.py set-user", stderr.getvalue())
 
 
 if __name__ == "__main__":

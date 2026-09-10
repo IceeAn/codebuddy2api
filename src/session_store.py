@@ -3,8 +3,9 @@ import secrets
 import time
 from typing import Any, Dict, Optional
 
+from .auth_error_codes import AuthErrorCode
 from .auth_types import AuthenticatedUser, SESSION_TTL_SECONDS
-from .users_store import users_store
+from .users_store import UserRecord, users_store
 
 
 class SessionStore:
@@ -25,8 +26,12 @@ class SessionStore:
         for session_id in expired_session_ids:
             self.sessions.pop(session_id, None)
 
-    def create(self, username: str) -> str:
+    def create(self, username: str, record: Optional[UserRecord] = None) -> str:
         now = time.time()
+        if record is None:
+            record = users_store.get_record(username)
+        if record is None:
+            raise RuntimeError("Cannot create a session for a missing system user")
         self.cleanup_expired(now)
         owned_sessions = sorted(
             (
@@ -44,29 +49,61 @@ class SessionStore:
             "username": username,
             "created_at": now,
             "expires_at": now + SESSION_TTL_SECONDS,
+            "auth_revision": record.auth_revision,
+            "password_change_required": record.password_change_required,
         }
         return session_id
 
-    def get_user(self, session_id: Optional[str]) -> Optional[AuthenticatedUser]:
+    def get_user_with_reason(
+        self, session_id: Optional[str]
+    ) -> tuple[Optional[AuthenticatedUser], Optional[str]]:
+        """返回会话及失效原因；原因仅用于稳定的账号业务错误。"""
         if not session_id:
-            return None
+            return None, None
 
         self.cleanup_expired()
         session_data = self.sessions.get(session_id)
         if not session_data:
-            return None
+            return None, None
+
+        revoked_reason = session_data.get("revoked_reason")
+        if revoked_reason:
+            self.sessions.pop(session_id, None)
+            return None, str(revoked_reason)
 
         username = str(session_data.get("username") or "")
-        if not username or not users_store.has_username(username):
+        record = users_store.get_record(username) if username else None
+        if record is None:
             self.sessions.pop(session_id, None)
-            return None
+            return None, None
+        if users_store.is_bootstrap_expired(username):
+            self.sessions.pop(session_id, None)
+            return None, AuthErrorCode.BOOTSTRAP_EXPIRED.value
+        if session_data.get("auth_revision") != record.auth_revision:
+            self.sessions.pop(session_id, None)
+            return None, AuthErrorCode.PASSWORD_CHANGED_ELSEWHERE.value
 
         session_data["expires_at"] = time.time() + SESSION_TTL_SECONDS
-        return AuthenticatedUser(username=username, source="session_cookie")
+        return AuthenticatedUser(
+            username=username,
+            source="session_cookie",
+            password_change_required=record.password_change_required,
+            auth_revision=record.auth_revision,
+        ), None
+
+    def get_user(self, session_id: Optional[str]) -> Optional[AuthenticatedUser]:
+        user, _reason = self.get_user_with_reason(session_id)
+        return user
 
     def invalidate(self, session_id: Optional[str]) -> None:
         if session_id:
             self.sessions.pop(session_id, None)
+
+    def revoke_user(self, username: str, reason: str) -> None:
+        """标记账号的所有会话失效，并让下一次请求得到明确原因。"""
+        for session_data in self.sessions.values():
+            if session_data.get("username") == username:
+                session_data["revoked_reason"] = reason
 
 
 session_store = SessionStore()

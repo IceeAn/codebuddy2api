@@ -38,7 +38,7 @@ class UpdateReleaseTests(unittest.TestCase):
             "frontend/public/logo.svg": "logo",
             "scripts/update_release.py": "updater",
             "src/router.py": "router",
-            "secrets/users.txt.example": "example",
+            "doc/账号系统迁移.md": "migration",
         }
         manifest_files = sorted([*files, update_release.MANIFEST_FILENAME])
         files[update_release.MANIFEST_FILENAME] = json.dumps(
@@ -1460,11 +1460,11 @@ class UpdateReleaseTests(unittest.TestCase):
         project = self.root / "project"
         project.mkdir()
         self._install_release_tree(project, "v1.0.0")
-        external = self.root / "external-secrets"
+        external = self.root / "external-doc"
         external.mkdir()
-        (external / "users.txt.example").write_text("external", encoding="utf-8")
-        shutil.rmtree(project / "secrets")
-        (project / "secrets").symlink_to(external, target_is_directory=True)
+        (external / "账号系统迁移.md").write_text("external", encoding="utf-8")
+        shutil.rmtree(project / "doc")
+        (project / "doc").symlink_to(external, target_is_directory=True)
 
         with self.assertRaisesRegex(update_release.UpdateError, "符号链接"):
             update_release._ensure_safe_installation(project)

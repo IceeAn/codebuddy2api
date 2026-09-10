@@ -16,7 +16,7 @@ PBKDF2_DIGEST_BYTES = 32
 
 
 def create_password_hash(password: str, iterations: int = PBKDF2_ITERATIONS) -> str:
-    """生成可写入 secrets/users.txt 的 PBKDF2-SHA256 密码哈希。"""
+    """生成可写入系统账号存储的 PBKDF2-SHA256 密码哈希。"""
     if (
         isinstance(iterations, bool)
         or not isinstance(iterations, int)

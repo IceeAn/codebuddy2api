@@ -31,12 +31,28 @@ describe('管理 API 封装', () => {
     apiRequestMock.mockResolvedValue({});
 
     await authApi.session();
+    await authApi.bootstrapStatus();
     await authApi.login('admin', 'secret');
+    await authApi.changePassword(undefined, 'new-password');
+    await authApi.changePassword('secret', 'new-password');
     await authApi.logout();
 
     expect(apiRequestMock.mock.calls).toEqual([
       ['/auth/session', { signal: undefined }],
+      ['/auth/bootstrap-status'],
       ['/auth/login', { method: 'POST', json: { username: 'admin', password: 'secret' } }],
+      [
+        '/auth/change-password',
+        { method: 'POST', json: { new_password: 'new-password' }, timeoutMs: 30000 },
+      ],
+      [
+        '/auth/change-password',
+        {
+          method: 'POST',
+          json: { current_password: 'secret', new_password: 'new-password' },
+          timeoutMs: 30000,
+        },
+      ],
       ['/auth/logout', { method: 'POST', json: {} }],
     ]);
   });

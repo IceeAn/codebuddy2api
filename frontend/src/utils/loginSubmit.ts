@@ -8,7 +8,7 @@ export interface LoginSubmitInput {
 export function createLoginSubmitter(
   login: (username: string, password: string) => Promise<unknown>,
   onSuccess: () => void,
-  onError: (msg: string) => void,
+  onError: (msg: string, error?: unknown) => void,
 ) {
   return async function submit(input: LoginSubmitInput): Promise<boolean> {
     if (input.isLoading) return false;
@@ -23,7 +23,7 @@ export function createLoginSubmitter(
       onSuccess();
       return true;
     } catch (error) {
-      onError(error instanceof Error ? error.message : '登录失败');
+      onError(error instanceof Error ? error.message : '登录失败', error);
       return false;
     }
   };

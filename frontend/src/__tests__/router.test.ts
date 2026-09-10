@@ -1,3 +1,4 @@
+import { nextTick } from 'vue';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 import router from '../router';
@@ -8,6 +9,7 @@ describe('router', () => {
     setActivePinia(createPinia());
     const session = useSessionStore();
     session.ready = true;
+    session.authenticated = true;
     await router.replace('/dashboard');
   });
 
@@ -65,6 +67,29 @@ describe('router', () => {
     await router.push('/untitled-test');
     expect(document.title).toBe('管理台 · CodeBuddy2API');
     removeRoute();
+  });
+
+  it('导航完成时优先保留登录和首次改密页面标题', async () => {
+    const session = useSessionStore();
+    session.authenticated = false;
+    await router.push('/settings');
+    expect(document.title).toBe('登录 · CodeBuddy2API');
+
+    session.authenticated = true;
+    session.passwordChangeRequired = true;
+    await router.push('/api-keys');
+    expect(document.title).toBe('修改密码 · CodeBuddy2API');
+  });
+
+  it('登录状态改变但路由未导航时同步当前页面标题', async () => {
+    const session = useSessionStore();
+    session.authenticated = false;
+    await nextTick();
+    expect(document.title).toBe('登录 · CodeBuddy2API');
+
+    session.authenticated = true;
+    await nextTick();
+    expect(document.title).toBe('总览 · CodeBuddy2API');
   });
 
   it('导航被守卫取消时保留当前页面标题', async () => {

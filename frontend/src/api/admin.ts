@@ -17,6 +17,8 @@ import type {
   DeleteCredentialResponse,
   ModelListResponse,
   SessionInfo,
+  BootstrapStatus,
+  PasswordChangedResponse,
   SettingsResponse,
   StatsOverviewQuery,
   StatsOverviewResponse,
@@ -38,13 +40,24 @@ const QUOTA_PROBE_TIMEOUT_MS = 35_000;
 const OAUTH_START_TIMEOUT_MS = 35_000;
 const OAUTH_POLL_TIMEOUT_MS = 100_000;
 const MODEL_LIST_TIMEOUT_MS = 35_000;
+const PASSWORD_CHANGE_TIMEOUT_MS = 30_000;
 
 export const authApi = {
   session: (signal?: AbortSignal) => apiRequest<SessionInfo>('/auth/session', { signal }),
+  bootstrapStatus: () => apiRequest<BootstrapStatus>('/auth/bootstrap-status'),
   login: (username: string, password: string) =>
     apiRequest<SessionInfo>('/auth/login', {
       method: 'POST',
       json: { username, password },
+    }),
+  changePassword: (currentPassword: string | undefined, newPassword: string) =>
+    apiRequest<PasswordChangedResponse>('/auth/change-password', {
+      method: 'POST',
+      json:
+        currentPassword === undefined
+          ? { new_password: newPassword }
+          : { current_password: currentPassword, new_password: newPassword },
+      timeoutMs: PASSWORD_CHANGE_TIMEOUT_MS,
     }),
   logout: () =>
     apiRequest<{ authenticated: false }>('/auth/logout', {

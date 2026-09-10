@@ -18,10 +18,18 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
   ],
-  webServer: {
-    command: 'node e2e/support/server.mjs',
-    url: 'http://127.0.0.1:4174/__control/state',
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
-  },
+  webServer: [
+    {
+      command: 'node e2e/support/server.mjs',
+      url: 'http://127.0.0.1:4174/__control/state',
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+    },
+    {
+      command: 'node e2e/support/app-server.mjs',
+      url: 'http://127.0.0.1:4175/__app_control/state',
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+    },
+  ],
 });

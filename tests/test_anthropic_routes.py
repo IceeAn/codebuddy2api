@@ -110,7 +110,7 @@ class AnthropicRouteTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
                 self.assertLessEqual(verify.call_count, 1)
                 self.assertNotIn("WWW-Authenticate", response.headers)
 
-        with mock.patch("src.anthropic_router.users_store.has_users_file", return_value=False):
+        with mock.patch("src.anthropic_router.users_store.has_users", return_value=False):
             missing_users = await self._request(
                 "GET",
                 "/anthropic/v1/models",

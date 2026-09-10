@@ -10,6 +10,9 @@ export const useSessionStore = defineStore('session', {
     authenticated: false,
     username: '',
     source: '',
+    passwordChangeRequired: false,
+    loginPrefillUsername: '',
+    passwordChangedFlash: '',
     ready: false,
     restoreError: '',
     restoring: false,
@@ -19,6 +22,7 @@ export const useSessionStore = defineStore('session', {
       this.authenticated = false;
       this.username = '';
       this.source = '';
+      this.passwordChangeRequired = false;
       this.restoreError = '';
     },
     async restore() {
@@ -37,10 +41,12 @@ export const useSessionStore = defineStore('session', {
         this.authenticated = true;
         this.username = session.username;
         this.source = session.source || '';
+        this.passwordChangeRequired = Boolean(session.password_change_required);
       } catch (error) {
         this.authenticated = false;
         this.username = '';
         this.source = '';
+        this.passwordChangeRequired = false;
         if (error instanceof ApiError && error.status === 401 && error.isUnauthorized) {
           this.restoreError = '';
         } else if (timedOut) {
@@ -57,10 +63,13 @@ export const useSessionStore = defineStore('session', {
       }
     },
     async login(username: string, password: string) {
+      this.passwordChangedFlash = '';
       const session = await authApi.login(username, password);
       this.authenticated = true;
       this.username = session.username;
       this.source = session.source || 'session_cookie';
+      this.passwordChangeRequired = Boolean(session.password_change_required);
+      this.loginPrefillUsername = '';
       this.restoreError = '';
       this.ready = true;
     },
@@ -70,6 +79,15 @@ export const useSessionStore = defineStore('session', {
       } finally {
         this.endLocalSession();
       }
+    },
+    finishPasswordChange(username: string, message: string) {
+      this.endLocalSession();
+      this.loginPrefillUsername = username;
+      this.passwordChangedFlash = message;
+      this.ready = true;
+    },
+    dismissPasswordChangedFlash() {
+      this.passwordChangedFlash = '';
     },
   },
 });

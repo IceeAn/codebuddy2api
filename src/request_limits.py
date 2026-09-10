@@ -29,7 +29,12 @@ class RequestBodyLimitMiddleware:
         self.login_max_body_bytes = login_max_body_bytes
 
     def _limit_for_scope(self, scope: Scope) -> int:
-        if scope.get("path") in {"/auth/login", "/auth/login/"}:
+        if scope.get("path") in {
+            "/auth/login",
+            "/auth/login/",
+            "/auth/change-password",
+            "/auth/change-password/",
+        }:
             return min(self.max_body_bytes, self.login_max_body_bytes)
         return self.max_body_bytes
 

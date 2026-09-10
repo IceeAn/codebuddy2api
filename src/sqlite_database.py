@@ -9,7 +9,7 @@ from typing import Iterator, Union
 from urllib.parse import quote
 
 DATABASE_FILENAME = "codebuddy2api.sqlite3"
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 _SCHEMA_LOCK = threading.RLock()
 _SCHEMA_V1_STATEMENTS = (
@@ -187,6 +187,32 @@ _SCHEMA_V4_STATEMENTS = (
         model TEXT NOT NULL,
         PRIMARY KEY (username, model)
     ) WITHOUT ROWID
+    """,
+)
+
+_SCHEMA_V5_STATEMENTS = (
+    """
+    CREATE TABLE system_users (
+        username TEXT PRIMARY KEY,
+        password_hash TEXT NOT NULL,
+        password_change_required INTEGER NOT NULL CHECK (
+            password_change_required IN (0, 1)
+        ),
+        auth_revision BLOB NOT NULL CHECK (length(auth_revision) = 32),
+        updated_at INTEGER NOT NULL
+    ) WITHOUT ROWID
+    """,
+    """
+    CREATE TABLE authentication_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        state TEXT NOT NULL CHECK (
+            state IN ('uninitialized', 'pending_bootstrap', 'initialized')
+        ),
+        legacy_install_detected INTEGER NOT NULL CHECK (
+            legacy_install_detected IN (0, 1)
+        ),
+        pending_username TEXT
+    )
     """,
 )
 
@@ -419,10 +445,16 @@ class SQLiteDatabase:
     def _initialize_schema(self, connection: sqlite3.Connection) -> None:
         with _SCHEMA_LOCK:
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2, 3, SCHEMA_VERSION):
+            if version not in tuple(range(SCHEMA_VERSION + 1)):
                 raise RuntimeError(
                     f"Unsupported SQLite schema version {version}; expected {SCHEMA_VERSION}"
                 )
+
+            existing_objects = connection.execute(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE name NOT LIKE 'sqlite_%' LIMIT 1"
+            ).fetchone()
+            legacy_install_detected = version != 0 or existing_objects is not None
 
             journal_mode = connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]
             if str(journal_mode).lower() != "wal":
@@ -433,16 +465,29 @@ class SQLiteDatabase:
             if version < SCHEMA_VERSION:
                 try:
                     connection.execute("BEGIN IMMEDIATE")
-                    statements = _SCHEMA_V4_STATEMENTS
-                    if version < 3:
-                        statements = _SCHEMA_V3_STATEMENTS + statements
-                    if version < 2:
-                        statements = _SCHEMA_V2_STATEMENTS + statements
                     if version < 1:
-                        statements = _SCHEMA_V1_STATEMENTS + statements
-                    for statement in statements:
+                        for statement in _SCHEMA_V1_STATEMENTS:
+                            connection.execute(statement)
+                    if version < 2:
+                        for statement in _SCHEMA_V2_STATEMENTS:
+                            connection.execute(statement)
+                    if version < 3:
+                        for statement in _SCHEMA_V3_STATEMENTS:
+                            connection.execute(statement)
+                    if version < 4:
+                        for statement in _SCHEMA_V4_STATEMENTS:
+                            connection.execute(statement)
+                        _migrate_usage_model_buckets(connection)
+                    for statement in _SCHEMA_V5_STATEMENTS:
                         connection.execute(statement)
-                    _migrate_usage_model_buckets(connection)
+                    connection.execute(
+                        """
+                        INSERT INTO authentication_state(
+                            id, state, legacy_install_detected, pending_username
+                        ) VALUES (1, 'uninitialized', ?, NULL)
+                        """,
+                        (int(legacy_install_detected),),
+                    )
                     connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
                     connection.commit()
                 except Exception:

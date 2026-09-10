@@ -7,7 +7,7 @@ describe('createLoginSubmitter', () => {
       .fn<(username: string, password: string) => Promise<void>>()
       .mockResolvedValue(undefined);
     const onSuccess = vi.fn<() => void>();
-    const onError = vi.fn<(message: string) => void>();
+    const onError = vi.fn<(message: string, error?: unknown) => void>();
     const submit = createLoginSubmitter(login, onSuccess, onError);
     return { login, onSuccess, onError, submit };
   }
@@ -47,12 +47,12 @@ describe('createLoginSubmitter', () => {
       .fn<(username: string, password: string) => Promise<void>>()
       .mockRejectedValue(new Error('网络错误'));
     const onSuccess = vi.fn<() => void>();
-    const onError = vi.fn<(message: string) => void>();
+    const onError = vi.fn<(message: string, error?: unknown) => void>();
     const submit = createLoginSubmitter(login, onSuccess, onError);
 
     const ok = await submit({ username: 'admin', password: 'pass', isLoading: false });
     expect(ok).toBe(false);
-    await vi.waitFor(() => expect(onError).toHaveBeenCalledWith('网络错误'));
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledWith('网络错误', expect.any(Error)));
     expect(onSuccess).not.toHaveBeenCalled();
   });
 
@@ -60,12 +60,12 @@ describe('createLoginSubmitter', () => {
     const login = vi
       .fn<(username: string, password: string) => Promise<void>>()
       .mockRejectedValue('bad');
-    const onError = vi.fn<(message: string) => void>();
+    const onError = vi.fn<(message: string, error?: unknown) => void>();
     const submit = createLoginSubmitter(login, vi.fn<() => void>(), onError);
 
     await expect(submit({ username: 'admin', password: 'pass', isLoading: false })).resolves.toBe(
       false,
     );
-    expect(onError).toHaveBeenCalledWith('登录失败');
+    expect(onError).toHaveBeenCalledWith('登录失败', 'bad');
   });
 });

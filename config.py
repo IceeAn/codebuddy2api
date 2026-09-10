@@ -49,11 +49,15 @@ DEFAULT_CODEBUDDY_MODELS = (
 
 # --- Private State ---
 _config_cache: Dict[str, Any] = {}
+_explicit_config_keys: set[str] = set()
 
 _DEFAULT_CONFIG = {
     "CODEBUDDY_HOST": "127.0.0.1",
     "CODEBUDDY_PORT": 8001,
     "CODEBUDDY_USERS_FILE": "secrets/users.txt",
+    "CODEBUDDY_BOOTSTRAP_ENABLED": True,
+    "CODEBUDDY_BOOTSTRAP_USERNAME": "admin",
+    "CODEBUDDY_BOOTSTRAP_PASSWORD": "admin",
     "CODEBUDDY_API_ENDPOINT": "https://copilot.tencent.com",
     "CODEBUDDY_ALLOWED_API_ENDPOINTS": "https://copilot.tencent.com,https://www.codebuddy.ai",
     "CODEBUDDY_DATA_DIR": "data",
@@ -90,7 +94,7 @@ def load_config():
     Loads configuration from all sources into the in-memory cache.
     This should be called once at application startup.
     """
-    global _config_cache, _user_settings_cache
+    global _config_cache, _user_settings_cache, _explicit_config_keys
     
     config = _DEFAULT_CONFIG.copy()
 
@@ -113,6 +117,9 @@ def load_config():
             dotenv_path,
         )
 
+    _explicit_config_keys = {
+        key for key in config if os.getenv(key) is not None
+    }
     for key in config:
         env_value = os.getenv(key)
         if env_value is not None:
@@ -281,6 +288,29 @@ def get_server_port() -> int:
 
 def get_users_file_path() -> str:
     return str(_get_config_value("CODEBUDDY_USERS_FILE"))
+
+
+def get_bootstrap_enabled() -> bool:
+    """是否允许在真正全新的安装中创建一次性初始账号。"""
+    return _to_bool(
+        _get_config_value("CODEBUDDY_BOOTSTRAP_ENABLED"),
+        "CODEBUDDY_BOOTSTRAP_ENABLED",
+    )
+
+
+def get_bootstrap_username() -> str:
+    """返回初始用户名原值；账号存储仅在可能使用时负责校验。"""
+    return str(_get_config_value("CODEBUDDY_BOOTSTRAP_USERNAME"))
+
+
+def get_bootstrap_password() -> str:
+    """返回初始密码原值，不进行任何修剪或 Unicode 归一化。"""
+    return str(_get_config_value("CODEBUDDY_BOOTSTRAP_PASSWORD"))
+
+
+def is_bootstrap_password_explicit() -> bool:
+    """区分内置默认密码与运维显式提供的自定义初始密码。"""
+    return "CODEBUDDY_BOOTSTRAP_PASSWORD" in _explicit_config_keys
 
 def get_codebuddy_api_endpoint() -> str:
     endpoint = _normalize_base_url(_get_config_value("CODEBUDDY_API_ENDPOINT"))

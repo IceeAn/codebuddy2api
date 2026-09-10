@@ -40,7 +40,12 @@ class RequestBodyLimitMiddlewareTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json()["body"], "12345678")
 
     async def test_login_path_and_slash_variant_use_smaller_limit(self):
-        for path in ("/auth/login", "/auth/login/"):
+        for path in (
+            "/auth/login",
+            "/auth/login/",
+            "/auth/change-password",
+            "/auth/change-password/",
+        ):
             with self.subTest(path=path):
                 response = await self._request(self._app(), path, content=b"12345")
                 self.assertEqual(response.status_code, 413)

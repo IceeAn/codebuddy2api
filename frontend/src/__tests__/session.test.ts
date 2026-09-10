@@ -8,6 +8,8 @@ vi.mock('../api/admin', () => ({
     session: vi.fn<typeof authApi.session>(),
     login: vi.fn<typeof authApi.login>(),
     logout: vi.fn<typeof authApi.logout>(),
+    bootstrapStatus: vi.fn<typeof authApi.bootstrapStatus>(),
+    changePassword: vi.fn<typeof authApi.changePassword>(),
   },
 }));
 
@@ -55,6 +57,7 @@ describe('session store - restore 超时', () => {
       authenticated: true,
       username: 'admin',
       source: 'session_cookie',
+      password_change_required: true,
     });
 
     const store = useSessionStore();
@@ -64,6 +67,7 @@ describe('session store - restore 超时', () => {
     expect(store.authenticated).toBe(true);
     expect(store.username).toBe('admin');
     expect(store.source).toBe('session_cookie');
+    expect(store.passwordChangeRequired).toBe(true);
     expect(store.restoreError).toBe('');
   });
 
@@ -143,6 +147,7 @@ describe('session store - restore 超时', () => {
     vi.mocked(authApi.login).mockResolvedValue({
       authenticated: true,
       username: 'alice',
+      password_change_required: true,
     });
 
     const store = useSessionStore();
@@ -152,6 +157,7 @@ describe('session store - restore 超时', () => {
     expect(store.authenticated).toBe(true);
     expect(store.username).toBe('alice');
     expect(store.source).toBe('session_cookie');
+    expect(store.passwordChangeRequired).toBe(true);
   });
 
   it('login 保留服务端 source', async () => {
@@ -179,6 +185,9 @@ describe('session store - restore 超时', () => {
       authenticated: false,
       username: '',
       source: '',
+      passwordChangeRequired: false,
+      loginPrefillUsername: '',
+      passwordChangedFlash: '',
       ready: false,
       restoreError: '',
       restoring: false,
@@ -205,7 +214,21 @@ describe('session store - restore 超时', () => {
     expect(store.authenticated).toBe(false);
     expect(store.username).toBe('');
     expect(store.source).toBe('');
+    expect(store.passwordChangeRequired).toBe(false);
     expect(store.restoreError).toBe('');
+  });
+
+  it('改密完成状态会退出、预填用户名并可关闭提示', () => {
+    const store = useSessionStore();
+    store.authenticated = true;
+    store.finishPasswordChange('alice', '密码已修改，请使用新密码重新登录');
+
+    expect(store.authenticated).toBe(false);
+    expect(store.loginPrefillUsername).toBe('alice');
+    expect(store.passwordChangedFlash).toBe('密码已修改，请使用新密码重新登录');
+
+    store.dismissPasswordChangedFlash();
+    expect(store.passwordChangedFlash).toBe('');
   });
 
   it('restore 进行中时忽略重复调用', async () => {

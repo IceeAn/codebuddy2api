@@ -19,6 +19,33 @@ from tests.helpers import ConfigIsolationMixin
 
 
 class ConfigTests(ConfigIsolationMixin, unittest.TestCase):
+    def test_bootstrap_defaults_and_explicit_password_marker(self):
+        self.assertTrue(config.get_bootstrap_enabled())
+        self.assertEqual(config.get_bootstrap_username(), "admin")
+        self.assertEqual(config.get_bootstrap_password(), "admin")
+
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "CODEBUDDY_DATA_DIR": config.get_data_dir(),
+                "CODEBUDDY_BOOTSTRAP_PASSWORD": "admin",
+            },
+            clear=False,
+        ):
+            config.load_config()
+
+        self.assertTrue(config.is_bootstrap_password_explicit())
+
+    def test_bootstrap_boolean_is_strict_but_other_values_remain_raw(self):
+        config._config_cache["CODEBUDDY_BOOTSTRAP_ENABLED"] = "perhaps"
+        config._config_cache["CODEBUDDY_BOOTSTRAP_USERNAME"] = "  admin  "
+        config._config_cache["CODEBUDDY_BOOTSTRAP_PASSWORD"] = " exact password "
+
+        with self.assertRaisesRegex(ValueError, "CODEBUDDY_BOOTSTRAP_ENABLED"):
+            config.get_bootstrap_enabled()
+        self.assertEqual(config.get_bootstrap_username(), "  admin  ")
+        self.assertEqual(config.get_bootstrap_password(), " exact password ")
+
     def test_load_config_uses_only_application_root_dotenv(self):
         application_root = Path(self._database_dir.name) / "application"
         application_root.mkdir()

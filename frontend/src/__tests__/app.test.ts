@@ -17,6 +17,7 @@ const {
     ready: false,
     authenticated: false,
     username: '',
+    passwordChangeRequired: false,
     restoreError: '',
     restoring: false,
     restore: vi.fn<() => Promise<void>>(),
@@ -146,6 +147,9 @@ function mountApp(matches = true) {
         CDrawer: CDrawerStub,
         CToastHost: true,
         LoginView: { template: '<div class="login-view">登录页</div>' },
+        ForcedPasswordChangeView: {
+          template: '<div class="forced-password-view">强制修改密码页</div>',
+        },
         RouterView: RouterViewStub,
         Activity: true,
         ChartNoAxesCombined: true,
@@ -170,6 +174,7 @@ describe('App', () => {
     sessionMock.ready = false;
     sessionMock.authenticated = false;
     sessionMock.username = '';
+    sessionMock.passwordChangeRequired = false;
     sessionMock.restoreError = '';
     sessionMock.restoring = false;
     sessionMock.restore.mockReset();
@@ -222,6 +227,17 @@ describe('App', () => {
     const { wrapper } = mountApp();
 
     expect(wrapper.find('.login-view').exists()).toBe(true);
+  });
+
+  it('首次改密会话只显示独占密码页，不渲染管理台导航', () => {
+    sessionMock.ready = true;
+    sessionMock.authenticated = true;
+    sessionMock.passwordChangeRequired = true;
+    const { wrapper } = mountApp();
+
+    expect(wrapper.find('.forced-password-view').exists()).toBe(true);
+    expect(wrapper.find('.sidebar').exists()).toBe(false);
+    expect(wrapper.find('.router-view').exists()).toBe(false);
   });
 
   it('恢复失败时显示错误和重试入口，不误导为登录页', async () => {
