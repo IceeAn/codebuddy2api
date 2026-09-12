@@ -1,5 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { nextTick } from 'vue';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import StatsTrendChart from '../components/StatsTrendChart.vue';
@@ -13,6 +14,167 @@ const chartSource = readFileSync(
 afterEach(() => {
   document.body.innerHTML = '';
   vi.useRealTimers();
+});
+
+describe('趋势图滚动提示', () => {
+  const points = Array.from({ length: 90 }, (_, index) => ({
+    period_start: 1_767_225_600 + index * 86_400,
+    request_count: index + 1,
+  }));
+  const leftSelector = 'button[aria-label="向左滚动趋势图"]';
+  const rightSelector = 'button[aria-label="向右滚动趋势图"]';
+  let resize: () => void;
+  const observe = vi.fn<(element: Element) => void>();
+  const disconnect = vi.fn<() => void>();
+
+  beforeEach(() => {
+    observe.mockClear();
+    disconnect.mockClear();
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: () => void) {
+          resize = callback;
+        }
+        observe = observe;
+        disconnect = disconnect;
+      },
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  async function renderChart(initialPoints = points) {
+    const wrapper = mount(StatsTrendChart, {
+      attachTo: document.body,
+      props: { points: initialPoints, metric: 'request_count', timezone: 'UTC' },
+    });
+    await nextTick();
+    return wrapper;
+  }
+
+  function setDimensions(element: Element, width: number, contentWidth: number, left = 0) {
+    Object.defineProperties(element, {
+      clientWidth: { configurable: true, value: width },
+      scrollWidth: { configurable: true, value: contentWidth },
+      scrollLeft: { configurable: true, writable: true, value: left },
+    });
+  }
+
+  it('按实际溢出和滚动边界显示方向，容忍亚像素误差与回弹', async () => {
+    const wrapper = await renderChart();
+    const viewport = wrapper.get('.stats-trend-scroll');
+    expect(observe).toHaveBeenCalledWith(viewport.element);
+    expect(observe).toHaveBeenCalledWith(wrapper.get('.stats-trend-plot').element);
+
+    setDimensions(viewport.element, 400, 2160);
+    resize();
+    await nextTick();
+    expect(wrapper.get(leftSelector).isVisible()).toBe(false);
+    expect(wrapper.get(rightSelector).isVisible()).toBe(true);
+    expect(viewport.attributes('tabindex')).toBe('0');
+    expect(viewport.attributes('role')).toBe('region');
+    expect(wrapper.get(rightSelector).attributes('aria-controls')).toBe(viewport.attributes('id'));
+
+    for (const [position, left, right] of [
+      [800, true, true],
+      [1760, true, false],
+      [1759.5, true, false],
+      [1770, true, false],
+      [0.5, false, true],
+      [-20, false, true],
+    ] as const) {
+      (viewport.element as HTMLElement).scrollLeft = position;
+      await viewport.trigger('scroll');
+      expect(wrapper.get(leftSelector).isVisible()).toBe(left);
+      expect(wrapper.get(rightSelector).isVisible()).toBe(right);
+      expect(wrapper.get('.stats-trend-edge-left').element.hasAttribute('inert')).toBe(!left);
+      expect(wrapper.get('.stats-trend-edge-right').element.hasAttribute('inert')).toBe(!right);
+    }
+
+    for (const position of [0, -20, 20]) {
+      setDimensions(viewport.element, 2160, 2160, position);
+      resize();
+      await nextTick();
+      expect(wrapper.get(leftSelector).isVisible()).toBe(false);
+      expect(wrapper.get(rightSelector).isVisible()).toBe(false);
+      expect(viewport.attributes('tabindex')).toBe('-1');
+    }
+    wrapper.unmount();
+    expect(disconnect).toHaveBeenCalledOnce();
+  });
+
+  it('左右按钮各滚动八成可视宽度，缩放后使用当前宽度', async () => {
+    const wrapper = await renderChart();
+    const viewport = wrapper.get('.stats-trend-scroll');
+    const scrollBy = vi.fn<(options: ScrollToOptions) => void>();
+    Object.defineProperty(viewport.element, 'scrollBy', { value: scrollBy });
+    setDimensions(viewport.element, 400, 2160, 800);
+    resize();
+    await nextTick();
+    await wrapper.get(rightSelector).trigger('click');
+    expect(scrollBy).toHaveBeenLastCalledWith({ left: 320 });
+    await wrapper.get(leftSelector).trigger('click');
+    expect(scrollBy).toHaveBeenLastCalledWith({ left: -320 });
+
+    setDimensions(viewport.element, 300, 2160, 800);
+    resize();
+    await nextTick();
+    await wrapper.get(rightSelector).trigger('click');
+    expect(scrollBy).toHaveBeenLastCalledWith({ left: 240 });
+    wrapper.unmount();
+  });
+
+  it('聚焦的箭头到达边界后将焦点交回图表，不抢占其他节点焦点', async () => {
+    const wrapper = await renderChart();
+    const viewport = wrapper.get('.stats-trend-scroll');
+    setDimensions(viewport.element, 400, 2160, 800);
+    resize();
+    await nextTick();
+
+    (wrapper.get(rightSelector).element as HTMLButtonElement).focus();
+    (viewport.element as HTMLElement).scrollLeft = 1760;
+    await viewport.trigger('scroll');
+    expect(document.activeElement).toBe(viewport.element);
+
+    (wrapper.get(leftSelector).element as HTMLButtonElement).focus();
+    (viewport.element as HTMLElement).scrollLeft = 0;
+    await viewport.trigger('scroll');
+    expect(document.activeElement).toBe(viewport.element);
+
+    const point = wrapper.findAll('.stats-trend-point-trigger')[0]!.element as HTMLButtonElement;
+    point.focus();
+    await viewport.trigger('scroll');
+    expect(document.activeElement).toBe(point);
+    wrapper.unmount();
+  });
+
+  it('数据变化、空状态和恢复显示时重算提示并清理观察器', async () => {
+    const wrapper = await renderChart([]);
+    expect(observe).not.toHaveBeenCalled();
+    await wrapper.setProps({ points });
+    const viewport = wrapper.get('.stats-trend-scroll');
+    setDimensions(viewport.element, 400, 2160);
+    resize();
+    await nextTick();
+    expect(wrapper.get(rightSelector).isVisible()).toBe(true);
+
+    await wrapper.setProps({ points: points.slice(0, 2) });
+    setDimensions(viewport.element, 400, 400);
+    resize();
+    await nextTick();
+    expect(wrapper.get(rightSelector).isVisible()).toBe(false);
+
+    await wrapper.setProps({ metric: 'total_tokens' });
+    expect(wrapper.text()).toContain('该指标暂无已知数据');
+    expect(disconnect).toHaveBeenCalledOnce();
+    await wrapper.setProps({ metric: 'request_count' });
+    expect(observe).toHaveBeenCalledTimes(4);
+    wrapper.unmount();
+    expect(disconnect).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('StatsTrendChart', () => {
