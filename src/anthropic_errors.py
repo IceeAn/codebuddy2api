@@ -57,5 +57,5 @@ def anthropic_error_response(error: AnthropicAPIError) -> JSONResponse:
             "error": {"type": error.error_type, "message": error.message},
             "request_id": error.request_id,
         },
-        headers=error.safe_headers,
+        headers={**error.safe_headers, "Cache-Control": "private, no-store"},
     )

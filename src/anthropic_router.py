@@ -17,6 +17,7 @@ from .anthropic_compat import (
     translate_anthropic_request,
 )
 from .anthropic_errors import AnthropicAPIError, get_anthropic_request_id
+from .anthropic_schema import MESSAGE_CONTENT, OUTPUT_CONFIG, TOOLS
 from .anthropic_response import (
     AnthropicDownstreamAdapter,
     AnthropicResponseContext,
@@ -77,7 +78,7 @@ ANTHROPIC_MESSAGES_OPENAPI_REQUEST_BODY = {
                                     "type": "string",
                                     "enum": ["user", "assistant", "system"],
                                 },
-                                "content": {},
+                                "content": MESSAGE_CONTENT,
                             },
                         },
                     },
@@ -85,16 +86,17 @@ ANTHROPIC_MESSAGES_OPENAPI_REQUEST_BODY = {
                     "stream": {"type": "boolean", "default": False},
                     "temperature": {"type": "number"},
                     "top_p": {"type": "number"},
+                    "top_k": {"type": ["integer", "null"], "minimum": 0},
                     "stop_sequences": {
                         "type": "array",
                         "maxItems": 0,
                         "items": {"type": "string"},
                     },
-                    "tools": {"type": "array", "items": {"type": "object"}},
+                    "tools": TOOLS,
                     "tool_choice": {"type": "object"},
                     "thinking": {"type": "object"},
                     "metadata": {"type": "object"},
-                    "output_config": {},
+                    "output_config": OUTPUT_CONFIG,
                 },
             }
         }
@@ -199,7 +201,7 @@ def require_anthropic_session_user(request: Request) -> AuthenticatedUser:
                 401,
                 "authentication_error",
                 "Invalid authentication credentials",
-                headers={"WWW-Authenticate": "Bearer"},
+                headers={**(getattr(error, "headers", None) or {}), "WWW-Authenticate": "Bearer"},
             ) from error
         if status_code == 403:
             raise _error(
@@ -264,6 +266,12 @@ async def anthropic_messages(
     try:
         try:
             request_body = await request.json()
+        except HTTPException as error:
+            if stats_context is not None:
+                stats_context.mark_failure("validation_error", error.status_code)
+            raise _error(request, error.status_code,
+                         "request_too_large" if error.status_code == 413 else "invalid_request_error",
+                         str(error.detail), headers=error.headers) from error
         except Exception as error:
             if stats_context is not None:
                 stats_context.mark_failure("validation_error", 400)

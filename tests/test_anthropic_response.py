@@ -41,6 +41,47 @@ class AnthropicNonStreamResponseTests(unittest.TestCase):
     def setUp(self):
         self.context = AnthropicResponseContext("msg_test", "req_test", "anthropic/codebuddy/glm")
 
+    def test_refusal_text_matches_stream_and_preserves_finish_semantics(self):
+        for finish, expected in (("stop", "refusal"), ("content_filter", "refusal"),
+                                 ("length", "max_tokens"), ("tool_calls", "tool_use")):
+            aggregator = AnthropicNonStreamAggregator(self.context)
+            encoder = AnthropicStreamEncoder(self.context)
+            chunks = []
+            for item in [event({"reasoning_content": "想", "content": "正文", "refusal": "不能"}),
+                         event({"refusal": "回答"}, finish=finish),
+                         event(usage={"prompt_tokens": 2, "completion_tokens": 3})]:
+                aggregator.process_event(item)
+                chunks.extend(encoder.process_event(item))
+            response = aggregator.finalize()
+            chunks.extend(encoder.finalize())
+            decoded = decode_sse(chunks)
+            self.assertEqual(response["content"][1], {"type": "text", "text": "正文不能回答"})
+            self.assertEqual(response["stop_reason"], expected)
+            self.assertEqual("".join(data["delta"]["text"] for name, data in decoded
+                                     if name == "content_block_delta" and data["delta"]["type"] == "text_delta"), "正文不能回答")
+            self.assertEqual(decoded[-2][1]["delta"]["stop_reason"], expected)
+            self.assertEqual(decoded[-1][0], "message_stop")
+
+    def test_refusal_alone_does_not_enable_zero_usage_fallback(self):
+        for factory in (AnthropicNonStreamAggregator, AnthropicStreamEncoder):
+            state = factory(self.context)
+            state.process_event(event({"refusal": "不能回答"}, finish="stop"))
+            with self.assertRaisesRegex(UpstreamProtocolViolation, "missing usage"):
+                state.finalize()
+
+    def test_empty_optional_output_is_ignored_and_media_output_fails(self):
+        for factory in (AnthropicNonStreamAggregator, AnthropicStreamEncoder):
+            for empty in (None, {}, "", []):
+                state = factory(self.context)
+                state.process_event(event({"audio": empty, "refusal": None, "content": "ok"}, finish="stop",
+                                          usage={"prompt_tokens": 1, "completion_tokens": 1}))
+                state.process_event(event({"refusal": ""}))
+                state.finalize()
+            for delta in ({"refusal": 1}, {"audio": {"data": "secret"}}, {"audio": "secret"}):
+                with self.subTest(factory=factory, delta=delta), self.assertRaises(UpstreamProtocolViolation) as raised:
+                    factory(self.context).process_event(event(delta))
+                self.assertNotIn("secret", str(raised.exception))
+
     def test_reasoning_text_tools_usage_and_model(self):
         aggregator = AnthropicNonStreamAggregator(self.context)
         for item in [

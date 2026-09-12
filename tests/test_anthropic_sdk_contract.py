@@ -8,6 +8,7 @@ import httpx
 from src.api_key_store import api_key_store
 from src.stream_service import CodeBuddyStreamService
 from tests.helpers import FakeHttpClient, TempConfigMixin, configure_users_file
+from tests.test_anthropic_multimodal import IMAGE, URL_IMAGE, TEXT_DOCUMENT, MAPPED_IMAGE, MAPPED_URL
 from web import app
 
 
@@ -43,6 +44,7 @@ class AnthropicSDKContractTests(TempConfigMixin, unittest.IsolatedAsyncioTestCas
         ]
 
     async def _execute(self, prepared, _user, *, response_adapter, **_kwargs):
+        self.last_payload = prepared.payload
         fake_client = FakeHttpClient(self.fixture)
         service = CodeBuddyStreamService(
             http_client_factory=mock.AsyncMock(return_value=fake_client),
@@ -75,6 +77,62 @@ class AnthropicSDKContractTests(TempConfigMixin, unittest.IsolatedAsyncioTestCas
             default_headers=default_headers,
         )
         return client, http_client
+
+    @mock.patch("src.anthropic_router.create_usage_stats_context", return_value=None)
+    async def test_sdk_multimodal_tool_round_trip_and_playground(self, _stats):
+        from src.auth_types import SESSION_COOKIE_NAME
+        from src.session_store import session_store
+        client, _ = self._client()
+        messages = [{"role": "user", "content": [IMAGE, {"type": "text", "text": "识别"}, URL_IMAGE]}]
+        schema = {"type": "object", "properties": {"answer": {"type": "string"}}}
+        options = {"model": "kimi-k3-1", "max_tokens": 256,
+                   "tools": [{"name": "weather", "input_schema": {"type": "object"}, "strict": True}],
+                   "output_config": {"format": {"type": "json_schema", "schema": schema}, "effort": "low"}, "top_k": 12}
+        try:
+            with mock.patch("src.anthropic_router.execute_codebuddy_chat", side_effect=self._execute):
+                complete = await client.messages.create(messages=messages, **options)
+                self.assertEqual(self.last_payload["messages"][-1]["content"], [MAPPED_IMAGE, {"type": "text", "text": "识别"}, MAPPED_URL])
+                self.assertEqual(self.last_payload["response_format"]["json_schema"]["schema"], schema)
+                self.assertTrue(self.last_payload["tools"][0]["function"]["strict"])
+                self.assertEqual((self.last_payload["top_k"], self.last_payload["reasoning_effort"]), (12, "low"))
+                history = [*messages, {"role": "assistant", "content": [block.model_dump() for block in complete.content]},
+                           {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "tool_sdk",
+                                                           "content": [IMAGE, TEXT_DOCUMENT], "is_error": True}]}]
+                async with client.messages.stream(messages=history, **options) as stream:
+                    streamed = await stream.get_final_message()
+                self.assertEqual(streamed.stop_reason, "tool_use")
+                self.assertEqual(self.last_payload["messages"][-1]["role"], "tool")
+                self.assertEqual(self.last_payload["messages"][-1]["tool_call_id"], "tool_sdk")
+                self.assertEqual(self.last_payload["messages"][-1]["content"][1], MAPPED_IMAGE)
+                self.assertEqual(self.last_payload["messages"][-2]["reasoning_content"], "consider")
+                cookie = session_store.create("admin")
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost") as http_client:
+                    response = await http_client.post("/api/admin/playground/anthropic/v1/messages",
+                                                      headers={"anthropic-version": "2023-06-01", "Cookie": f"{SESSION_COOKIE_NAME}={cookie}"},
+                                                      json={**options, "messages": history})
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["content"][-1]["id"], "tool_sdk")
+        finally:
+            await client.close()
+
+    @mock.patch("src.anthropic_router.create_usage_stats_context", return_value=None)
+    async def test_sdk_refusal_and_unconstrained_output_are_not_lost_or_repaired(self, _stats):
+        client, _ = self._client()
+        try:
+            with mock.patch("src.anthropic_router.execute_codebuddy_chat", side_effect=self._execute):
+                for field, answer, expected_reason in (("refusal", "无法回答", "refusal"), ("content", "非 JSON", "end_turn")):
+                    self.fixture = [sse({"choices": [{"delta": {field: answer}, "finish_reason": "stop"}]}),
+                                    sse({"choices": [], "usage": {"prompt_tokens": 1, "completion_tokens": 2}}), sse("[DONE]")]
+                    options = {"model": "kimi-k3-1", "max_tokens": 128, "messages": [{"role": "user", "content": "hi"}],
+                               "output_config": {"format": {"type": "json_schema", "schema": {"type": "object"}}}}
+                    complete = await client.messages.create(**options)
+                    async with client.messages.stream(**options) as stream:
+                        streamed = await stream.get_final_message()
+                    for result in (complete, streamed):
+                        self.assertEqual(result.content[0].text, answer)
+                        self.assertEqual(result.stop_reason, expected_reason)
+        finally:
+            await client.close()
 
     @mock.patch("src.anthropic_router.create_usage_stats_context", return_value=None)
     @mock.patch(

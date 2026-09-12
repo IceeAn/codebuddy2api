@@ -162,6 +162,12 @@ class ApiDocumentationTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         ]["schema"]
         self.assertTrue(anthropic_schema["additionalProperties"])
         self.assertIn("output_config", anthropic_schema["properties"])
+        self.assertIn("top_k", anthropic_schema["properties"])
+        self.assertIn("format", anthropic_schema["properties"]["output_config"]["properties"])
+        self.assertIn("strict", anthropic_schema["properties"]["tools"]["items"]["properties"])
+        blocks = anthropic_schema["properties"]["messages"]["items"]["properties"]["content"]["anyOf"][1]["items"]["oneOf"]
+        self.assertEqual({block["properties"]["type"]["const"] for block in blocks},
+                         {"text", "input_text", "image", "document", "tool_result", "tool_use", "thinking"})
         self.assertEqual(
             anthropic_schema["properties"]["stop_sequences"]["maxItems"],
             0,

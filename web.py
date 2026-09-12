@@ -136,6 +136,8 @@ async def auth_business_error_handler(request, error: AuthBusinessError):
     if is_openai_path(request.url.path):
         return openai_error_response(error.status_code, str(error.detail),
                                      code=error.error_code.value, headers=error.headers)
+    if is_anthropic_path(request.url.path):
+        return await http_error_handler(request, error)
     return auth_business_error_response(error)
 
 
@@ -217,6 +219,10 @@ async def unexpected_error_handler(request: Request, _error: Exception):
     """未处理异常不向客户端公开内部异常文本。"""
     if is_openai_path(request.url.path):
         return openai_error_response(500, "Internal server error")
+    if is_anthropic_path(request.url.path):
+        return anthropic_error_response(AnthropicAPIError(
+            500, "api_error", "Internal server error", get_anthropic_request_id(request),
+        ))
     return PlainTextResponse("Internal Server Error", status_code=500)
 
 

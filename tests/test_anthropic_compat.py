@@ -366,7 +366,7 @@ class AnthropicRequestTranslationTests(unittest.TestCase):
 
     def test_unsupported_fields_are_accepted_and_ignored_without_mutation(self):
         translated = self._translate(
-            output_config={"format": {"type": "json_schema"}},
+            output_config={"format": {"type": "json_schema", "schema": {}}, "future": True},
             top_k=20,
             service_tier="auto",
             context_management={"edits": []},
@@ -391,8 +391,10 @@ class AnthropicRequestTranslationTests(unittest.TestCase):
             {"role": "user", "content": [{"type": "text", "text": "hello"}]},
         ])
         self.assertEqual(translated["tools"][0]["function"]["name"], "weather")
+        self.assertTrue(translated["tools"][0]["function"]["strict"])
+        self.assertEqual(translated["top_k"], 20)
         for field in (
-            "output_config", "top_k", "service_tier", "context_management",
+            "output_config", "service_tier", "context_management",
             "mcp_servers", "future_top_level",
         ):
             self.assertNotIn(field, translated)

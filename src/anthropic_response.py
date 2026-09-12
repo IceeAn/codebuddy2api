@@ -137,6 +137,13 @@ class _AnthropicEventConsumer:
         self.usage: Optional[Dict[str, int]] = None
         self.tool_index_state = ToolCallIndexState()
         self.tools: Dict[int, _ToolState] = {}
+        self.saw_refusal = False
+
+    @property
+    def stop_reason(self) -> Optional[str]:
+        if self.saw_refusal and self.finish_reason == "end_turn":
+            return "refusal"
+        return self.finish_reason
 
     @staticmethod
     def _validate_legacy_function_call(event: CodeBuddyResponseEvent) -> None:
@@ -158,6 +165,10 @@ class _AnthropicEventConsumer:
 
     def _capture_finish_and_usage(self, event: CodeBuddyResponseEvent) -> None:
         self._validate_legacy_function_call(event)
+        if event.delta.get("audio") not in (None, "", [], {}):
+            raise UpstreamProtocolViolation("CodeBuddy audio output is not supported by Anthropic Messages")
+        if self._strict_scalar_delta(event, "refusal") is not None:
+            self.saw_refusal = True
         if event.finish_reason is not None:
             mapped = map_finish_reason(event.finish_reason)
             if self.finish_reason is not None and self.finish_reason != mapped:
@@ -254,11 +265,14 @@ class AnthropicNonStreamAggregator(_AnthropicEventConsumer):
         self._capture_finish_and_usage(event)
         reasoning = self._strict_scalar_delta(event, "reasoning_content")
         content = self._strict_scalar_delta(event, "content")
+        refusal = self._strict_scalar_delta(event, "refusal")
         tool_calls = self._tool_calls(event)
         if reasoning is not None:
             self._append_scalar("thinking", "thinking", reasoning)
         if content is not None:
             self._append_scalar("text", "text", content)
+        if refusal is not None:
+            self._append_scalar("text", "text", refusal)
         if tool_calls is not None:
             self._process_tools(tool_calls)
 
@@ -295,7 +309,7 @@ class AnthropicNonStreamAggregator(_AnthropicEventConsumer):
             "role": "assistant",
             "model": self.context.model,
             "content": self._final_blocks(),
-            "stop_reason": self.finish_reason,
+            "stop_reason": self.stop_reason,
             "stop_sequence": None,
             "usage": self.usage,
         }
@@ -439,6 +453,7 @@ class AnthropicStreamEncoder(_AnthropicEventConsumer):
         self._capture_finish_and_usage(event)
         reasoning = self._strict_scalar_delta(event, "reasoning_content")
         content = self._strict_scalar_delta(event, "content")
+        refusal = self._strict_scalar_delta(event, "refusal")
         tool_calls = self._tool_calls(event)
         chunks: List[str] = []
         self._ensure_started(chunks)
@@ -446,6 +461,8 @@ class AnthropicStreamEncoder(_AnthropicEventConsumer):
             chunks.extend(self._emit_scalar("thinking", reasoning))
         if content is not None:
             chunks.extend(self._emit_scalar("text", content))
+        if refusal is not None:
+            chunks.extend(self._emit_scalar("text", refusal))
         if tool_calls is not None:
             chunks.extend(self._process_tools(tool_calls))
         return chunks
@@ -460,7 +477,7 @@ class AnthropicStreamEncoder(_AnthropicEventConsumer):
         chunks.extend(self._flush_tool_group())
         chunks.append(format_anthropic_sse("message_delta", {
             "type": "message_delta",
-            "delta": {"stop_reason": self.finish_reason, "stop_sequence": None},
+            "delta": {"stop_reason": self.stop_reason, "stop_sequence": None},
             "usage": self.usage,
         }))
         chunks.append(format_anthropic_sse("message_stop", {"type": "message_stop"}))

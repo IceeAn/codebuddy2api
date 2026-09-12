@@ -89,7 +89,8 @@ docker compose run --rm codebuddy2api set-user <用户名>
 - 强制推理模型会覆盖为最大推理并启用 thinking，但 `clear_thinking` 等其他客户端 `thinking` 子项必须继续透传，不能用新对象整体替换；其他模型默认开启 thinking，但客户端显式禁用时必须尊重。`CODEBUDDY_FORCED_TEMPERATURE` 非空时覆盖客户端值；模型命名空间是否剥离由 `CODEBUDDY_STRIP_MODEL_NAMESPACE` 控制。修改请求转换时注意这些优先级。
 - 全局上游 HTTP 客户端保持 `trust_env=False`，避免环境中的 SOCKS 代理在缺少 `socksio` 时破坏服务启动。
 - Anthropic 兼容面是 `/anthropic/v1/*` 下的 Messages wire protocol，不是 Anthropic 原生模型或 provider；不得增加 root `/v1/*`、伪造 Anthropic 计费/限流/cache 字段或把运行时改成多 provider 网关。模型、token usage 和账单语义始终来自 CodeBuddy。
-- Anthropic 第一版只承诺文本、流式、thinking、自定义客户端工具和模型发现。请求转换以兼容为先：`anthropic-beta`、`output_config` 和未知字段必须接受并忽略，不能转发或记录；空 `tool_result` 必须转换为空 tool message；非空 `stop_sequences`、媒体、服务端工具、Anthropic 原生 thinking signature 等无法无损转换的语义仍需失败。`messages/count_tokens` 固定 404 以触发客户端本地回退。
+- Anthropic 请求转换以兼容为先：`anthropic-beta`、cache 控制和未知附加字段接受后忽略，不转发或记录；已知 `output_config.format/effort`、`top_k` 和工具 `strict` 仅映射参数，不保证上游执行约束。非空 `stop_sequences`、PDF/文件引用、原生 citations、服务端工具及原生 thinking signature 等无法转换的语义仍需失败。`messages/count_tokens` 固定 404 以触发客户端本地回退。
+- Anthropic 图片及文本／图文文档仅转换 user 和 tool_result 内容，媒体留在原消息角色中；工具媒体依赖 CodeBuddy 扩展，不代表标准 OpenAI tool message 支持图片。工具错误标记不能假设首块为文本，空 tool_result 仍须转换为空 tool message。refusal 文本映射不应扩大 content_filter 缺失 usage 时的零值特例。
 - CodeBuddy 原始 SSE 必须只解析一次为 `codebuddy_events` 中的协议中立事件，再由 OpenAI/Anthropic 下游适配器消费。OpenAI 继续以 `[DONE]` 结束；Anthropic 必须按 Messages SSE 状态机以 `message_stop` 结束且不发送 `[DONE]`。Anthropic 流式工具调用只缓冲连续工具组，在 text/thinking 边界或流结束时完整校验并按上游 index 输出，不能按元数据到达顺序改变工具顺序。
 - Anthropic 响应 usage 以 CodeBuddy 观测为准；正常完成缺失 usage 仍是协议错误，但 `content_filter` 已知可能不带 usage，为避免 Claude Code 无限重试可返回零 usage，且必须在文档中声明该值不是实际上游 token。
 - Anthropic 外部路由接受 `x-api-key` 或 Bearer API Key，两者并存时必须一致且只验证一次摘要；只接受 `anthropic-version: 2023-06-01`。playground 仅接受会话 Cookie并隐藏于 OpenAPI。不得记录 metadata、beta、被忽略字段、Claude Code session/agent ID、thinking/tool 内容或认证头。

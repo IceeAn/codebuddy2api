@@ -91,6 +91,109 @@ def _system_messages(value: Any) -> List[Dict[str, Any]]:
     ]
 
 
+def _image_part(block: Dict[str, Any], path: str) -> Dict[str, Any]:
+    source = block.get("source")
+    if not _is_object(source):
+        _fail(f"{path}.source must be an object")
+    source_type = source.get("type")
+    if source_type == "base64":
+        media_type = source.get("media_type")
+        if media_type not in ("image/png", "image/jpeg", "image/gif", "image/webp"):
+            _fail(f"{path}.source.media_type is not supported")
+        data = _non_empty_string(source.get("data"), f"{path}.source.data")
+        url = f"data:{media_type};base64,{data}"
+    elif source_type == "url":
+        url = _non_empty_string(source.get("url"), f"{path}.source.url")
+    else:
+        _fail(f"{path}.source.type is not supported")
+    return {"type": "image_url", "image_url": {"url": url}}
+
+
+def _document_parts(block: Dict[str, Any], path: str) -> List[Dict[str, Any]]:
+    citations = block.get("citations")
+    if citations is not None:
+        if not _is_object(citations):
+            _fail(f"{path}.citations must be an object")
+        enabled = citations.get("enabled", False)
+        if not isinstance(enabled, bool) or enabled:
+            _fail(f"{path}.citations.enabled must be false; native citations are not supported")
+    header = "[文档开始]"
+    for key, label in (("title", "标题"), ("context", "上下文")):
+        value = block.get(key)
+        if value is not None:
+            if not isinstance(value, str):
+                _fail(f"{path}.{key} must be a string")
+            header += f"\n{label}：{value}"
+    source = block.get("source")
+    if not _is_object(source):
+        _fail(f"{path}.source must be an object")
+    source_type = source.get("type")
+    if source_type == "text":
+        if source.get("media_type") != "text/plain":
+            _fail(f"{path}.source.media_type must be text/plain")
+        parts = [{"type": "text", "text": _non_empty_string(source.get("data"), f"{path}.source.data")}]
+    elif source_type == "content":
+        parts = _input_content_parts(source.get("content"), f"{path}.source.content", allow_documents=False)
+    else:
+        _fail(f"{path}.source.type is not supported")
+    return [{"type": "text", "text": header}, *parts, {"type": "text", "text": "[文档结束]"}]
+
+
+def _input_block_parts(block: Any, path: str, *, allow_documents: bool = True) -> List[Dict[str, Any]]:
+    if not _is_object(block):
+        _fail(f"{path} must be an object")
+    block_type = block.get("type")
+    if block_type in ("text", "input_text"):
+        return [_text_part(block, path)]
+    if block_type == "image":
+        return [_image_part(block, path)]
+    if block_type == "document" and allow_documents:
+        return _document_parts(block, path)
+    _fail(f"{path}.type is not supported")
+
+
+def _input_content_parts(value: Any, path: str, *, allow_documents: bool = True) -> List[Dict[str, Any]]:
+    """仅转换已知语义，媒体始终留在原消息角色中。"""
+    if isinstance(value, str):
+        return [{"type": "text", "text": _non_empty_string(value, path)}]
+    if not isinstance(value, list) or not value:
+        _fail(f"{path} must be a non-empty string or content block array")
+    parts: List[Dict[str, Any]] = []
+    for index, block in enumerate(value):
+        parts.extend(_input_block_parts(block, f"{path}[{index}]", allow_documents=allow_documents))
+    return parts
+
+
+def _translate_output_options(body: Dict[str, Any]) -> Dict[str, Any]:
+    result: Dict[str, Any] = {}
+    top_k = body.get("top_k")
+    if top_k is not None:
+        if not _is_integer(top_k) or top_k < 0:
+            _fail("top_k must be a non-negative integer")
+        result["top_k"] = top_k
+    config = body.get("output_config")
+    if config is None:
+        return result
+    if not _is_object(config):
+        _fail("output_config must be an object")
+    effort = config.get("effort")
+    if effort is not None:
+        if effort not in ("low", "medium", "high", "xhigh", "max"):
+            _fail("output_config.effort is not supported")
+        result["reasoning_effort"] = effort
+    output_format = config.get("format")
+    if output_format is not None:
+        if not _is_object(output_format) or output_format.get("type") != "json_schema":
+            _fail("output_config.format must be a json_schema object")
+        schema = output_format.get("schema")
+        if not _is_object(schema):
+            _fail("output_config.format.schema must be an object")
+        result["response_format"] = {"type": "json_schema", "json_schema": {
+            "name": "anthropic_response", "strict": True, "schema": copy.deepcopy(schema),
+        }}
+    return result
+
+
 def _tool_definition(tool: Any, index: int) -> Dict[str, Any]:
     path = f"tools[{index}]"
     if not _is_object(tool):
@@ -103,6 +206,11 @@ def _tool_definition(tool: Any, index: int) -> Dict[str, Any]:
         _fail(f"{path}.input_schema must be an object")
 
     function: Dict[str, Any] = {"name": name, "parameters": copy.deepcopy(schema)}
+    strict = tool.get("strict")
+    if strict is not None:
+        if not isinstance(strict, bool):
+            _fail(f"{path}.strict must be a boolean")
+        function["strict"] = strict
     description = tool.get("description")
     if description is not None and not isinstance(description, str):
         _fail(f"{path}.description must be a string")
@@ -260,7 +368,9 @@ def _assistant_message(
 def _tool_result_content(value: Any, path: str) -> Any:
     if value == "" or value == []:
         return ""
-    return _text_content(value, path)
+    if isinstance(value, str):
+        return value
+    return _input_content_parts(value, path)
 
 
 def _user_messages(content: Any, path: str, known_tool_ids: Set[str]) -> List[Dict[str, Any]]:
@@ -270,21 +380,17 @@ def _user_messages(content: Any, path: str, known_tool_ids: Set[str]) -> List[Di
         _fail(f"{path}.content must be a non-empty string or content block array")
 
     messages: List[Dict[str, Any]] = []
-    text_parts: List[Dict[str, str]] = []
-    saw_text = False
+    content_parts: List[Dict[str, Any]] = []
     for block_index, block in enumerate(content):
         block_path = f"{path}.content[{block_index}]"
         if not _is_object(block):
             _fail(f"{block_path} must be an object")
         block_type = block.get("type")
-        if block_type in {"text", "input_text"}:
-            saw_text = True
-            text_parts.append(_text_part(block, block_path))
-            continue
         if block_type != "tool_result":
-            _fail(f"{block_path}.type is not supported")
-        if saw_text:
-            _fail("tool_result blocks must appear before text blocks in a user message")
+            content_parts.extend(_input_block_parts(block, block_path))
+            continue
+        if content_parts:
+            _fail("tool_result blocks must appear before ordinary content blocks in a user message")
         tool_id = _non_empty_string(block.get("tool_use_id"), f"{block_path}.tool_use_id")
         if tool_id not in known_tool_ids:
             _fail(f"{block_path}.tool_use_id references an unknown tool")
@@ -299,11 +405,13 @@ def _user_messages(content: Any, path: str, known_tool_ids: Set[str]) -> List[Di
             if isinstance(result_content, str):
                 result_content = f"[tool_error]\n{result_content}"
             else:
-                result_content = copy.deepcopy(result_content)
-                result_content[0]["text"] = f"[tool_error]\n{result_content[0]['text']}"
+                if result_content[0]["type"] == "text":
+                    result_content[0]["text"] = f"[tool_error]\n{result_content[0]['text']}"
+                else:
+                    result_content.insert(0, {"type": "text", "text": "[tool_error]\n"})
         messages.append({"role": "tool", "tool_call_id": tool_id, "content": result_content})
-    if text_parts:
-        messages.append({"role": "user", "content": text_parts})
+    if content_parts:
+        messages.append({"role": "user", "content": content_parts})
     return messages
 
 
@@ -348,6 +456,7 @@ def translate_anthropic_request(request_body: Any) -> Dict[str, Any]:
         "model": unwrap_synthetic_anthropic_model_id(request_body["model"]),
         "max_tokens": max_tokens,
     }
+    translated.update(_translate_output_options(request_body))
 
     messages = _translate_messages(request_body["messages"])
     if "system" in request_body:
