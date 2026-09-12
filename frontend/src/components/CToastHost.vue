@@ -52,7 +52,7 @@ const accentClasses: Record<ToastType, string> = {
   <Teleport to="body">
     <div
       :class="[
-        'toast-host pointer-events-none fixed top-4 right-4 left-4 z-[100] md:top-6 md:right-6 md:left-auto',
+        'toast-host pointer-events-none fixed top-17 right-4 left-4 z-[100] md:top-6 md:right-6 md:left-auto',
         toastStore.isPaused ? 'toast-paused' : '',
       ]"
       aria-live="polite"
@@ -61,7 +61,7 @@ const accentClasses: Record<ToastType, string> = {
       <TransitionGroup
         name="toast"
         tag="div"
-        class="toast-list pointer-events-auto flex w-full max-w-[25rem] flex-col gap-2.5 md:w-[25rem]"
+        class="toast-list pointer-events-none flex w-full max-w-[25rem] flex-col gap-2.5 md:w-[25rem]"
         @mouseenter="toastStore.pauseAll"
         @mouseleave="toastStore.resumeAll"
       >
