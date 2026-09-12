@@ -12,6 +12,22 @@ from src.request_processor import PreparedCodeBuddyRequest
 
 
 class ChatExecutionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_stream_custom_adapter_does_not_receive_openai_usage_option(self):
+        service = mock.Mock()
+        service.handle_stream_response = mock.AsyncMock(return_value="stream")
+        adapter = object()
+        prepared = PreparedCodeBuddyRequest({"model": "glm"}, True, "glm", True)
+        await execute_codebuddy_chat(
+            prepared, AuthenticatedUser(username="alice", source="api_key"),
+            token_manager_factory=lambda _user: object(),
+            credential_selector=lambda _manager: {"bearer_token": "token"},
+            header_generator=lambda **_kwargs: {}, service_factory=lambda **_kwargs: service,
+            response_adapter=adapter,
+        )
+        service.handle_stream_response.assert_awaited_once_with(
+            prepared.payload, {}, response_model="glm", response_adapter=adapter,
+        )
+
     def test_default_credential_selector(self):
         manager = mock.Mock()
         manager.get_next_credential.return_value = {"bearer_token": "token"}
@@ -112,6 +128,7 @@ class ChatExecutionTests(unittest.IsolatedAsyncioTestCase):
             prepared.payload,
             {"Authorization": "Bearer upstream"},
             response_model="glm",
+            include_usage=False,
         )
 
     async def test_non_stream_execution_passes_response_adapter(self):

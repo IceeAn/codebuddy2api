@@ -166,6 +166,7 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
             {"model": "glm-5.2", "stream": True},
             {"Authorization": "Bearer token"},
             response_model="glm-5.2",
+            include_usage=False,
         )
         service.handle_non_stream_response.assert_not_awaited()
         token_manager.has_usable_credential.assert_not_called()
@@ -296,7 +297,7 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(raised.exception.status_code, 400)
-        self.assertIn("bad json", raised.exception.detail)
+        self.assertEqual("Invalid JSON request body", raised.exception.detail)
         stats_context.capture_request_bytes.assert_called_once_with(13)
         stats_context.capture_request_shape.assert_not_called()
         stats_context.mark_failure.assert_called_once_with("validation_error", 400)
@@ -414,7 +415,7 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
 
                 self.assertEqual(raised.exception.status_code, status)
                 if check_error is not None:
-                    self.assertIn("prepare failed", raised.exception.detail)
+                    self.assertEqual("内部服务器错误", raised.exception.detail)
                     self.assertNotIn("credential check failed", raised.exception.detail)
                 manager.has_usable_credential.assert_called_once_with()
                 manager.select_next_credential.assert_not_called()
@@ -588,7 +589,7 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         self.assertEqual(raised.exception.status_code, 500)
-        self.assertIn("unexpected", raised.exception.detail)
+        self.assertEqual("内部服务器错误", raised.exception.detail)
         stats_context.capture_request_bytes.assert_called_once_with(0)
         stats_context.capture_request_shape.assert_called_once_with({})
         stats_context.mark_failure.assert_called_once_with("internal_error", 500)

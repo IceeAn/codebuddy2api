@@ -7,7 +7,7 @@ import random
 import time
 import uuid
 from contextlib import aclosing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Callable, Dict, List, Literal, Optional, Protocol
 
 import httpx
@@ -21,6 +21,8 @@ from .codebuddy_events import (
     ToolCallIndexState,
     UpstreamProtocolViolation,
 )
+from .openai_response import StreamResponseAggregator
+from .openai_errors import openai_error_content
 from .openai_compat import (
     CompletionResponseContext,
     OpenAIStreamNormalizer,
@@ -31,7 +33,6 @@ from .sse import (
     SSEDataError,
     SSE_HEADERS,
     format_sse_done,
-    format_sse_error,
     format_sse_event,
     iter_sse_events,
 )
@@ -95,7 +96,7 @@ def _extract_error_fields(
     """从常见上游错误对象中提取安全且稳定的 OpenAI 错误字段。"""
     candidate = error_value.get("error", error_value) if isinstance(error_value, dict) else error_value
     if isinstance(candidate, dict):
-        message = candidate.get("message")
+        message = candidate.get("message") or candidate.get("msg")
         error_type = candidate.get("type")
         code = candidate.get("code")
         return (
@@ -329,107 +330,6 @@ class _ManagedStreamingResponse(StreamingResponse):
             await self._close_callback()
 
 
-class StreamResponseAggregator:
-    """将 CodeBuddy SSE 事件聚合为 OpenAI 非流式响应。"""
-
-    def __init__(self, response_context: CompletionResponseContext):
-        self.response_context = response_context
-        self.data = {
-            "content": "",
-            "reasoning_content": "",
-            "finish_reason": None,
-            "usage": None,
-            "system_fingerprint": None,
-        }
-        self.tool_call_index_state = ToolCallIndexState()
-        self.tool_call_map: Dict[int, Dict[str, Any]] = {}
-
-    def process_event(self, event: CodeBuddyResponseEvent):
-        """处理共享上游响应语义事件。"""
-        obj = event.chunk_data
-        self.data["system_fingerprint"] = obj.get("system_fingerprint") or self.data["system_fingerprint"]
-
-        if event.usage:
-            self.data["usage"] = event.usage
-
-        if not event.has_choice:
-            return
-        if isinstance(event.reasoning_content, str) and event.reasoning_content:
-            self.data["reasoning_content"] += event.reasoning_content
-
-        if isinstance(event.content, str) and event.content:
-            self.data["content"] += event.content
-
-        if event.tool_calls:
-            self._process_tool_calls(event.tool_calls)
-
-        if event.finish_reason:
-            self.data["finish_reason"] = event.finish_reason
-
-    def _process_tool_calls(self, tool_calls: List[Dict[str, Any]]) -> None:
-        """按显式 index、ID 或最近上下文聚合工具调用分块。"""
-        for tc in tool_calls:
-            if not isinstance(tc, dict):
-                continue
-            function = tc.get("function")
-            if not isinstance(function, dict):
-                continue
-            index = self.tool_call_index_state.resolve(tc)
-            if index is None:
-                continue
-            tool_id = tc.get("id")
-            current = self.tool_call_map.get(index)
-            if current is None:
-                current = {
-                    "id": tool_id,
-                    "type": tc.get("type", "function"),
-                    "function": {"name": "", "arguments": ""},
-                }
-                self.tool_call_map[index] = current
-            elif tool_id is not None:
-                current["id"] = tool_id
-
-            if tc.get("type"):
-                current["type"] = tc["type"]
-            if isinstance(function.get("name"), str) and function["name"]:
-                current["function"]["name"] = function["name"]
-            if isinstance(function.get("arguments"), str) and function["arguments"]:
-                current["function"]["arguments"] += function["arguments"]
-
-    def finalize(self) -> Dict[str, Any]:
-        """完成聚合并返回最终非流式响应。"""
-        indexes = sorted(self.tool_call_map)
-        tool_calls = [self.tool_call_map[index] for index in indexes]
-
-        final_message = {"role": "assistant", "content": self.data["content"]}
-        if self.data["reasoning_content"]:
-            final_message["reasoning_content"] = self.data["reasoning_content"]
-        if tool_calls:
-            final_message["tool_calls"] = tool_calls
-
-        finish_reason = self.data["finish_reason"] or ("tool_calls" if tool_calls else "stop")
-
-        final_response = {
-            "id": self.response_context.response_id,
-            "object": "chat.completion",
-            "created": self.response_context.created,
-            "model": self.response_context.model,
-            "choices": [
-                {
-                    "index": 0,
-                    "message": final_message,
-                    "finish_reason": finish_reason,
-                    "logprobs": None,
-                }
-            ],
-        }
-
-        if self.data["usage"]:
-            final_response["usage"] = self.data["usage"]
-        if self.data["system_fingerprint"]:
-            final_response["system_fingerprint"] = self.data["system_fingerprint"]
-
-        return final_response
 
 
 @dataclass
@@ -437,6 +337,8 @@ class _OpenAIStreamState:
     normalizer: OpenAIStreamNormalizer
     tool_indexes: ToolCallIndexState
     saw_finish_reason: bool = False
+    usage: Optional[Dict[str, Any]] = None
+    usage_metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class OpenAIDownstreamAdapter:
@@ -445,8 +347,9 @@ class OpenAIDownstreamAdapter:
     media_type = "text/event-stream"
     stream_headers = SSE_HEADERS
 
-    def __init__(self, context: CompletionResponseContext):
+    def __init__(self, context: CompletionResponseContext, *, include_usage: bool = False):
         self.context = context
+        self.include_usage = include_usage
 
     def create_stream_state(self) -> _OpenAIStreamState:
         return _OpenAIStreamState(OpenAIStreamNormalizer(), ToolCallIndexState())
@@ -456,24 +359,41 @@ class OpenAIDownstreamAdapter:
             return [format_sse_event(event)]
         if event.finish_reason is not None:
             state.saw_finish_reason = True
+        if isinstance(event.usage, dict):
+            state.usage = copy.deepcopy(event.usage)
+        if not event.has_choice and "usage" in event.chunk_data:
+            state.usage_metadata.update(copy.deepcopy({
+                key: value for key, value in event.chunk_data.items()
+                if key not in ("choices", "usage")
+            }))
+            return []
         converted_chunk = add_openai_tool_call_indexes(event, state.tool_indexes)
         converted_chunk = normalize_openai_stream_chunk_envelope(converted_chunk, self.context)
+        converted_chunk.pop("usage", None)
+        if self.include_usage:
+            converted_chunk["usage"] = None
         return [
             format_sse_event(chunk)
             for chunk in state.normalizer.normalize(converted_chunk)
         ]
 
-    @staticmethod
-    def finalize_stream(state: _OpenAIStreamState, upstream_done: bool) -> List[str]:
+    def finalize_stream(self, state: _OpenAIStreamState, upstream_done: bool) -> List[str]:
         if upstream_done or state.saw_finish_reason:
-            return [format_sse_done()]
+            output = []
+            if self.include_usage and state.usage is not None:
+                output.append(format_sse_event(normalize_openai_stream_chunk_envelope(
+                    {**state.usage_metadata, "choices": [], "usage": state.usage}, self.context,
+                )))
+            return output + [format_sse_done()]
         raise CodeBuddyStreamService._incomplete_stream_error()
 
     @staticmethod
     def format_stream_error(error: Any) -> str:
         if isinstance(error, UpstreamAPIError):
-            return format_sse_event({"error": error.error})
-        return format_sse_error(str(error), "stream_error")
+            return format_sse_event(openai_error_content(
+                error.status_code, error.message, error_type=error.error_type, code=error.code,
+            ))
+        return format_sse_event(openai_error_content(500, "Upstream stream error", error_type="stream_error"))
 
     def create_non_stream_aggregator(self) -> StreamResponseAggregator:
         return StreamResponseAggregator(self.context)
@@ -578,7 +498,7 @@ class CodeBuddyStreamService:
             headers: Optional[Dict[str, str]] = None,
     ) -> None:
         """统一的 API 错误处理。"""
-        logger.error(f"CodeBuddy API错误: {status_code} - {error_msg}")
+        logger.error("CodeBuddy API错误: %s", status_code)
 
         if status_code == 401:
             mapped_status, default_type = 401, "authentication_error"
@@ -611,7 +531,7 @@ class CodeBuddyStreamService:
             return error_msg, None, None
         message, error_type, code = _extract_error_fields(
             error_value,
-            error_msg,
+            "CodeBuddy upstream error",
             "",
         )
         return message, error_type, code
@@ -619,11 +539,7 @@ class CodeBuddyStreamService:
     @staticmethod
     def _upstream_sse_error(event: Dict[str, Any]) -> UpstreamAPIError:
         error_value = event.get("error")
-        fallback_message = (
-            json.dumps(error_value, ensure_ascii=False, separators=(",", ":"))
-            if isinstance(error_value, dict)
-            else "CodeBuddy upstream stream error"
-        )
+        fallback_message = "CodeBuddy upstream stream error"
         message, error_type, code = _extract_error_fields(
             error_value,
             fallback_message,
@@ -714,10 +630,11 @@ class CodeBuddyStreamService:
             *,
             response_model: Optional[str] = None,
             response_adapter: Optional[Any] = None,
+            include_usage: bool = False,
     ) -> StreamingResponse:
         """处理流式响应。"""
         response_context = self._create_response_context(payload, response_model)
-        adapter = response_adapter or OpenAIDownstreamAdapter(response_context)
+        adapter = response_adapter or OpenAIDownstreamAdapter(response_context, include_usage=include_usage)
 
         async def stream_core():
             client = await self.http_client_factory()

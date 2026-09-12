@@ -39,6 +39,7 @@ REQUIRED_FILES = (
     "web.py",
     "frontend/package.json",
     "doc/账号系统迁移.md",
+    "doc/协议兼容性.md",
 )
 
 REQUIRED_DIRS = (

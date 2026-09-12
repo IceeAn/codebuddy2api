@@ -137,6 +137,8 @@ async def execute_codebuddy_chat(
     if response_adapter is not None:
         kwargs["response_adapter"] = response_adapter
     if prepared_request.client_wants_stream:
+        if response_adapter is None:
+            kwargs["include_usage"] = prepared_request.client_include_usage
         return await service.handle_stream_response(
             prepared_request.payload,
             headers,

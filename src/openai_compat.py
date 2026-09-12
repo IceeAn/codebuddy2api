@@ -62,23 +62,36 @@ class OpenAIStreamNormalizer:
 
         role = delta.pop("role", None)
         if not self.role_sent and (role in ("assistant", "") or self._has_assistant_delta(delta)):
-            outgoing_chunks.append(self._copy_with_delta(chunk_data, {"role": "assistant"}, None))
+            outgoing_chunks.append(self._synthetic_delta(chunk_data, {"role": "assistant"}))
             self.role_sent = True
 
         delta = self._remove_empty_delta_fields(delta)
 
         if not delta:
-            if finish_reason is None and not chunk_data.get("usage"):
+            if finish_reason is None and not chunk_data.get("usage") and not choice.get("logprobs"):
                 return outgoing_chunks
             outgoing_chunks.append(self._copy_with_delta(chunk_data, {}, finish_reason))
             return outgoing_chunks
 
+        if all(isinstance(delta.get(key), str) and delta[key] for key in ("reasoning_content", "content")):
+            outgoing_chunks.append(self._synthetic_delta(chunk_data, {"reasoning_content": delta.pop("reasoning_content")}))
         outgoing_chunks.append(self._copy_with_delta(chunk_data, delta, finish_reason))
         return outgoing_chunks
 
     @staticmethod
     def _has_assistant_delta(delta: Dict[str, Any]) -> bool:
-        return any(key in delta for key in ("reasoning_content", "content", "tool_calls"))
+        return any(delta.get(key) not in (None, "", [], {}) for key in (
+            "reasoning_content", "content", "tool_calls", "refusal", "function_call", "audio",
+        ))
+
+    @classmethod
+    def _synthetic_delta(cls, chunk_data: Dict[str, Any], delta: Dict[str, Any]) -> Dict[str, Any]:
+        """补出的块不重复消费首个 choice 的概率或请求 usage。"""
+        copied = cls._copy_with_delta(chunk_data, delta, None)
+        copied["choices"][0].pop("logprobs", None)
+        if "usage" in copied:
+            copied["usage"] = None
+        return copied
 
     @staticmethod
     def _remove_empty_delta_fields(delta: Dict[str, Any]) -> Dict[str, Any]:

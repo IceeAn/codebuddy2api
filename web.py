@@ -21,6 +21,8 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import JSONResponse
+from starlette.responses import PlainTextResponse
+from src.openai_errors import is_openai_path, openai_error_response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -129,14 +131,19 @@ async def anthropic_api_error_handler(_request, error: AnthropicAPIError):
 
 
 @app.exception_handler(AuthBusinessError)
-async def auth_business_error_handler(_request, error: AuthBusinessError):
+async def auth_business_error_handler(request, error: AuthBusinessError):
     """返回前后端共享的顶层账号业务错误码。"""
+    if is_openai_path(request.url.path):
+        return openai_error_response(error.status_code, str(error.detail),
+                                     code=error.error_code.value, headers=error.headers)
     return auth_business_error_response(error)
 
 
 @app.exception_handler(RequestValidationError)
 async def request_validation_error_handler(request: Request, error: RequestValidationError):
     """将 Anthropic 依赖校验错误规范化为 400，其余路由保持 FastAPI 行为。"""
+    if is_openai_path(request.url.path):
+        return openai_error_response(400, "Invalid OpenAI request")
     if is_anthropic_path(request.url.path):
         missing_version = any(
             item.get("loc") == ("header", "anthropic-version")
@@ -163,6 +170,9 @@ async def request_validation_error_handler(request: Request, error: RequestValid
 @app.exception_handler(StarletteHTTPException)
 async def http_error_handler(request: Request, error: StarletteHTTPException):
     """使 Anthropic 命名空间内的框架级错误也保持协议错误信封。"""
+    if is_openai_path(request.url.path):
+        return openai_error_response(error.status_code, str(error.detail),
+                                     param=getattr(error, "param", None), headers=error.headers)
     if not is_anthropic_path(request.url.path):
         return JSONResponse(
             status_code=error.status_code,
@@ -190,6 +200,9 @@ async def http_error_handler(request: Request, error: StarletteHTTPException):
 @app.exception_handler(UpstreamAPIError)
 async def upstream_api_error_handler(request, error: UpstreamAPIError):
     """按当前下游协议返回可识别的上游失败。"""
+    if is_openai_path(request.url.path):
+        return openai_error_response(error.status_code, error.message, error_type=error.error_type,
+                                     code=error.code, headers=error.headers)
     if is_anthropic_path(request.url.path):
         return anthropic_error_response(upstream_error_as_anthropic(request, error))
     return JSONResponse(
@@ -197,6 +210,14 @@ async def upstream_api_error_handler(request, error: UpstreamAPIError):
         content={"error": error.error},
         headers=error.headers,
     )
+
+
+@app.exception_handler(Exception)
+async def unexpected_error_handler(request: Request, _error: Exception):
+    """未处理异常不向客户端公开内部异常文本。"""
+    if is_openai_path(request.url.path):
+        return openai_error_response(500, "Internal server error")
+    return PlainTextResponse("Internal Server Error", status_code=500)
 
 
 @docs_router.get("/openapi.json", include_in_schema=False)

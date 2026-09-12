@@ -84,6 +84,8 @@ docker compose run --rm codebuddy2api set-user <用户名>
 - CodeBuddy 上游只支持流式响应。即使客户端请求非流式，也必须用 `client.stream()` 增量消费 SSE，再由 `StreamResponseAggregator` 聚合；禁止先缓冲完整上游响应体。`RequestProcessor.prepare_request()` 必须强制注入 `stream=True`。
 - 上游响应采用宽松事件提取，不在事件模型层承担完整协议验证。流式与非流式路径共享首个 choice 语义；`OpenAIStreamNormalizer` 负责拆分混合的 reasoning/content delta，并在首块补 `role: assistant`。
 - 上游工具调用 ID 原样透传，只为 OpenAI 流式兼容补充缺失的 `index`，不要重新生成 ID。
+- OpenAI 客户端 `stream_options.include_usage` 必须独立于上游强制 include_usage 保存；统计消费原始事件，下游仅按客户端选项发送最终空 choices 的 usage 块，不补造缺失 usage。`max_completion_tokens` 在入口校验后映射为 `max_tokens`，双字段不同值必须返回 400。
+- 多模态字段可透传不等于上游支持。图片内容保持顺序，网关不下载或转码；未知请求扩展交由上游判断。音频非流式聚合必须先解码各 Base64 分块、拼接字节，再在最终响应统一编码，不能直接拼接带 padding 的字符串。标准响应聚合仅保证明确实现的字段，未知分片不得猜测合并规则。
 - 强制推理模型会覆盖为最大推理并启用 thinking，但 `clear_thinking` 等其他客户端 `thinking` 子项必须继续透传，不能用新对象整体替换；其他模型默认开启 thinking，但客户端显式禁用时必须尊重。`CODEBUDDY_FORCED_TEMPERATURE` 非空时覆盖客户端值；模型命名空间是否剥离由 `CODEBUDDY_STRIP_MODEL_NAMESPACE` 控制。修改请求转换时注意这些优先级。
 - 全局上游 HTTP 客户端保持 `trust_env=False`，避免环境中的 SOCKS 代理在缺少 `socksio` 时破坏服务启动。
 - Anthropic 兼容面是 `/anthropic/v1/*` 下的 Messages wire protocol，不是 Anthropic 原生模型或 provider；不得增加 root `/v1/*`、伪造 Anthropic 计费/限流/cache 字段或把运行时改成多 provider 网关。模型、token usage 和账单语义始终来自 CodeBuddy。

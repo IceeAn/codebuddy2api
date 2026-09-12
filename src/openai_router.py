@@ -16,6 +16,7 @@ from .chat_execution import (
 from .models_manager import models_manager
 from .private_response import PrivateNoStoreRoute
 from .request_processor import RequestProcessor
+from .openai_schema import CONTENT_SCHEMA, EXTRA_REQUEST_PROPERTIES
 from .stream_service import CodeBuddyStreamService, UpstreamAPIError
 from .usage_stats_context import UsageStatsContext, create_usage_stats_context
 
@@ -48,11 +49,21 @@ CHAT_COMPLETIONS_OPENAPI_REQUEST_BODY = {
                                     "required": ["tool_calls"],
                                     "properties": {"role": {"const": "assistant"}},
                                 },
+                                {
+                                    "required": ["function_call"],
+                                    "properties": {"role": {"const": "assistant"}},
+                                },
                             ],
                             "additionalProperties": True,
                             "properties": {
-                                "role": {"type": "string"},
-                                "content": {},
+                                "role": {"type": "string", "examples": ["system", "developer", "user", "assistant", "tool", "function"]},
+                                "content": CONTENT_SCHEMA,
+                                "name": {"type": "string"},
+                                "tool_call_id": {"type": "string"},
+                                "function_call": {"type": "object", "required": ["name", "arguments"],
+                                                  "properties": {"name": {"type": "string"}, "arguments": {"type": "string"}}},
+                                "audio": {"type": "object", "properties": {"id": {"type": "string"}}},
+                                "reasoning_content": {"type": "string"},
                                 "tool_calls": {
                                     "type": "array",
                                     "minItems": 1,
@@ -78,6 +89,7 @@ CHAT_COMPLETIONS_OPENAPI_REQUEST_BODY = {
                     "reasoning_effort": {"type": "string"},
                     "thinking": {"type": "object", "additionalProperties": True},
                     "enable_thinking": {"type": "boolean"},
+                    **EXTRA_REQUEST_PROPERTIES,
                 },
             }
         }
@@ -142,11 +154,13 @@ async def chat_completions(
             stats_context.capture_request_bytes(request_bytes or 0)
         try:
             request_body = await request.json()
+        except HTTPException:
+            raise
         except Exception as e:
-            logger.error("解析请求体失败: %s", e)
+            logger.error("解析请求体失败: %s", type(e).__name__)
             if stats_context is not None:
                 stats_context.mark_failure("validation_error", 400)
-            raise HTTPException(status_code=400, detail=f"Invalid JSON request body: {str(e)}")
+            raise HTTPException(status_code=400, detail="Invalid JSON request body")
 
         if stats_context is not None and isinstance(request_body, dict):
             stats_context.capture_request_shape(request_body)
@@ -213,10 +227,10 @@ async def chat_completions(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("OpenAI 兼容 API 错误: %s", e)
+        logger.error("OpenAI 兼容 API 错误: %s", type(e).__name__)
         if stats_context is not None:
             stats_context.mark_failure("internal_error", 500)
-        raise HTTPException(status_code=500, detail=f"内部服务器错误: {str(e)}")
+        raise HTTPException(status_code=500, detail="内部服务器错误")
 
 
 async def list_v1_models(user: AuthenticatedUser):

@@ -6,6 +6,8 @@ from typing import Any, Dict
 from fastapi import HTTPException
 
 from .system_prompt_rewriter import rewrite_system_prompt_messages
+from .openai_request import map_token_limit, require_string, validate_content, validate_options
+from .openai_errors import OpenAIRequestError
 
 
 @dataclass(frozen=True)
@@ -15,6 +17,7 @@ class PreparedCodeBuddyRequest:
     payload: Dict[str, Any]
     client_wants_stream: bool
     response_model: str
+    client_include_usage: bool = False
 
 
 def strip_model_namespace(model: Any) -> str:
@@ -123,6 +126,7 @@ class RequestProcessor:
     def prepare_request(request_body: Dict[str, Any], user: Any = None) -> PreparedCodeBuddyRequest:
         """依次应用产品策略和协议适配，同时保留客户端响应契约。"""
         payload = copy.deepcopy(request_body)
+        map_token_limit(payload)
         apply_request_policies(payload, user)
         response_model = str(request_body.get("model") or payload.get("model") or "unknown")
         adapt_openai_payload_for_codebuddy(payload)
@@ -130,6 +134,7 @@ class RequestProcessor:
             payload=payload,
             client_wants_stream=bool(request_body.get("stream", False)),
             response_model=response_model,
+            client_include_usage=(request_body.get("stream_options") or {}).get("include_usage", False),
         )
 
     @staticmethod
@@ -138,21 +143,31 @@ class RequestProcessor:
         if not isinstance(request_body, dict):
             raise HTTPException(status_code=400, detail="Request body must be a JSON object")
 
+        validate_options(request_body)
+
         messages = request_body.get("messages")
         if not messages or not isinstance(messages, list):
-            raise HTTPException(status_code=400, detail="Messages field is required and must be an array")
+            raise OpenAIRequestError("Messages field is required and must be an array", "messages")
 
         for i, msg in enumerate(messages):
             if not isinstance(msg, dict):
-                raise HTTPException(status_code=400, detail=f"Message {i} must be an object")
+                raise OpenAIRequestError(f"Message {i} must be an object", f"messages[{i}]")
             if "role" not in msg:
-                raise HTTPException(status_code=400, detail=f"Message {i} must have 'role' field")
+                raise OpenAIRequestError(f"Message {i} must have 'role' field", f"messages[{i}].role")
+            require_string(msg["role"], f"messages[{i}].role")
+            if "content" in msg:
+                validate_content(msg["content"], f"messages[{i}].content")
             if "content" not in msg:
                 tool_calls = msg.get("tool_calls")
+                if msg.get("role") == "assistant" and isinstance(msg.get("function_call"), dict):
+                    function = msg["function_call"]
+                    require_string(function.get("name"), f"messages[{i}].function_call.name")
+                    require_string(function.get("arguments"), f"messages[{i}].function_call.arguments", allow_empty=True)
+                    continue
                 if (
                     msg.get("role") != "assistant"
                     or not isinstance(tool_calls, list)
                     or not tool_calls
                     or not all(isinstance(tool_call, dict) for tool_call in tool_calls)
                 ):
-                    raise HTTPException(status_code=400, detail=f"Message {i} must have 'content' field")
+                    raise OpenAIRequestError(f"Message {i} must have 'content' field", f"messages[{i}].content")

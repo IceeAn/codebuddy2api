@@ -141,12 +141,20 @@ class ApiDocumentationTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
                     "required": ["tool_calls"],
                     "properties": {"role": {"const": "assistant"}},
                 },
+                {
+                    "required": ["function_call"],
+                    "properties": {"role": {"const": "assistant"}},
+                },
             ],
         )
         self.assertEqual(
             messages_schema["items"]["properties"]["tool_calls"],
             {"type": "array", "minItems": 1, "items": {"type": "object"}},
         )
+        content_schema = messages_schema["items"]["properties"]["content"]
+        self.assertEqual(content_schema["anyOf"][2]["type"], "array")
+        self.assertIn("max_completion_tokens", request_schema["properties"])
+        self.assertIn("stream_options", request_schema["properties"])
 
         anthropic_operation = schema["paths"]["/anthropic/v1/messages"]["post"]
         anthropic_schema = anthropic_operation["requestBody"]["content"][

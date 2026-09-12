@@ -134,7 +134,7 @@ class OpenAIStreamNormalizerTests(unittest.TestCase):
                     [{"role": "assistant"}, delta],
                 )
 
-    def test_normalize_preserves_mixed_reasoning_delta(self):
+    def test_normalize_splits_mixed_reasoning_content_and_preserves_tools(self):
         tool_calls = [{"id": "call_1", "function": {"name": "lookup"}}]
         cases = [
             ({"reasoning_content": "think", "content": "answer"}, "stop"),
@@ -146,10 +146,12 @@ class OpenAIStreamNormalizerTests(unittest.TestCase):
                 chunk = {"choices": [{"delta": delta, "finish_reason": finish_reason}]}
 
                 normalized = OpenAIStreamNormalizer().normalize(chunk)
-
+                expected = [{"role": "assistant"}, delta]
+                if "content" in delta:
+                    expected = [{"role": "assistant"}, {"reasoning_content": "think"}, {"content": "answer"}]
                 self.assertEqual(
                     [item["choices"][0]["delta"] for item in normalized],
-                    [{"role": "assistant"}, delta],
+                    expected,
                 )
                 self.assertEqual(normalized[-1]["choices"][0]["finish_reason"], finish_reason)
 

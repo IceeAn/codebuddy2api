@@ -486,11 +486,11 @@ class StreamServiceErrorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(string_error.error["message"], "plain failure")
         self.assertEqual(invalid_object_error.error, {
-            "message": '{"message":1,"type":null}',
+            "message": "CodeBuddy upstream stream error",
             "type": "upstream_error",
         })
         self.assertEqual(nested_object_error.error, {
-            "message": '{"data":{"message":"quota exhausted","type":"rate_limit_error"}}',
+            "message": "CodeBuddy upstream stream error",
             "type": "upstream_error",
         })
         self.assertEqual(invalid_value_error.error, {
@@ -733,7 +733,10 @@ class StreamServiceErrorTests(unittest.IsolatedAsyncioTestCase):
 
                 self.assertIn('"content": "partial"', body)
                 self.assertEqual(payloads[-1]["error"]["type"], error_type)
-                self.assertIn(str(error), payloads[-1]["error"]["message"])
+                if isinstance(error, RuntimeError):
+                    self.assertEqual("Upstream stream error", payloads[-1]["error"]["message"])
+                else:
+                    self.assertIn(str(error), payloads[-1]["error"]["message"])
                 self.assertEqual(client.stream.call_count, 1)
 
     async def test_stream_response_maps_transport_error_before_first_output(self):
@@ -1251,6 +1254,7 @@ class StreamServiceErrorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payloads[-1]["error"], {
             "message": "quota exhausted",
             "type": "quota_error",
+            "param": None,
             "code": "quota",
         })
 

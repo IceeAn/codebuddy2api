@@ -9,6 +9,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .anthropic_errors import is_anthropic_path
+from .openai_errors import is_openai_path, openai_error_content
 
 PRIVATE_NO_STORE_VALUE = "private, no-store"
 REQUEST_BODY_TOO_LARGE_DETAIL = "请求体超过允许上限"
@@ -63,6 +64,8 @@ class RequestBodyLimitMiddleware:
 
     @classmethod
     def _error_content(cls, scope: Scope, status_code: int, detail: str) -> tuple[dict, dict]:
+        if is_openai_path(scope.get("path", "")):
+            return openai_error_content(status_code, detail), {"Cache-Control": PRIVATE_NO_STORE_VALUE}
         if not cls._is_anthropic_scope(scope):
             return {"detail": detail}, {"Cache-Control": PRIVATE_NO_STORE_VALUE}
         request_id = cls._anthropic_request_id(scope)
@@ -136,7 +139,7 @@ class RequestBodyLimitMiddleware:
             nonlocal replacing_anthropic_error
             if (
                 streamed_limit_exceeded
-                and self._is_anthropic_scope(scope)
+                and (self._is_anthropic_scope(scope) or is_openai_path(scope.get("path", "")))
                 and message["type"] == "http.response.start"
                 and message.get("status") == 413
             ):

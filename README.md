@@ -19,6 +19,7 @@
 ## 支持协议
 
 - `POST /openai/v1/chat/completions`：兼容 OpenAI Chat Completions，支持流式和非流式客户端请求。
+- 图片 URL、Base64 和多图输入支持原样传递；音频、文件和结构化输出等字段的上游能力另有限制，详见 [Chat Completions 兼容性与多模态验证](doc/协议兼容性.md)。
 - `GET /openai/v1/models`：返回当前用户可用的模型列表。
 - `POST /anthropic/v1/messages`：兼容 Anthropic Messages wire protocol，支持流式、thinking 和客户端工具调用。
 - `GET /anthropic/v1/models`：返回供 Claude Code 发现的 `anthropic/codebuddy/<真实模型 ID>` 合成模型列表。

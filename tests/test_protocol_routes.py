@@ -133,6 +133,7 @@ class ProtocolRouteAuthenticationTests(TempConfigMixin, unittest.IsolatedAsyncio
             "error": {
                 "message": "quota exhausted",
                 "type": "quota_error",
+                "param": None,
                 "code": "quota",
             },
         })

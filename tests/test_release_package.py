@@ -48,6 +48,7 @@ class ReleasePackageTests(unittest.TestCase):
             "frontend/dist/assets/app.js",
             "frontend/public/assets/logo.svg",
             "doc/账号系统迁移.md",
+            "doc/协议兼容性.md",
             "src/router.py",
             "scripts/hash_password.py",
             "scripts/update_release.py",
@@ -100,6 +101,7 @@ class ReleasePackageTests(unittest.TestCase):
         self.assertIn("codebuddy2api/frontend/dist/assets/app.js", tar_names)
         self.assertIn("codebuddy2api/frontend/public/assets/logo.svg", tar_names)
         self.assertIn("codebuddy2api/doc/账号系统迁移.md", tar_names)
+        self.assertIn("codebuddy2api/doc/协议兼容性.md", tar_names)
         self.assertNotIn("codebuddy2api/secrets/users.txt.example", tar_names)
         self.assertNotIn("codebuddy2api/secrets/users.txt", tar_names)
         self.assertNotIn("codebuddy2api/data/codebuddy2api.sqlite3", tar_names)
