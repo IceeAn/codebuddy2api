@@ -40,10 +40,14 @@ REQUIRED_FILES = (
     "frontend/package.json",
     "doc/账号系统迁移.md",
     "doc/协议兼容性.md",
+    "doc/分词与计数.md",
+    "src/tokenizer_catalog.json",
+    "src/tokenizer_prompts.json",
 )
 
 REQUIRED_DIRS = (
     ("src", frozenset({".py"})),
+    ("src/tokenizer_assets", None),
     ("scripts", frozenset({".py"})),
     ("frontend/dist", None),
     ("frontend/public", None),
@@ -217,6 +221,20 @@ def validate_release_version(repository_root: Path, tag: str) -> str:
     return application_version
 
 
+def _verify_tokenizer_assets(repository_root: Path) -> None:
+    catalog_path = _require_file(repository_root, "src/tokenizer_catalog.json")
+    catalog = json.loads(_read_regular_file(catalog_path))
+    for resource in catalog["resources"]:
+        for item in resource["files"].values():
+            digest = item["sha256"]
+            if not re.fullmatch(r"[a-f0-9]{64}", digest):
+                raise RuntimeError("Tokenizer 清单摘要无效")
+            path = _require_file(repository_root, f"src/tokenizer_assets/blobs/{digest}")
+            data = _read_regular_file(path)
+            if len(data) != item["size"] or hashlib.sha256(data).hexdigest() != digest:
+                raise RuntimeError("Tokenizer 资源校验失败，不能发布")
+
+
 def stage_package(repository_root: Path, tag: str, staging_root: Path) -> Path:
     validate_release_version(repository_root, tag)
 
@@ -236,6 +254,8 @@ def stage_package(repository_root: Path, tag: str, staging_root: Path) -> Path:
 
     for relative_path, allowed_suffixes in REQUIRED_DIRS:
         _copy_dir(repository_root, package_root, relative_path, allowed_suffixes)
+
+    _verify_tokenizer_assets(package_root)
 
     manifest_files = [
         path.relative_to(package_root).as_posix()

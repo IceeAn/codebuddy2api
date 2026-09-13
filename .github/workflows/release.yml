@@ -176,6 +176,9 @@ jobs:
       - name: Install dependencies
         run: venv/bin/python3 -m pip install -r requirements-dev.txt
 
+      - name: Download locked tokenizers
+        run: python3 scripts/download_tokenizers.py
+
       - name: Run backend tests
         run: venv/bin/python3 -m coverage run -m unittest discover -s tests
 
@@ -205,7 +208,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: "24.11.1"
+          node-version: "24.15.0"
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
 
@@ -431,7 +434,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: "24.11.1"
+          node-version: "24.15.0"
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
 
@@ -457,6 +460,9 @@ jobs:
             exit 1
           fi
           echo "source_date_epoch=${source_date_epoch}" >> "${GITHUB_OUTPUT}"
+
+      - name: Download locked tokenizers for release
+        run: python3 scripts/download_tokenizers.py
 
       - name: Build release package
         env:

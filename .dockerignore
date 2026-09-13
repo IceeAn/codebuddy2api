@@ -19,6 +19,7 @@ dist/
 # Virtual Environment
 .venv
 venv/
+src/tokenizer_assets/
 ENV/
 env/
 

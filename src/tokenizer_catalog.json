@@ -1,0 +1,478 @@
+{
+  "version": 1,
+  "resources": [
+    {
+      "id": "deepseek-v4-pro",
+      "model": "deepseek-v4-pro",
+      "repo": "deepseek-ai/DeepSeek-V4-Pro",
+      "revision": "b5968e9190ef611bbf34a7229255be88a0e937c1",
+      "license": "mit",
+      "encoder": "deepseek_v4",
+      "format": "hf",
+      "files": {
+        "LICENSE": {
+          "sha256": "f2c6c602815669d292889e5be8c802f2ed950653b77999b1584e8e6aed25d040",
+          "size": 1084
+        },
+        "tokenizer.json": {
+          "sha256": "8f9f37ca37fdc4f5fd36d5cf4d3b0e8392edb4e894fd10cc0d70b4957c8633cf",
+          "size": 6367146
+        },
+        "tokenizer_config.json": {
+          "sha256": "6ac8c8dc065ed118161d02dd532749ae3f52c243deac27872134fae2f50d8547",
+          "size": 801
+        }
+      }
+    },
+    {
+      "id": "deepseek-v4-flash",
+      "model": "deepseek-v4-flash",
+      "repo": "deepseek-ai/DeepSeek-V4-Flash",
+      "revision": "60d8d70770c6776ff598c94bb586a859a38244f1",
+      "license": "mit",
+      "encoder": "deepseek_v4",
+      "format": "hf",
+      "files": {
+        "LICENSE": {
+          "sha256": "f2c6c602815669d292889e5be8c802f2ed950653b77999b1584e8e6aed25d040",
+          "size": 1084
+        },
+        "tokenizer.json": {
+          "sha256": "8f9f37ca37fdc4f5fd36d5cf4d3b0e8392edb4e894fd10cc0d70b4957c8633cf",
+          "size": 6367146
+        },
+        "tokenizer_config.json": {
+          "sha256": "6ac8c8dc065ed118161d02dd532749ae3f52c243deac27872134fae2f50d8547",
+          "size": 801
+        }
+      }
+    },
+    {
+      "id": "deepseek-v4.1-flash",
+      "model": "deepseek-v4.1-flash",
+      "repo": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "revision": "dba1be0a40aa45a94ad051997016db3960a90277",
+      "license": "mit",
+      "encoder": "deepseek_v41",
+      "format": "hf",
+      "files": {
+        "LICENSE": {
+          "sha256": "f2c6c602815669d292889e5be8c802f2ed950653b77999b1584e8e6aed25d040",
+          "size": 1084
+        },
+        "tokenizer.json": {
+          "sha256": "c90dfa01249db1be4245780a052ede752e1361c612ac6d08e2bdada7d599476b",
+          "size": 6367257
+        },
+        "tokenizer_config.json": {
+          "sha256": "6ac8c8dc065ed118161d02dd532749ae3f52c243deac27872134fae2f50d8547",
+          "size": 801
+        }
+      }
+    },
+    {
+      "id": "minimax-m2.5",
+      "model": "minimax-m2.5",
+      "repo": "MiniMaxAI/MiniMax-M2.5",
+      "revision": "f710177d938eff80b684d42c5aa84b382612f21f",
+      "license": "other",
+      "encoder": "jinja",
+      "format": "hf",
+      "files": {
+        "LICENSE-MODEL": {
+          "sha256": "278b29a14cf6b0cc60519617909af61fa4a6aca4ee928d6178cb9799785c5cc0",
+          "size": 7515
+        },
+        "chat_template.jinja": {
+          "sha256": "f83cec52bb3a7e5a3cb4d6fd1dfdd6f4fe13b06c5aaa39a1115e70a417fc75f5",
+          "size": 6524
+        },
+        "tokenizer.json": {
+          "sha256": "757622126525aeeb131756849d93298070ff3f0319c455ec8c5bb0f6b1cebbe8",
+          "size": 9730160
+        },
+        "tokenizer_config.json": {
+          "sha256": "60e392fea8d47660584deb3c6a716aab7b9f11fed24bc494baf5eb7ba809e882",
+          "size": 10893
+        }
+      }
+    },
+    {
+      "id": "minimax-m2.7",
+      "model": "minimax-m2.7",
+      "repo": "MiniMaxAI/MiniMax-M2.7",
+      "revision": "d494266a4affc0d2995ba1fa35c8481cbd84294b",
+      "license": "other",
+      "encoder": "jinja",
+      "format": "hf",
+      "files": {
+        "LICENSE": {
+          "sha256": "6373a886779a26e56af8070699ebaa8f90104cadcc7bbf6897037f72017bedfe",
+          "size": 3709
+        },
+        "chat_template.jinja": {
+          "sha256": "893d908f7b5cc65fdde270dcae5ea1a99647c6a7ce572ae874a57b7160069566",
+          "size": 6524
+        },
+        "tokenizer.json": {
+          "sha256": "757622126525aeeb131756849d93298070ff3f0319c455ec8c5bb0f6b1cebbe8",
+          "size": 9730160
+        },
+        "tokenizer_config.json": {
+          "sha256": "60e392fea8d47660584deb3c6a716aab7b9f11fed24bc494baf5eb7ba809e882",
+          "size": 10893
+        }
+      }
+    },
+    {
+      "id": "minimax-m3",
+      "model": "minimax-m3",
+      "repo": "MiniMaxAI/MiniMax-M3",
+      "revision": "f0e1c1e04d40177e4673a22097036854f536e9c0",
+      "license": "other",
+      "encoder": "jinja",
+      "format": "hf",
+      "files": {
+        "LICENSE": {
+          "sha256": "b53f2fdda3049b0e9013207be51efc2d372cda1fcfdd8bb4bb8b22658ca5db9c",
+          "size": 3339
+        },
+        "added_tokens.json": {
+          "sha256": "63f277741fb061e615cb604286a845d971178ba4716732a59cf42b3752c0ce4e",
+          "size": 1660
+        },
+        "chat_template.jinja": {
+          "sha256": "11421244f67553498e5c8112dae02802025bcc4305ec45ad380af95c96f9fe64",
+          "size": 11756
+        },
+        "special_tokens_map.json": {
+          "sha256": "401b624ec44507183d1dc65c74f7f3387699a77971aa19fa5a0cc57a3989ba97",
+          "size": 277
+        },
+        "tokenizer.json": {
+          "sha256": "bb1f1626cf01448f1e3b6036d0a061ffc66c91d9046aada14ea23a5441b5ad6e",
+          "size": 9731500
+        },
+        "tokenizer_config.json": {
+          "sha256": "15caca9f74fbce9b86dc014e9324cbefa56703d81ccd6d56020faa1c41d2eae5",
+          "size": 11288
+        }
+      }
+    },
+    {
+      "id": "glm-5.2",
+      "model": "glm-5.2",
+      "repo": "zai-org/GLM-5.2",
+      "revision": "cf457fa734ab149ffef225f80893eb38c6ff5cdc",
+      "license": "mit",
+      "encoder": "jinja",
+      "format": "hf",
+      "files": {
+        "LICENSE": {
+          "sha256": "f4a18c6ae40b0a8e7d2b7667f52f6e1994e54a46430d2e172b73cb8c9b5eb0d7",
+          "size": 1065
+        },
+        "chat_template.jinja": {
+          "sha256": "172dc74a35e1752df75ecfb2b2cf9326d2852bb1379868ebeec9571654489679",
+          "size": 5076
+        },
+        "tokenizer.json": {
+          "sha256": "19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d",
+          "size": 20217442
+        },
+        "tokenizer_config.json": {
+          "sha256": "98b1271574f41abf89427ae2dda030d94dc9478f0edc5a8bd240db213c6fd5fc",
+          "size": 761
+        }
+      }
+    },
+    {
+      "id": "glm-5.3",
+      "model": "glm-5.3",
+      "repo": "zai-org/GLM-5.3",
+      "revision": "aca966e4e02791568aa6a4ced368624b3d897f42",
+      "license": "other",
+      "encoder": "jinja",
+      "format": "hf",
+      "files": {
+        "LICENSE": {
+          "sha256": "96e1622099fc9d6b70c9760f007d99e66d7497eec636b63c60fe208401e9170c",
+          "size": 4263
+        },
+        "chat_template.jinja": {
+          "sha256": "3740abcea51c45830cb3ca562084ad5fb2ef53589376f73332e9886f93ade41c",
+          "size": 10734
+        },
+        "tokenizer.json": {
+          "sha256": "19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d",
+          "size": 20217442
+        },
+        "tokenizer_config.json": {
+          "sha256": "98b1271574f41abf89427ae2dda030d94dc9478f0edc5a8bd240db213c6fd5fc",
+          "size": 761
+        }
+      }
+    },
+    {
+      "id": "glm-5.3-flash",
+      "model": "glm-5.3-flash",
+      "repo": "zai-org/GLM-5.3-Flash",
+      "revision": "eb9eb208eb0d988989d07a6a12d0fdeb5f52574a",
+      "license": "mit",
+      "encoder": "jinja",
+      "format": "hf",
+      "files": {
+        "LICENSE": {
+          "sha256": "30b85b6b9659f2e78aa259f8faf5d920a68dee7c9ced3fa6dba1f19f2bc4fca1",
+          "size": 1070
+        },
+        "chat_template.jinja": {
+          "sha256": "0c4099f3382d6c92700dfb99725025360966fd73032f0ecf32377c0d9e6309c5",
+          "size": 10950
+        },
+        "tokenizer.json": {
+          "sha256": "19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d",
+          "size": 20217442
+        },
+        "tokenizer_config.json": {
+          "sha256": "98b1271574f41abf89427ae2dda030d94dc9478f0edc5a8bd240db213c6fd5fc",
+          "size": 761
+        }
+      }
+    },
+    {
+      "id": "glm-5.1",
+      "model": "glm-5.1",
+      "repo": "zai-org/GLM-5.1",
+      "revision": "26e1bd6e011feb778d25ae34b09b07074139d92d",
+      "license": "mit",
+      "encoder": "jinja",
+      "format": "hf",
+      "files": {
+        "LICENSE": {
+          "sha256": "f4a18c6ae40b0a8e7d2b7667f52f6e1994e54a46430d2e172b73cb8c9b5eb0d7",
+          "size": 1065
+        },
+        "chat_template.jinja": {
+          "sha256": "03b1bbff20331e54647c68167e8ac7f0b5b7ceb40ead372f44826624a9ad79cd",
+          "size": 4672
+        },
+        "tokenizer.json": {
+          "sha256": "19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d",
+          "size": 20217442
+        },
+        "tokenizer_config.json": {
+          "sha256": "8b6c9684842d57fb45907d1670835fa6929a4686e4229d4c4684d56a9abf3eb1",
+          "size": 760
+        }
+      }
+    },
+    {
+      "id": "glm-4.7",
+      "model": "glm-4.7",
+      "repo": "zai-org/GLM-4.7",
+      "revision": "602d01efcdd332c5238ca4bcede555defbe83eb7",
+      "license": "mit",
+      "encoder": "jinja",
+      "format": "hf",
+      "files": {
+        "chat_template.jinja": {
+          "sha256": "d63ad536c3c81880043e22ec7fd08db42b4d8fb7c89c7138bc562bfa25281375",
+          "size": 3120
+        },
+        "tokenizer.json": {
+          "sha256": "9340665016419c825c4bdabbcc9acc43b7ca2c68ce142724afa829abb1be5efd",
+          "size": 19970699
+        },
+        "tokenizer_config.json": {
+          "sha256": "27d01309c0ae7b5edb6511daabfcbf772b60e21c65cbb74d059acc76796f7897",
+          "size": 7307
+        }
+      }
+    },
+    {
+      "id": "glm-4.6",
+      "model": "glm-4.6",
+      "repo": "zai-org/GLM-4.6",
+      "revision": "be72194883d968d7923a07e2f61681ea9a2826d1",
+      "license": "mit",
+      "encoder": "jinja",
+      "format": "hf",
+      "files": {
+        "chat_template.jinja": {
+          "sha256": "44f815868bf02fa458dd2f741a338046f4bf45f398eb6d067766726b9d96cce3",
+          "size": 3242
+        },
+        "tokenizer.json": {
+          "sha256": "9340665016419c825c4bdabbcc9acc43b7ca2c68ce142724afa829abb1be5efd",
+          "size": 19970699
+        },
+        "tokenizer_config.json": {
+          "sha256": "27d01309c0ae7b5edb6511daabfcbf772b60e21c65cbb74d059acc76796f7897",
+          "size": 7307
+        }
+      }
+    },
+    {
+      "id": "glm-4.6v",
+      "model": "glm-4.6v",
+      "repo": "zai-org/GLM-4.6V",
+      "revision": "4e2d47eb0b41c5280d8294b17cef9e94fdcfff46",
+      "license": "mit",
+      "encoder": "jinja",
+      "format": "hf",
+      "files": {
+        "chat_template.jinja": {
+          "sha256": "c8e315709efdd22116af6c0bddab4c77ce24167f7ff6e14a14b5a05d4b3bbaf6",
+          "size": 4638
+        },
+        "tokenizer.json": {
+          "sha256": "9340665016419c825c4bdabbcc9acc43b7ca2c68ce142724afa829abb1be5efd",
+          "size": 19970699
+        },
+        "tokenizer_config.json": {
+          "sha256": "13809913afa65678aff5d54d888720c30cb000d0e9a85799ef22d1ca9dfdf228",
+          "size": 7341
+        }
+      }
+    },
+    {
+      "id": "kimi-k3",
+      "model": "kimi-k3",
+      "repo": "moonshotai/Kimi-K3",
+      "revision": "f831ab66814297da540d832a5235f8e904f29d06",
+      "license": "other",
+      "encoder": "kimi_k3",
+      "format": "kimi",
+      "files": {
+        "LICENSE": {
+          "sha256": "20c797ce19af0c17de52c6afb144644768a591c521655f5ebf5712c9850f2887",
+          "size": 3065
+        },
+        "tiktoken.model": {
+          "sha256": "b6c497a7469b33ced9c38afb1ad6e47f03f5e5dc05f15930799210ec050c5103",
+          "size": 2795286
+        },
+        "tokenizer_config.json": {
+          "sha256": "5d0803c94db9cd78763499e0956c95fd5a225c14a727e5a6cf5db3f96f010a6e",
+          "size": 3478
+        }
+      }
+    },
+    {
+      "id": "kimi-k2.6",
+      "model": "kimi-k2.6",
+      "repo": "moonshotai/Kimi-K2.6",
+      "revision": "7eb5002f6aadc958aed6a9177b7ed26bb94011bb",
+      "license": "other",
+      "encoder": "kimi_k2",
+      "format": "kimi",
+      "files": {
+        "LICENSE": {
+          "sha256": "1d4ab2d8404287de44429024a78b58d3aabc4df9d0c490e73fec9ff1fd842529",
+          "size": 1465
+        },
+        "chat_template.jinja": {
+          "sha256": "8bf859698fd4781c0e1e1c63ce74422aab27e53ccc5f47116317c64cda06132f",
+          "size": 4022
+        },
+        "tiktoken.model": {
+          "sha256": "b6c497a7469b33ced9c38afb1ad6e47f03f5e5dc05f15930799210ec050c5103",
+          "size": 2795286
+        },
+        "tokenizer_config.json": {
+          "sha256": "12fcab43d2b6068f46769f5ff373960bf7c17a94d7abbc50e2491306b2f6cf58",
+          "size": 4862
+        }
+      }
+    },
+    {
+      "id": "kimi-k2.5",
+      "model": "kimi-k2.5",
+      "repo": "moonshotai/Kimi-K2.5",
+      "revision": "4d01dfe0332d63057c186e0b262165819efb6611",
+      "license": "other",
+      "encoder": "kimi_k2",
+      "format": "kimi",
+      "files": {
+        "LICENSE": {
+          "sha256": "c524b41658421b8b143c5b50637ef008909da56013ad12ccaba0536139ee35b0",
+          "size": 1465
+        },
+        "chat_template.jinja": {
+          "sha256": "7c91e4b3578b518bfb388d2e3dc645daf0fbf843656e887db75d12891e0030ff",
+          "size": 3759
+        },
+        "tiktoken.model": {
+          "sha256": "b6c497a7469b33ced9c38afb1ad6e47f03f5e5dc05f15930799210ec050c5103",
+          "size": 2795286
+        },
+        "tokenizer_config.json": {
+          "sha256": "12fcab43d2b6068f46769f5ff373960bf7c17a94d7abbc50e2491306b2f6cf58",
+          "size": 4862
+        }
+      }
+    },
+    {
+      "id": "hy3",
+      "model": "hy3",
+      "repo": "tencent/Hy3",
+      "revision": "a960ebc3da325ba167f069f76c41eb62c9280d22",
+      "license": "apache-2.0",
+      "encoder": "hy3",
+      "format": "hf",
+      "files": {
+        "LICENSE": {
+          "sha256": "76a14d21e741dbbf1572e9c0e6bb809a9bd76f5b4da64a0b89e7331cc77ea84a",
+          "size": 11607
+        },
+        "chat_template.jinja": {
+          "sha256": "7fc351fee674c13754656ba7f33a3ca426bfb7231039f48444360a3f3c5ecf3e",
+          "size": 10223
+        },
+        "tokenizer.json": {
+          "sha256": "446e0b59cd941637c0ddfd84e12ee1f49480fd12097f86a9d2fec8ebd0c7ff6c",
+          "size": 9527406
+        },
+        "tokenizer_config.json": {
+          "sha256": "1af226fc70b260371ca1f08053768b80a9d58b9d79e8eab718160f52783f7ceb",
+          "size": 165971
+        }
+      }
+    },
+    {
+      "id": "hy4-preview",
+      "model": "hy4-preview",
+      "repo": "tencent/Hy4-preview",
+      "revision": "705d81ee51566a186d645b74c974d642ef2828fe",
+      "license": "apache-2.0",
+      "encoder": "hy4",
+      "format": "hf",
+      "files": {
+        "LICENSE": {
+          "sha256": "333da5371c92bcee0043e81cd39f56f14b4b7905a93fe23c53b6f3b13075c5c3",
+          "size": 11625
+        },
+        "chat_template.jinja": {
+          "sha256": "8a9925228e1c72edc6806b985ba06a4df2cc4ff803b4710a6d6e25d0ac03fae2",
+          "size": 14674
+        },
+        "tokenizer.json": {
+          "sha256": "ff67615de6e6ee073a20bd1fe3a776053e821573f4ae566aeb8e9d43de801201",
+          "size": 9358955
+        },
+        "tokenizer_config.json": {
+          "sha256": "15267c495102b0ce259408a0b3a9dc11a6de74dd7dd8ef5b9757f64252a9b2df",
+          "size": 351
+        }
+      }
+    }
+  ],
+  "pending_models": [
+    "deepseek-v3-2-volc",
+    "glm-5.0",
+    "glm-5.0-turbo",
+    "glm-5v-turbo",
+    "kimi-k2.7"
+  ]
+}

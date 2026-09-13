@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
 import { Play, Square } from '@lucide/vue';
+import TokenizerConsole from '../components/TokenizerConsole.vue';
 import { ApiError } from '../api/client';
 import { anthropicPlaygroundApi, openaiPlaygroundApi } from '../api/admin';
 import type { AnthropicMessageRequest, ChatCompletionRequest } from '../types';
@@ -25,6 +26,7 @@ const toast = useToast();
 const session = useSessionStore();
 const queryKeys = adminQueryKeys(session.username);
 type PlaygroundProtocol = 'openai' | 'anthropic';
+const mode = ref('chat');
 const protocol = ref<PlaygroundProtocol>('openai');
 const selectedModel = ref('');
 const prompt = ref('Hello, what is 2+2?');
@@ -73,6 +75,7 @@ function resetStreamOutput(): void {
 }
 
 const modelsQuery = useQuery({
+  enabled: computed(() => mode.value === 'chat'),
   queryKey: computed(() => queryKeys.playgroundModels(protocol.value)),
   queryFn: ({ queryKey, signal }) =>
     queryKey[3] === 'openai'
@@ -94,7 +97,7 @@ function abortInFlight(): void {
   }
 }
 
-watch(protocol, () => {
+watch([protocol, mode], () => {
   abortInFlight();
   resetStreamOutput();
   selectedModel.value = '';
@@ -259,7 +262,22 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="console-layout grid grid-cols-1 gap-4">
-    <CCard title="请求">
+    <div class="flex gap-2" role="tablist" aria-label="测试类型">
+      <CButton
+        :variant="mode === 'chat' ? 'primary' : 'secondary'"
+        :disabled="loading"
+        @click="mode = 'chat'"
+        >聊天</CButton
+      >
+      <CButton
+        :variant="mode === 'tokenizer' ? 'primary' : 'secondary'"
+        :disabled="loading"
+        @click="mode = 'tokenizer'"
+        >Tokenizer</CButton
+      >
+    </div>
+    <TokenizerConsole v-if="mode === 'tokenizer'" />
+    <CCard v-if="mode === 'chat'" title="请求">
       <CForm ref="consoleFormRef" :model="consoleForm" :rules="consoleRules" label-placement="top">
         <div class="flex flex-col gap-4">
           <CRadioGroup v-model="protocol" class="self-start" aria-label="协议">
@@ -310,7 +328,7 @@ onBeforeUnmount(() => {
       </CForm>
     </CCard>
 
-    <CCard title="响应">
+    <CCard v-if="mode === 'chat'" title="响应">
       <pre
         class="min-h-[20rem] overflow-auto rounded-lg bg-slate-950 p-3.5 font-mono text-[13px] leading-relaxed whitespace-pre-wrap text-slate-200"
         >{{ output }}</pre>

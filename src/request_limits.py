@@ -24,12 +24,16 @@ class RequestBodyLimitMiddleware:
         *,
         max_body_bytes: int,
         login_max_body_bytes: int,
+        tokenizer_upload_max_bytes: int = 64 * 1024 * 1024,
     ) -> None:
         self.app = app
         self.max_body_bytes = max_body_bytes
         self.login_max_body_bytes = login_max_body_bytes
+        self.tokenizer_upload_max_bytes = tokenizer_upload_max_bytes
 
     def _limit_for_scope(self, scope: Scope) -> int:
+        if scope.get("method") == "POST" and scope.get("path") in {"/api/admin/tokenizers/resources", "/api/admin/tokenizers/resources/"}:
+            return self.tokenizer_upload_max_bytes
         if scope.get("path") in {
             "/auth/login",
             "/auth/login/",

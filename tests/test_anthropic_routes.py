@@ -215,12 +215,12 @@ class AnthropicRouteTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.json()["request_id"], response.headers["request-id"])
                 self.assertEqual(response.headers["Cache-Control"], "private, no-store")
 
-    async def test_count_tokens_returns_documented_not_found(self):
+    async def test_count_tokens_unknown_model_returns_documented_not_found(self):
         response = await self._request(
             "POST",
             "/anthropic/v1/messages/count_tokens",
             headers=self._x_api_key(),
-            json={"model": "glm", "messages": []},
+            json={"model": "glm", "messages": [{"role": "user", "content": "hello"}]},
         )
 
         self.assertEqual(response.status_code, 404)

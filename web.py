@@ -52,6 +52,9 @@ from src.frontend_router import router as frontend_router
 from src.openai_router import external_openai_router, playground_openai_router
 from src.private_response import PRIVATE_NO_STORE_VALUE, PrivateNoStoreFastAPI, PrivateNoStoreRoute
 from src.request_limits import RequestBodyLimitMiddleware
+from src.tokenizer_router import external_tokenizer_router, playground_tokenizer_router, admin_tokenizer_router
+from src.tokenizer_store import verify_builtin
+from src.tokenizer_runtime import tokenizer_runtime
 from src.stats_router import router as stats_router
 from src.stream_service import UpstreamAPIError, lifecycle_manager
 from src.usage_stats_store import usage_stats_retention_manager
@@ -64,6 +67,7 @@ from config import (
     get_log_level,
     get_max_concurrent_requests,
     get_max_request_body_bytes,
+    get_tokenizer_limits,
     get_server_host,
     get_server_port,
     get_csp_frame_ancestors,
@@ -87,6 +91,8 @@ async def lifespan(app: FastAPI):
         # 启动时初始化资源
         initialize_database()
         initialize_system_users()
+        verify_builtin()
+        tokenizer_runtime.startup()
         await usage_stats_retention_manager.startup()
         await lifecycle_manager.startup()
         await credential_refresh_manager.startup()
@@ -97,6 +103,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         # 关闭时清理资源
+        tokenizer_runtime.shutdown()
         await credential_checkin_manager.shutdown()
         await credential_quota_manager.shutdown()
         await credential_refresh_manager.shutdown()
@@ -120,6 +127,7 @@ app.add_middleware(
     RequestBodyLimitMiddleware,
     max_body_bytes=get_max_request_body_bytes(),
     login_max_body_bytes=8 * 1024,
+    tokenizer_upload_max_bytes=get_tokenizer_limits()["upload_max_bytes"],
 )
 docs_router = APIRouter(route_class=PrivateNoStoreRoute)
 
@@ -336,6 +344,10 @@ app.include_router(
 )
 
 # 挂载管理页专用 API 路由
+app.include_router(external_tokenizer_router, prefix="/tokenizer", tags=["Tokenizer"])
+app.include_router(playground_tokenizer_router, prefix="/api/admin/playground/tokenizer", tags=["Admin Playground Tokenizer"])
+app.include_router(admin_tokenizer_router, prefix="/api/admin", tags=["Admin Tokenizer"])
+
 app.include_router(
     admin_router,
     prefix="/api/admin",

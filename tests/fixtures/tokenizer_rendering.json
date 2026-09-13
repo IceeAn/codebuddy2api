@@ -1,0 +1,8714 @@
+[
+  {
+    "encoder": "deepseek_v4",
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "你好 hello"
+        }
+      ],
+      "enable_thinking": true,
+      "reasoning_effort": "max"
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜>Reasoning Effort: Absolute maximum with no shortcuts permitted.\nYou MUST be very thorough in your thinking and comprehensively decompose the problem to resolve the root cause, rigorously stress-testing your logic against all potential paths, edge cases, and adversarial scenarios.\nExplicitly write out your entire deliberation process, documenting every intermediate step, considered alternative, and rejected hypothesis to ensure absolutely no assumption is left unchecked.\n\n<｜User｜>你好 hello<｜Assistant｜><think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v4",
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "你好 hello"
+        }
+      ],
+      "enable_thinking": true,
+      "reasoning_effort": "max",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "weather",
+            "description": "天气工具",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜>Reasoning Effort: Absolute maximum with no shortcuts permitted.\nYou MUST be very thorough in your thinking and comprehensively decompose the problem to resolve the root cause, rigorously stress-testing your logic against all potential paths, edge cases, and adversarial scenarios.\nExplicitly write out your entire deliberation process, documenting every intermediate step, considered alternative, and rejected hypothesis to ensure absolutely no assumption is left unchecked.\n\n\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜tool_calls>\" block like the following:\n\n<｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"$TOOL_NAME\">\n<｜DSML｜parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜parameter>\n...\n</｜DSML｜invoke>\n<｜DSML｜invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜invoke>\n</｜DSML｜tool_calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"weather\", \"description\": \"天气工具\", \"parameters\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\"}}, \"required\": [\"city\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>你好 hello<｜Assistant｜><think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v4",
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "你好 hello"
+        }
+      ],
+      "enable_thinking": false,
+      "reasoning_effort": "max"
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜><｜User｜>你好 hello<｜Assistant｜></think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v4",
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "你好 hello"
+        }
+      ],
+      "enable_thinking": false,
+      "reasoning_effort": "max",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "weather",
+            "description": "天气工具",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜>\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜tool_calls>\" block like the following:\n\n<｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"$TOOL_NAME\">\n<｜DSML｜parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜parameter>\n...\n</｜DSML｜invoke>\n<｜DSML｜invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜invoke>\n</｜DSML｜tool_calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"weather\", \"description\": \"天气工具\", \"parameters\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\"}}, \"required\": [\"city\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>你好 hello<｜Assistant｜></think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v4",
+    "payload": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "编程助手"
+        },
+        {
+          "role": "user",
+          "content": "hello"
+        },
+        {
+          "role": "assistant",
+          "content": "world",
+          "reasoning_content": "推理"
+        },
+        {
+          "role": "user",
+          "content": "继续"
+        }
+      ],
+      "enable_thinking": true,
+      "reasoning_effort": "max"
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜>Reasoning Effort: Absolute maximum with no shortcuts permitted.\nYou MUST be very thorough in your thinking and comprehensively decompose the problem to resolve the root cause, rigorously stress-testing your logic against all potential paths, edge cases, and adversarial scenarios.\nExplicitly write out your entire deliberation process, documenting every intermediate step, considered alternative, and rejected hypothesis to ensure absolutely no assumption is left unchecked.\n\n编程助手<｜User｜>hello<｜Assistant｜></think>world<｜end▁of▁sentence｜><｜User｜>继续<｜Assistant｜><think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v4",
+    "payload": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "编程助手"
+        },
+        {
+          "role": "user",
+          "content": "hello"
+        },
+        {
+          "role": "assistant",
+          "content": "world",
+          "reasoning_content": "推理"
+        },
+        {
+          "role": "user",
+          "content": "继续"
+        }
+      ],
+      "enable_thinking": true,
+      "reasoning_effort": "max",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "weather",
+            "description": "天气工具",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜>Reasoning Effort: Absolute maximum with no shortcuts permitted.\nYou MUST be very thorough in your thinking and comprehensively decompose the problem to resolve the root cause, rigorously stress-testing your logic against all potential paths, edge cases, and adversarial scenarios.\nExplicitly write out your entire deliberation process, documenting every intermediate step, considered alternative, and rejected hypothesis to ensure absolutely no assumption is left unchecked.\n\n编程助手\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜tool_calls>\" block like the following:\n\n<｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"$TOOL_NAME\">\n<｜DSML｜parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜parameter>\n...\n</｜DSML｜invoke>\n<｜DSML｜invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜invoke>\n</｜DSML｜tool_calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"weather\", \"description\": \"天气工具\", \"parameters\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\"}}, \"required\": [\"city\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>hello<｜Assistant｜><think>推理</think>world<｜end▁of▁sentence｜><｜User｜>继续<｜Assistant｜><think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v4",
+    "payload": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "编程助手"
+        },
+        {
+          "role": "user",
+          "content": "hello"
+        },
+        {
+          "role": "assistant",
+          "content": "world",
+          "reasoning_content": "推理"
+        },
+        {
+          "role": "user",
+          "content": "继续"
+        }
+      ],
+      "enable_thinking": false,
+      "reasoning_effort": "max"
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜>编程助手<｜User｜>hello<｜Assistant｜></think>world<｜end▁of▁sentence｜><｜User｜>继续<｜Assistant｜></think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v4",
+    "payload": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "编程助手"
+        },
+        {
+          "role": "user",
+          "content": "hello"
+        },
+        {
+          "role": "assistant",
+          "content": "world",
+          "reasoning_content": "推理"
+        },
+        {
+          "role": "user",
+          "content": "继续"
+        }
+      ],
+      "enable_thinking": false,
+      "reasoning_effort": "max",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "weather",
+            "description": "天气工具",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜>编程助手\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜tool_calls>\" block like the following:\n\n<｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"$TOOL_NAME\">\n<｜DSML｜parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜parameter>\n...\n</｜DSML｜invoke>\n<｜DSML｜invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜invoke>\n</｜DSML｜tool_calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"weather\", \"description\": \"天气工具\", \"parameters\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\"}}, \"required\": [\"city\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>hello<｜Assistant｜></think>world<｜end▁of▁sentence｜><｜User｜>继续<｜Assistant｜></think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v4",
+    "payload": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "助手"
+        },
+        {
+          "role": "user",
+          "content": "天气"
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "reasoning_content": "查询",
+          "tool_calls": [
+            {
+              "id": "call_a",
+              "type": "function",
+              "function": {
+                "name": "weather",
+                "arguments": "{\"city\":\"台北\",\"n\":1e2,\"nested\":{\"x\": [1,2]},\"ok\":true,\"nil\":null}"
+              }
+            },
+            {
+              "id": "call_b",
+              "type": "function",
+              "function": {
+                "name": "weather",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_b",
+          "content": "晴"
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_a",
+          "content": "雨"
+        },
+        {
+          "role": "user",
+          "content": "总结"
+        }
+      ],
+      "enable_thinking": true,
+      "reasoning_effort": "max"
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜>Reasoning Effort: Absolute maximum with no shortcuts permitted.\nYou MUST be very thorough in your thinking and comprehensively decompose the problem to resolve the root cause, rigorously stress-testing your logic against all potential paths, edge cases, and adversarial scenarios.\nExplicitly write out your entire deliberation process, documenting every intermediate step, considered alternative, and rejected hypothesis to ensure absolutely no assumption is left unchecked.\n\n助手<｜User｜>天气<｜Assistant｜></think>\n\n<｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"weather\">\n<｜DSML｜parameter name=\"city\" string=\"true\">台北</｜DSML｜parameter>\n<｜DSML｜parameter name=\"n\" string=\"false\">100.0</｜DSML｜parameter>\n<｜DSML｜parameter name=\"nested\" string=\"false\">{\"x\": [1, 2]}</｜DSML｜parameter>\n<｜DSML｜parameter name=\"ok\" string=\"false\">true</｜DSML｜parameter>\n<｜DSML｜parameter name=\"nil\" string=\"false\">null</｜DSML｜parameter>\n</｜DSML｜invoke>\n<｜DSML｜invoke name=\"weather\">\n\n</｜DSML｜invoke>\n</｜DSML｜tool_calls><｜end▁of▁sentence｜><｜User｜><tool_result>雨</tool_result>\n\n<tool_result>晴</tool_result>\n\n总结<｜Assistant｜><think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v4",
+    "payload": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "助手"
+        },
+        {
+          "role": "user",
+          "content": "天气"
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "reasoning_content": "查询",
+          "tool_calls": [
+            {
+              "id": "call_a",
+              "type": "function",
+              "function": {
+                "name": "weather",
+                "arguments": "{\"city\":\"台北\",\"n\":1e2,\"nested\":{\"x\": [1,2]},\"ok\":true,\"nil\":null}"
+              }
+            },
+            {
+              "id": "call_b",
+              "type": "function",
+              "function": {
+                "name": "weather",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_b",
+          "content": "晴"
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_a",
+          "content": "雨"
+        },
+        {
+          "role": "user",
+          "content": "总结"
+        }
+      ],
+      "enable_thinking": true,
+      "reasoning_effort": "max",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "weather",
+            "description": "天气工具",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜>Reasoning Effort: Absolute maximum with no shortcuts permitted.\nYou MUST be very thorough in your thinking and comprehensively decompose the problem to resolve the root cause, rigorously stress-testing your logic against all potential paths, edge cases, and adversarial scenarios.\nExplicitly write out your entire deliberation process, documenting every intermediate step, considered alternative, and rejected hypothesis to ensure absolutely no assumption is left unchecked.\n\n助手\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜tool_calls>\" block like the following:\n\n<｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"$TOOL_NAME\">\n<｜DSML｜parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜parameter>\n...\n</｜DSML｜invoke>\n<｜DSML｜invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜invoke>\n</｜DSML｜tool_calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"weather\", \"description\": \"天气工具\", \"parameters\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\"}}, \"required\": [\"city\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>天气<｜Assistant｜><think>查询</think>\n\n<｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"weather\">\n<｜DSML｜parameter name=\"city\" string=\"true\">台北</｜DSML｜parameter>\n<｜DSML｜parameter name=\"n\" string=\"false\">100.0</｜DSML｜parameter>\n<｜DSML｜parameter name=\"nested\" string=\"false\">{\"x\": [1, 2]}</｜DSML｜parameter>\n<｜DSML｜parameter name=\"ok\" string=\"false\">true</｜DSML｜parameter>\n<｜DSML｜parameter name=\"nil\" string=\"false\">null</｜DSML｜parameter>\n</｜DSML｜invoke>\n<｜DSML｜invoke name=\"weather\">\n\n</｜DSML｜invoke>\n</｜DSML｜tool_calls><｜end▁of▁sentence｜><｜User｜><tool_result>雨</tool_result>\n\n<tool_result>晴</tool_result>\n\n总结<｜Assistant｜><think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v4",
+    "payload": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "助手"
+        },
+        {
+          "role": "user",
+          "content": "天气"
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "reasoning_content": "查询",
+          "tool_calls": [
+            {
+              "id": "call_a",
+              "type": "function",
+              "function": {
+                "name": "weather",
+                "arguments": "{\"city\":\"台北\",\"n\":1e2,\"nested\":{\"x\": [1,2]},\"ok\":true,\"nil\":null}"
+              }
+            },
+            {
+              "id": "call_b",
+              "type": "function",
+              "function": {
+                "name": "weather",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_b",
+          "content": "晴"
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_a",
+          "content": "雨"
+        },
+        {
+          "role": "user",
+          "content": "总结"
+        }
+      ],
+      "enable_thinking": false,
+      "reasoning_effort": "max"
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜>助手<｜User｜>天气<｜Assistant｜></think>\n\n<｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"weather\">\n<｜DSML｜parameter name=\"city\" string=\"true\">台北</｜DSML｜parameter>\n<｜DSML｜parameter name=\"n\" string=\"false\">100.0</｜DSML｜parameter>\n<｜DSML｜parameter name=\"nested\" string=\"false\">{\"x\": [1, 2]}</｜DSML｜parameter>\n<｜DSML｜parameter name=\"ok\" string=\"false\">true</｜DSML｜parameter>\n<｜DSML｜parameter name=\"nil\" string=\"false\">null</｜DSML｜parameter>\n</｜DSML｜invoke>\n<｜DSML｜invoke name=\"weather\">\n\n</｜DSML｜invoke>\n</｜DSML｜tool_calls><｜end▁of▁sentence｜><｜User｜><tool_result>雨</tool_result>\n\n<tool_result>晴</tool_result>\n\n总结<｜Assistant｜></think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v4",
+    "payload": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "助手"
+        },
+        {
+          "role": "user",
+          "content": "天气"
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "reasoning_content": "查询",
+          "tool_calls": [
+            {
+              "id": "call_a",
+              "type": "function",
+              "function": {
+                "name": "weather",
+                "arguments": "{\"city\":\"台北\",\"n\":1e2,\"nested\":{\"x\": [1,2]},\"ok\":true,\"nil\":null}"
+              }
+            },
+            {
+              "id": "call_b",
+              "type": "function",
+              "function": {
+                "name": "weather",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_b",
+          "content": "晴"
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_a",
+          "content": "雨"
+        },
+        {
+          "role": "user",
+          "content": "总结"
+        }
+      ],
+      "enable_thinking": false,
+      "reasoning_effort": "max",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "weather",
+            "description": "天气工具",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜>助手\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜tool_calls>\" block like the following:\n\n<｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"$TOOL_NAME\">\n<｜DSML｜parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜parameter>\n...\n</｜DSML｜invoke>\n<｜DSML｜invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜invoke>\n</｜DSML｜tool_calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"weather\", \"description\": \"天气工具\", \"parameters\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\"}}, \"required\": [\"city\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>天气<｜Assistant｜></think>\n\n<｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"weather\">\n<｜DSML｜parameter name=\"city\" string=\"true\">台北</｜DSML｜parameter>\n<｜DSML｜parameter name=\"n\" string=\"false\">100.0</｜DSML｜parameter>\n<｜DSML｜parameter name=\"nested\" string=\"false\">{\"x\": [1, 2]}</｜DSML｜parameter>\n<｜DSML｜parameter name=\"ok\" string=\"false\">true</｜DSML｜parameter>\n<｜DSML｜parameter name=\"nil\" string=\"false\">null</｜DSML｜parameter>\n</｜DSML｜invoke>\n<｜DSML｜invoke name=\"weather\">\n\n</｜DSML｜invoke>\n</｜DSML｜tool_calls><｜end▁of▁sentence｜><｜User｜><tool_result>雨</tool_result>\n\n<tool_result>晴</tool_result>\n\n总结<｜Assistant｜></think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v4",
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "a"
+        },
+        {
+          "role": "user",
+          "content": "b"
+        },
+        {
+          "role": "system",
+          "content": "提醒"
+        }
+      ],
+      "enable_thinking": true,
+      "reasoning_effort": "max"
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜>Reasoning Effort: Absolute maximum with no shortcuts permitted.\nYou MUST be very thorough in your thinking and comprehensively decompose the problem to resolve the root cause, rigorously stress-testing your logic against all potential paths, edge cases, and adversarial scenarios.\nExplicitly write out your entire deliberation process, documenting every intermediate step, considered alternative, and rejected hypothesis to ensure absolutely no assumption is left unchecked.\n\n<｜User｜>a\n\nb提醒",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v4",
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "a"
+        },
+        {
+          "role": "user",
+          "content": "b"
+        },
+        {
+          "role": "system",
+          "content": "提醒"
+        }
+      ],
+      "enable_thinking": true,
+      "reasoning_effort": "max",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "weather",
+            "description": "天气工具",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜>Reasoning Effort: Absolute maximum with no shortcuts permitted.\nYou MUST be very thorough in your thinking and comprehensively decompose the problem to resolve the root cause, rigorously stress-testing your logic against all potential paths, edge cases, and adversarial scenarios.\nExplicitly write out your entire deliberation process, documenting every intermediate step, considered alternative, and rejected hypothesis to ensure absolutely no assumption is left unchecked.\n\n\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜tool_calls>\" block like the following:\n\n<｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"$TOOL_NAME\">\n<｜DSML｜parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜parameter>\n...\n</｜DSML｜invoke>\n<｜DSML｜invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜invoke>\n</｜DSML｜tool_calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"weather\", \"description\": \"天气工具\", \"parameters\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\"}}, \"required\": [\"city\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>a\n\nb提醒",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v4",
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "a"
+        },
+        {
+          "role": "user",
+          "content": "b"
+        },
+        {
+          "role": "system",
+          "content": "提醒"
+        }
+      ],
+      "enable_thinking": false,
+      "reasoning_effort": "max"
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜><｜User｜>a\n\nb提醒",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v4",
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "a"
+        },
+        {
+          "role": "user",
+          "content": "b"
+        },
+        {
+          "role": "system",
+          "content": "提醒"
+        }
+      ],
+      "enable_thinking": false,
+      "reasoning_effort": "max",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "weather",
+            "description": "天气工具",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜>\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜tool_calls>\" block like the following:\n\n<｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"$TOOL_NAME\">\n<｜DSML｜parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜parameter>\n...\n</｜DSML｜invoke>\n<｜DSML｜invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜invoke>\n</｜DSML｜tool_calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"weather\", \"description\": \"天气工具\", \"parameters\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\"}}, \"required\": [\"city\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>a\n\nb提醒",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v41",
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "你好 hello"
+        }
+      ],
+      "enable_thinking": true,
+      "reasoning_effort": "max"
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 100 (range 1-100, the higher the value, the more thorough the reasoning)\n\n<｜User｜>你好 hello<｜Assistant｜><think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v41",
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "你好 hello"
+        }
+      ],
+      "enable_thinking": true,
+      "reasoning_effort": "max",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "weather",
+            "description": "天气工具",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 100 (range 1-100, the higher the value, the more thorough the reasoning)\n\n\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜ calls>\" block like the following:\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"$TOOL_NAME\">\n<｜DSML｜ parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜ parameter>\n...\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜ invoke>\n</｜DSML｜ calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"weather\", \"description\": \"天气工具\", \"parameters\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\"}}, \"required\": [\"city\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>你好 hello<｜Assistant｜><think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v41",
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "你好 hello"
+        }
+      ],
+      "enable_thinking": false,
+      "reasoning_effort": "max"
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜><｜User｜>你好 hello<｜Assistant｜></think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v41",
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "你好 hello"
+        }
+      ],
+      "enable_thinking": false,
+      "reasoning_effort": "max",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "weather",
+            "description": "天气工具",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜><｜System｜>\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜ calls>\" block like the following:\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"$TOOL_NAME\">\n<｜DSML｜ parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜ parameter>\n...\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜ invoke>\n</｜DSML｜ calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"weather\", \"description\": \"天气工具\", \"parameters\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\"}}, \"required\": [\"city\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>你好 hello<｜Assistant｜></think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v41",
+    "payload": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "编程助手"
+        },
+        {
+          "role": "user",
+          "content": "hello"
+        },
+        {
+          "role": "assistant",
+          "content": "world",
+          "reasoning_content": "推理"
+        },
+        {
+          "role": "user",
+          "content": "继续"
+        }
+      ],
+      "enable_thinking": true,
+      "reasoning_effort": "max"
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 100 (range 1-100, the higher the value, the more thorough the reasoning)\n\n编程助手<｜User｜>hello<｜Assistant｜></think>world<｜end▁of▁sentence｜><｜User｜>继续<｜Assistant｜><think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v41",
+    "payload": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "编程助手"
+        },
+        {
+          "role": "user",
+          "content": "hello"
+        },
+        {
+          "role": "assistant",
+          "content": "world",
+          "reasoning_content": "推理"
+        },
+        {
+          "role": "user",
+          "content": "继续"
+        }
+      ],
+      "enable_thinking": true,
+      "reasoning_effort": "max",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "weather",
+            "description": "天气工具",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 100 (range 1-100, the higher the value, the more thorough the reasoning)\n\n编程助手\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜ calls>\" block like the following:\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"$TOOL_NAME\">\n<｜DSML｜ parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜ parameter>\n...\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜ invoke>\n</｜DSML｜ calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"weather\", \"description\": \"天气工具\", \"parameters\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\"}}, \"required\": [\"city\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>hello<｜Assistant｜><think>推理</think>world<｜end▁of▁sentence｜><｜User｜>继续<｜Assistant｜><think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v41",
+    "payload": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "编程助手"
+        },
+        {
+          "role": "user",
+          "content": "hello"
+        },
+        {
+          "role": "assistant",
+          "content": "world",
+          "reasoning_content": "推理"
+        },
+        {
+          "role": "user",
+          "content": "继续"
+        }
+      ],
+      "enable_thinking": false,
+      "reasoning_effort": "max"
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜><｜System｜>编程助手<｜User｜>hello<｜Assistant｜></think>world<｜end▁of▁sentence｜><｜User｜>继续<｜Assistant｜></think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v41",
+    "payload": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "编程助手"
+        },
+        {
+          "role": "user",
+          "content": "hello"
+        },
+        {
+          "role": "assistant",
+          "content": "world",
+          "reasoning_content": "推理"
+        },
+        {
+          "role": "user",
+          "content": "继续"
+        }
+      ],
+      "enable_thinking": false,
+      "reasoning_effort": "max",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "weather",
+            "description": "天气工具",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜><｜System｜>编程助手\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜ calls>\" block like the following:\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"$TOOL_NAME\">\n<｜DSML｜ parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜ parameter>\n...\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜ invoke>\n</｜DSML｜ calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"weather\", \"description\": \"天气工具\", \"parameters\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\"}}, \"required\": [\"city\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>hello<｜Assistant｜></think>world<｜end▁of▁sentence｜><｜User｜>继续<｜Assistant｜></think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v41",
+    "payload": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "助手"
+        },
+        {
+          "role": "user",
+          "content": "天气"
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "reasoning_content": "查询",
+          "tool_calls": [
+            {
+              "id": "call_a",
+              "type": "function",
+              "function": {
+                "name": "weather",
+                "arguments": "{\"city\":\"台北\",\"n\":1e2,\"nested\":{\"x\": [1,2]},\"ok\":true,\"nil\":null}"
+              }
+            },
+            {
+              "id": "call_b",
+              "type": "function",
+              "function": {
+                "name": "weather",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_b",
+          "content": "晴"
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_a",
+          "content": "雨"
+        },
+        {
+          "role": "user",
+          "content": "总结"
+        }
+      ],
+      "enable_thinking": true,
+      "reasoning_effort": "max"
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 100 (range 1-100, the higher the value, the more thorough the reasoning)\n\n助手<｜User｜>天气<｜Assistant｜></think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"weather\">\n<｜DSML｜ parameter name=\"city\" string=\"true\">台北</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"n\" string=\"false\">100.0</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"nested\" string=\"false\">{\"x\": [1, 2]}</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"ok\" string=\"false\">true</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"nil\" string=\"false\">null</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"weather\">\n\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜><｜User｜><tool_result>雨</tool_result>\n\n<tool_result>晴</tool_result>\n\n总结<｜Assistant｜><think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v41",
+    "payload": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "助手"
+        },
+        {
+          "role": "user",
+          "content": "天气"
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "reasoning_content": "查询",
+          "tool_calls": [
+            {
+              "id": "call_a",
+              "type": "function",
+              "function": {
+                "name": "weather",
+                "arguments": "{\"city\":\"台北\",\"n\":1e2,\"nested\":{\"x\": [1,2]},\"ok\":true,\"nil\":null}"
+              }
+            },
+            {
+              "id": "call_b",
+              "type": "function",
+              "function": {
+                "name": "weather",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_b",
+          "content": "晴"
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_a",
+          "content": "雨"
+        },
+        {
+          "role": "user",
+          "content": "总结"
+        }
+      ],
+      "enable_thinking": true,
+      "reasoning_effort": "max",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "weather",
+            "description": "天气工具",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 100 (range 1-100, the higher the value, the more thorough the reasoning)\n\n助手\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜ calls>\" block like the following:\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"$TOOL_NAME\">\n<｜DSML｜ parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜ parameter>\n...\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜ invoke>\n</｜DSML｜ calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"weather\", \"description\": \"天气工具\", \"parameters\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\"}}, \"required\": [\"city\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>天气<｜Assistant｜><think>查询</think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"weather\">\n<｜DSML｜ parameter name=\"city\" string=\"true\">台北</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"n\" string=\"false\">100.0</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"nested\" string=\"false\">{\"x\": [1, 2]}</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"ok\" string=\"false\">true</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"nil\" string=\"false\">null</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"weather\">\n\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜><｜User｜><tool_result>雨</tool_result>\n\n<tool_result>晴</tool_result>\n\n总结<｜Assistant｜><think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v41",
+    "payload": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "助手"
+        },
+        {
+          "role": "user",
+          "content": "天气"
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "reasoning_content": "查询",
+          "tool_calls": [
+            {
+              "id": "call_a",
+              "type": "function",
+              "function": {
+                "name": "weather",
+                "arguments": "{\"city\":\"台北\",\"n\":1e2,\"nested\":{\"x\": [1,2]},\"ok\":true,\"nil\":null}"
+              }
+            },
+            {
+              "id": "call_b",
+              "type": "function",
+              "function": {
+                "name": "weather",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_b",
+          "content": "晴"
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_a",
+          "content": "雨"
+        },
+        {
+          "role": "user",
+          "content": "总结"
+        }
+      ],
+      "enable_thinking": false,
+      "reasoning_effort": "max"
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜><｜System｜>助手<｜User｜>天气<｜Assistant｜></think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"weather\">\n<｜DSML｜ parameter name=\"city\" string=\"true\">台北</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"n\" string=\"false\">100.0</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"nested\" string=\"false\">{\"x\": [1, 2]}</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"ok\" string=\"false\">true</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"nil\" string=\"false\">null</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"weather\">\n\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜><｜User｜><tool_result>雨</tool_result>\n\n<tool_result>晴</tool_result>\n\n总结<｜Assistant｜></think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v41",
+    "payload": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "助手"
+        },
+        {
+          "role": "user",
+          "content": "天气"
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "reasoning_content": "查询",
+          "tool_calls": [
+            {
+              "id": "call_a",
+              "type": "function",
+              "function": {
+                "name": "weather",
+                "arguments": "{\"city\":\"台北\",\"n\":1e2,\"nested\":{\"x\": [1,2]},\"ok\":true,\"nil\":null}"
+              }
+            },
+            {
+              "id": "call_b",
+              "type": "function",
+              "function": {
+                "name": "weather",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_b",
+          "content": "晴"
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_a",
+          "content": "雨"
+        },
+        {
+          "role": "user",
+          "content": "总结"
+        }
+      ],
+      "enable_thinking": false,
+      "reasoning_effort": "max",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "weather",
+            "description": "天气工具",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜><｜System｜>助手\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜ calls>\" block like the following:\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"$TOOL_NAME\">\n<｜DSML｜ parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜ parameter>\n...\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜ invoke>\n</｜DSML｜ calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"weather\", \"description\": \"天气工具\", \"parameters\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\"}}, \"required\": [\"city\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>天气<｜Assistant｜></think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"weather\">\n<｜DSML｜ parameter name=\"city\" string=\"true\">台北</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"n\" string=\"false\">100.0</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"nested\" string=\"false\">{\"x\": [1, 2]}</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"ok\" string=\"false\">true</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"nil\" string=\"false\">null</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"weather\">\n\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜><｜User｜><tool_result>雨</tool_result>\n\n<tool_result>晴</tool_result>\n\n总结<｜Assistant｜></think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v41",
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "a"
+        },
+        {
+          "role": "user",
+          "content": "b"
+        },
+        {
+          "role": "system",
+          "content": "提醒"
+        }
+      ],
+      "enable_thinking": true,
+      "reasoning_effort": "max"
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 100 (range 1-100, the higher the value, the more thorough the reasoning)\n\n<｜User｜>a\n\nb<｜System｜>提醒<｜Assistant｜><think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v41",
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "a"
+        },
+        {
+          "role": "user",
+          "content": "b"
+        },
+        {
+          "role": "system",
+          "content": "提醒"
+        }
+      ],
+      "enable_thinking": true,
+      "reasoning_effort": "max",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "weather",
+            "description": "天气工具",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 100 (range 1-100, the higher the value, the more thorough the reasoning)\n\n\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜ calls>\" block like the following:\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"$TOOL_NAME\">\n<｜DSML｜ parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜ parameter>\n...\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜ invoke>\n</｜DSML｜ calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"weather\", \"description\": \"天气工具\", \"parameters\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\"}}, \"required\": [\"city\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>a\n\nb<｜System｜>提醒<｜Assistant｜><think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v41",
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "a"
+        },
+        {
+          "role": "user",
+          "content": "b"
+        },
+        {
+          "role": "system",
+          "content": "提醒"
+        }
+      ],
+      "enable_thinking": false,
+      "reasoning_effort": "max"
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜><｜User｜>a\n\nb<｜System｜>提醒<｜Assistant｜></think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "deepseek_v41",
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "a"
+        },
+        {
+          "role": "user",
+          "content": "b"
+        },
+        {
+          "role": "system",
+          "content": "提醒"
+        }
+      ],
+      "enable_thinking": false,
+      "reasoning_effort": "max",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "weather",
+            "description": "天气工具",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "expected": [
+      [
+        "<｜begin▁of▁sentence｜><｜System｜>\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜ calls>\" block like the following:\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"$TOOL_NAME\">\n<｜DSML｜ parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜ parameter>\n...\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜ invoke>\n</｜DSML｜ calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"weather\", \"description\": \"天气工具\", \"parameters\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\"}}, \"required\": [\"city\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>a\n\nb<｜System｜>提醒<｜Assistant｜></think>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "kimi_k3",
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "你好 hello"
+        }
+      ],
+      "enable_thinking": true,
+      "reasoning_effort": "max"
+    },
+    "expected": [
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "thinking-effort",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "`thinking_effort` guides on how much to think in your thinking channel (not including the response channel), supported values include `low`, `medium`, `high`, and `max`.\nNow the system is invoked with `thinking_effort=max`.",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "你好 hello",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "assistant",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "think",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "kimi_k3",
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "你好 hello"
+        }
+      ],
+      "enable_thinking": true,
+      "reasoning_effort": "max",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "weather",
+            "description": "天气工具",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "expected": [
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "tool-declare",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "# Tools\nHere are the available tools, described in JSONSchema.\n\n```json\n[{\"function\":{\"description\":\"天气工具\",\"name\":\"weather\",\"parameters\":{\"properties\":{\"city\":{\"type\":\"string\"}},\"required\":[\"city\"],\"type\":\"object\"}},\"type\":\"function\"}]\n```",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "thinking-effort",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "`thinking_effort` guides on how much to think in your thinking channel (not including the response channel), supported values include `low`, `medium`, `high`, and `max`.\nNow the system is invoked with `thinking_effort=max`.",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "你好 hello",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "assistant",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "think",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "kimi_k3",
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "你好 hello"
+        }
+      ],
+      "enable_thinking": false,
+      "reasoning_effort": "max"
+    },
+    "expected": [
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "你好 hello",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "assistant",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "response",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "kimi_k3",
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "你好 hello"
+        }
+      ],
+      "enable_thinking": false,
+      "reasoning_effort": "max",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "weather",
+            "description": "天气工具",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "expected": [
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "tool-declare",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "# Tools\nHere are the available tools, described in JSONSchema.\n\n```json\n[{\"function\":{\"description\":\"天气工具\",\"name\":\"weather\",\"parameters\":{\"properties\":{\"city\":{\"type\":\"string\"}},\"required\":[\"city\"],\"type\":\"object\"}},\"type\":\"function\"}]\n```",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "你好 hello",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "assistant",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "response",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "kimi_k3",
+    "payload": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "编程助手"
+        },
+        {
+          "role": "user",
+          "content": "hello"
+        },
+        {
+          "role": "assistant",
+          "content": "world",
+          "reasoning_content": "推理"
+        },
+        {
+          "role": "user",
+          "content": "继续"
+        }
+      ],
+      "enable_thinking": true,
+      "reasoning_effort": "max"
+    },
+    "expected": [
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "thinking-effort",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "`thinking_effort` guides on how much to think in your thinking channel (not including the response channel), supported values include `low`, `medium`, `high`, and `max`.\nNow the system is invoked with `thinking_effort=max`.",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "编程助手",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "hello",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "assistant",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "think",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "推理",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "think",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "response",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "world",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "response",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "继续",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "assistant",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "think",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "kimi_k3",
+    "payload": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "编程助手"
+        },
+        {
+          "role": "user",
+          "content": "hello"
+        },
+        {
+          "role": "assistant",
+          "content": "world",
+          "reasoning_content": "推理"
+        },
+        {
+          "role": "user",
+          "content": "继续"
+        }
+      ],
+      "enable_thinking": true,
+      "reasoning_effort": "max",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "weather",
+            "description": "天气工具",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "expected": [
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "tool-declare",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "# Tools\nHere are the available tools, described in JSONSchema.\n\n```json\n[{\"function\":{\"description\":\"天气工具\",\"name\":\"weather\",\"parameters\":{\"properties\":{\"city\":{\"type\":\"string\"}},\"required\":[\"city\"],\"type\":\"object\"}},\"type\":\"function\"}]\n```",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "thinking-effort",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "`thinking_effort` guides on how much to think in your thinking channel (not including the response channel), supported values include `low`, `medium`, `high`, and `max`.\nNow the system is invoked with `thinking_effort=max`.",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "编程助手",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "hello",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "assistant",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "think",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "推理",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "think",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "response",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "world",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "response",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "继续",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "assistant",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "think",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "kimi_k3",
+    "payload": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "编程助手"
+        },
+        {
+          "role": "user",
+          "content": "hello"
+        },
+        {
+          "role": "assistant",
+          "content": "world",
+          "reasoning_content": "推理"
+        },
+        {
+          "role": "user",
+          "content": "继续"
+        }
+      ],
+      "enable_thinking": false,
+      "reasoning_effort": "max"
+    },
+    "expected": [
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "编程助手",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "hello",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "assistant",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "response",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "world",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "response",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "继续",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "assistant",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "response",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "kimi_k3",
+    "payload": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "编程助手"
+        },
+        {
+          "role": "user",
+          "content": "hello"
+        },
+        {
+          "role": "assistant",
+          "content": "world",
+          "reasoning_content": "推理"
+        },
+        {
+          "role": "user",
+          "content": "继续"
+        }
+      ],
+      "enable_thinking": false,
+      "reasoning_effort": "max",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "weather",
+            "description": "天气工具",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "expected": [
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "tool-declare",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "# Tools\nHere are the available tools, described in JSONSchema.\n\n```json\n[{\"function\":{\"description\":\"天气工具\",\"name\":\"weather\",\"parameters\":{\"properties\":{\"city\":{\"type\":\"string\"}},\"required\":[\"city\"],\"type\":\"object\"}},\"type\":\"function\"}]\n```",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "编程助手",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "hello",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "assistant",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "response",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "world",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "response",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "继续",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "assistant",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "response",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "kimi_k3",
+    "payload": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "助手"
+        },
+        {
+          "role": "user",
+          "content": "天气"
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "reasoning_content": "查询",
+          "tool_calls": [
+            {
+              "id": "call_a",
+              "type": "function",
+              "function": {
+                "name": "weather",
+                "arguments": "{\"city\":\"台北\",\"n\":1e2,\"nested\":{\"x\": [1,2]},\"ok\":true,\"nil\":null}"
+              }
+            },
+            {
+              "id": "call_b",
+              "type": "function",
+              "function": {
+                "name": "weather",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_b",
+          "content": "晴"
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_a",
+          "content": "雨"
+        },
+        {
+          "role": "user",
+          "content": "总结"
+        }
+      ],
+      "enable_thinking": true,
+      "reasoning_effort": "max"
+    },
+    "expected": [
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "thinking-effort",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "`thinking_effort` guides on how much to think in your thinking channel (not including the response channel), supported values include `low`, `medium`, `high`, and `max`.\nNow the system is invoked with `thinking_effort=max`.",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "助手",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "天气",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "assistant",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "think",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "查询",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "think",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "response",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "response",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "tools",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "call",
+        false
+      ],
+      [
+        " tool",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "weather",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " index",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "1",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        " key",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "city",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "string",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "台北",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        " key",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "n",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "number",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "1e2",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        " key",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "nested",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "object",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "{\"x\": [1,2]}",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        " key",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "ok",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "boolean",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "true",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        " key",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "nil",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "null",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "null",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "call",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "call",
+        false
+      ],
+      [
+        " tool",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "weather",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " index",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "2",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "call",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "tools",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "tool",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " tool",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "weather",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " index",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "1",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "雨",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "tool",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " tool",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "weather",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " index",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "2",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "晴",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "总结",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "assistant",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "think",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "kimi_k3",
+    "payload": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "助手"
+        },
+        {
+          "role": "user",
+          "content": "天气"
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "reasoning_content": "查询",
+          "tool_calls": [
+            {
+              "id": "call_a",
+              "type": "function",
+              "function": {
+                "name": "weather",
+                "arguments": "{\"city\":\"台北\",\"n\":1e2,\"nested\":{\"x\": [1,2]},\"ok\":true,\"nil\":null}"
+              }
+            },
+            {
+              "id": "call_b",
+              "type": "function",
+              "function": {
+                "name": "weather",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_b",
+          "content": "晴"
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_a",
+          "content": "雨"
+        },
+        {
+          "role": "user",
+          "content": "总结"
+        }
+      ],
+      "enable_thinking": true,
+      "reasoning_effort": "max",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "weather",
+            "description": "天气工具",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "expected": [
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "tool-declare",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "# Tools\nHere are the available tools, described in JSONSchema.\n\n```json\n[{\"function\":{\"description\":\"天气工具\",\"name\":\"weather\",\"parameters\":{\"properties\":{\"city\":{\"type\":\"string\"}},\"required\":[\"city\"],\"type\":\"object\"}},\"type\":\"function\"}]\n```",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "thinking-effort",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "`thinking_effort` guides on how much to think in your thinking channel (not including the response channel), supported values include `low`, `medium`, `high`, and `max`.\nNow the system is invoked with `thinking_effort=max`.",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "助手",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "天气",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "assistant",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "think",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "查询",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "think",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "response",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "response",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "tools",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "call",
+        false
+      ],
+      [
+        " tool",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "weather",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " index",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "1",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        " key",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "city",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "string",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "台北",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        " key",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "n",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "number",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "1e2",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        " key",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "nested",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "object",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "{\"x\": [1,2]}",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        " key",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "ok",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "boolean",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "true",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        " key",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "nil",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "null",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "null",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "call",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "call",
+        false
+      ],
+      [
+        " tool",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "weather",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " index",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "2",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "call",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "tools",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "tool",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " tool",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "weather",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " index",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "1",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "雨",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "tool",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " tool",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "weather",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " index",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "2",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "晴",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "总结",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "assistant",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "think",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "kimi_k3",
+    "payload": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "助手"
+        },
+        {
+          "role": "user",
+          "content": "天气"
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "reasoning_content": "查询",
+          "tool_calls": [
+            {
+              "id": "call_a",
+              "type": "function",
+              "function": {
+                "name": "weather",
+                "arguments": "{\"city\":\"台北\",\"n\":1e2,\"nested\":{\"x\": [1,2]},\"ok\":true,\"nil\":null}"
+              }
+            },
+            {
+              "id": "call_b",
+              "type": "function",
+              "function": {
+                "name": "weather",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_b",
+          "content": "晴"
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_a",
+          "content": "雨"
+        },
+        {
+          "role": "user",
+          "content": "总结"
+        }
+      ],
+      "enable_thinking": false,
+      "reasoning_effort": "max"
+    },
+    "expected": [
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "助手",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "天气",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "assistant",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "response",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "response",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "tools",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "call",
+        false
+      ],
+      [
+        " tool",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "weather",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " index",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "1",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        " key",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "city",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "string",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "台北",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        " key",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "n",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "number",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "1e2",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        " key",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "nested",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "object",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "{\"x\": [1,2]}",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        " key",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "ok",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "boolean",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "true",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        " key",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "nil",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "null",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "null",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "call",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "call",
+        false
+      ],
+      [
+        " tool",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "weather",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " index",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "2",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "call",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "tools",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "tool",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " tool",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "weather",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " index",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "1",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "雨",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "tool",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " tool",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "weather",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " index",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "2",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "晴",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "总结",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "assistant",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "response",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "kimi_k3",
+    "payload": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "助手"
+        },
+        {
+          "role": "user",
+          "content": "天气"
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "reasoning_content": "查询",
+          "tool_calls": [
+            {
+              "id": "call_a",
+              "type": "function",
+              "function": {
+                "name": "weather",
+                "arguments": "{\"city\":\"台北\",\"n\":1e2,\"nested\":{\"x\": [1,2]},\"ok\":true,\"nil\":null}"
+              }
+            },
+            {
+              "id": "call_b",
+              "type": "function",
+              "function": {
+                "name": "weather",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_b",
+          "content": "晴"
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_a",
+          "content": "雨"
+        },
+        {
+          "role": "user",
+          "content": "总结"
+        }
+      ],
+      "enable_thinking": false,
+      "reasoning_effort": "max",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "weather",
+            "description": "天气工具",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "expected": [
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "tool-declare",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "# Tools\nHere are the available tools, described in JSONSchema.\n\n```json\n[{\"function\":{\"description\":\"天气工具\",\"name\":\"weather\",\"parameters\":{\"properties\":{\"city\":{\"type\":\"string\"}},\"required\":[\"city\"],\"type\":\"object\"}},\"type\":\"function\"}]\n```",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "助手",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "天气",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "assistant",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "response",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "response",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "tools",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "call",
+        false
+      ],
+      [
+        " tool",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "weather",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " index",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "1",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        " key",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "city",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "string",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "台北",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        " key",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "n",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "number",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "1e2",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        " key",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "nested",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "object",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "{\"x\": [1,2]}",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        " key",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "ok",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "boolean",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "true",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        " key",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "nil",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "null",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "null",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "argument",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "call",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "call",
+        false
+      ],
+      [
+        " tool",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "weather",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " index",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "2",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "call",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "tools",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "tool",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " tool",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "weather",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " index",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "1",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "雨",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "tool",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " tool",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "weather",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " index",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "2",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "晴",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "总结",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "assistant",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "response",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "kimi_k3",
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "a"
+        },
+        {
+          "role": "user",
+          "content": "b"
+        },
+        {
+          "role": "system",
+          "content": "提醒"
+        }
+      ],
+      "enable_thinking": true,
+      "reasoning_effort": "max"
+    },
+    "expected": [
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "thinking-effort",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "`thinking_effort` guides on how much to think in your thinking channel (not including the response channel), supported values include `low`, `medium`, `high`, and `max`.\nNow the system is invoked with `thinking_effort=max`.",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "a",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "b",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "提醒",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "assistant",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "think",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "kimi_k3",
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "a"
+        },
+        {
+          "role": "user",
+          "content": "b"
+        },
+        {
+          "role": "system",
+          "content": "提醒"
+        }
+      ],
+      "enable_thinking": true,
+      "reasoning_effort": "max",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "weather",
+            "description": "天气工具",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "expected": [
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "tool-declare",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "# Tools\nHere are the available tools, described in JSONSchema.\n\n```json\n[{\"function\":{\"description\":\"天气工具\",\"name\":\"weather\",\"parameters\":{\"properties\":{\"city\":{\"type\":\"string\"}},\"required\":[\"city\"],\"type\":\"object\"}},\"type\":\"function\"}]\n```",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "thinking-effort",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "`thinking_effort` guides on how much to think in your thinking channel (not including the response channel), supported values include `low`, `medium`, `high`, and `max`.\nNow the system is invoked with `thinking_effort=max`.",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "a",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "b",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "提醒",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "assistant",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "think",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "kimi_k3",
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "a"
+        },
+        {
+          "role": "user",
+          "content": "b"
+        },
+        {
+          "role": "system",
+          "content": "提醒"
+        }
+      ],
+      "enable_thinking": false,
+      "reasoning_effort": "max"
+    },
+    "expected": [
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "a",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "b",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "提醒",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "assistant",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "response",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ]
+    ]
+  },
+  {
+    "encoder": "kimi_k3",
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "a"
+        },
+        {
+          "role": "user",
+          "content": "b"
+        },
+        {
+          "role": "system",
+          "content": "提醒"
+        }
+      ],
+      "enable_thinking": false,
+      "reasoning_effort": "max",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "weather",
+            "description": "天气工具",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "expected": [
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        " type",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "tool-declare",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "# Tools\nHere are the available tools, described in JSONSchema.\n\n```json\n[{\"function\":{\"description\":\"天气工具\",\"name\":\"weather\",\"parameters\":{\"properties\":{\"city\":{\"type\":\"string\"}},\"required\":[\"city\"],\"type\":\"object\"}},\"type\":\"function\"}]\n```",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "a",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "user",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "b",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "system",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "提醒",
+        false
+      ],
+      [
+        "<|close|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|end_of_msg|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "message",
+        false
+      ],
+      [
+        " role",
+        false
+      ],
+      [
+        "=\"",
+        false
+      ],
+      [
+        "assistant",
+        false
+      ],
+      [
+        "\"",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ],
+      [
+        "<|open|>",
+        true
+      ],
+      [
+        "response",
+        false
+      ],
+      [
+        "<|sep|>",
+        true
+      ]
+    ]
+  }
+]

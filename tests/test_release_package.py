@@ -49,12 +49,18 @@ class ReleasePackageTests(unittest.TestCase):
             "frontend/public/assets/logo.svg",
             "doc/账号系统迁移.md",
             "doc/协议兼容性.md",
+            "doc/分词与计数.md",
+            "src/tokenizer_catalog.json",
+            "src/tokenizer_prompts.json",
+            "src/tokenizer_assets/blobs/" + hashlib.sha256(b"placeholder").hexdigest(),
             "src/router.py",
             "scripts/hash_password.py",
             "scripts/update_release.py",
         ):
             if relative_path == "web.py":
                 self._write(relative_path, 'APP_VERSION = "1.2.3"\n')
+            elif relative_path == "src/tokenizer_catalog.json":
+                self._write(relative_path, json.dumps({"resources":[{"files":{"tokenizer.json":{"sha256":hashlib.sha256(b"placeholder").hexdigest(),"size":len(b"placeholder")}}}]}))
             elif relative_path == "frontend/package.json":
                 self._write(relative_path, '{"version": "1.2.3"}\n')
             else:
@@ -273,7 +279,7 @@ class ReleasePackageTests(unittest.TestCase):
                 source_date_epoch=self.source_date_epoch,
             )
 
-        self.assertFalse(self.output_dir.exists())
+        self.assertFalse((self.output_dir / 'SHA256SUMS.txt').exists())
 
     def test_build_package_rejects_tag_that_differs_from_application_version(self):
         with self.assertRaisesRegex(RuntimeError, "v1.2.3"):
@@ -284,7 +290,7 @@ class ReleasePackageTests(unittest.TestCase):
                 source_date_epoch=self.source_date_epoch,
             )
 
-        self.assertFalse(self.output_dir.exists())
+        self.assertFalse((self.output_dir / 'SHA256SUMS.txt').exists())
 
     def test_release_version_requires_matching_frontend_version(self):
         self._write("frontend/package.json", '{"version": "1.2.4"}\n')
@@ -302,3 +308,11 @@ class ReleasePackageTests(unittest.TestCase):
                 self._write("web.py", source)
                 with self.assertRaisesRegex(RuntimeError, "APP_VERSION"):
                     validate_release_version(self.repository_root, "v1.2.3")
+
+    def test_tokenizer_assets_are_verified_before_publishing(self):
+        catalog = {'resources':[{'files':{'tokenizer.json':{'sha256':'a'*64,'size':1}}}]}
+        self._write('src/tokenizer_catalog.json',json.dumps(catalog))
+        self._write('src/tokenizer_assets/blobs/'+'a'*64,'x')
+        with self.assertRaisesRegex(RuntimeError,'Tokenizer'):
+            self._build()
+        self.assertFalse((self.output_dir / 'SHA256SUMS.txt').exists())

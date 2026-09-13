@@ -9,7 +9,7 @@ from typing import Iterator, Union
 from urllib.parse import quote
 
 DATABASE_FILENAME = "codebuddy2api.sqlite3"
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _SCHEMA_LOCK = threading.RLock()
 _SCHEMA_V1_STATEMENTS = (
@@ -422,6 +422,22 @@ def _migrate_usage_model_buckets(connection: sqlite3.Connection) -> None:
     connection.execute("DROP TABLE temp.usage_hourly_v4_mapping")
 
 
+
+_SCHEMA_V6_STATEMENTS = (
+    """CREATE TABLE tokenizer_resources (
+        username TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL,
+        metadata_json TEXT NOT NULL, created_at INTEGER NOT NULL,
+        PRIMARY KEY (username, id)
+    ) WITHOUT ROWID""",
+    """CREATE TABLE tokenizer_model_mappings (
+        username TEXT NOT NULL, model TEXT NOT NULL, resource_id TEXT NOT NULL,
+        PRIMARY KEY (username, model),
+        FOREIGN KEY (username, resource_id) REFERENCES tokenizer_resources(username, id)
+    ) WITHOUT ROWID""",
+    "CREATE INDEX idx_tokenizer_mapping_resource ON tokenizer_model_mappings(username, resource_id)",
+)
+
+
 def resolve_database_path(data_dir: Union[str, Path], cwd: Union[str, Path, None] = None) -> Path:
     """基于数据目录解析统一 SQLite 数据库路径。"""
     directory = Path(data_dir)
@@ -478,16 +494,19 @@ class SQLiteDatabase:
                         for statement in _SCHEMA_V4_STATEMENTS:
                             connection.execute(statement)
                         _migrate_usage_model_buckets(connection)
-                    for statement in _SCHEMA_V5_STATEMENTS:
+                    if version < 5:
+                        for statement in _SCHEMA_V5_STATEMENTS:
+                            connection.execute(statement)
+                        connection.execute(
+                            """
+                            INSERT INTO authentication_state(
+                                id, state, legacy_install_detected, pending_username
+                            ) VALUES (1, 'uninitialized', ?, NULL)
+                            """,
+                            (int(legacy_install_detected),),
+                        )
+                    for statement in _SCHEMA_V6_STATEMENTS:
                         connection.execute(statement)
-                    connection.execute(
-                        """
-                        INSERT INTO authentication_state(
-                            id, state, legacy_install_detected, pending_username
-                        ) VALUES (1, 'uninitialized', ?, NULL)
-                        """,
-                        (int(legacy_install_detected),),
-                    )
                     connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
                     connection.commit()
                 except Exception:

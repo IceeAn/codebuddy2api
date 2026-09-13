@@ -23,6 +23,7 @@ import RefreshButton from '../components/RefreshButton.vue';
 import { useSessionStore } from '../stores/session';
 import { adminQueryKeys } from '../utils/adminQueryKeys';
 import { chunkLoadRecovery } from '../utils/chunkLoadRecovery';
+import TokenizerSettings from '../components/TokenizerSettings.vue';
 import PasswordChangeForm from '../components/PasswordChangeForm.vue';
 
 const queryClient = useQueryClient();
@@ -35,9 +36,14 @@ const tagValues = reactive<Record<string, string[]>>({});
 const formRef = ref<InstanceType<typeof CForm> | null>(null);
 const AUTO_ROTATION_KEY = 'CODEBUDDY_AUTO_ROTATION_ENABLED';
 const ROTATION_COUNT_KEY = 'CODEBUDDY_ROTATION_COUNT';
-const activeTab = computed<'service' | 'account'>(() =>
-  route.query.tab === 'account' ? 'account' : 'service',
+const activeTab = computed<'service' | 'account' | 'tokenizer'>(() =>
+  route.query.tab === 'tokenizer'
+    ? 'tokenizer'
+    : route.query.tab === 'account'
+      ? 'account'
+      : 'service',
 );
+const tokenizerSettings = ref<InstanceType<typeof TokenizerSettings> | null>(null);
 const passwordForm = ref<InstanceType<typeof PasswordChangeForm> | null>(null);
 
 const settingsQuery = useQuery({
@@ -260,18 +266,19 @@ function discardServiceEdits(message: string): boolean {
 }
 
 function confirmLeave(): boolean {
+  if (activeTab.value === 'tokenizer') return tokenizerSettings.value!.confirmDiscard();
   if (activeTab.value === 'account') {
     return passwordForm.value!.confirmDiscard();
   }
   return discardServiceEdits('当前有未保存的设置，确定放弃修改并离开吗？');
 }
 
-async function switchTab(tab: 'service' | 'account'): Promise<void> {
+async function switchTab(tab: 'service' | 'account' | 'tokenizer'): Promise<void> {
   if (tab === activeTab.value) return;
   const canSwitch =
     activeTab.value === 'service'
       ? discardServiceEdits('当前有未保存的设置，确定放弃修改并切换吗？')
-      : passwordForm.value!.confirmDiscard();
+      : confirmLeave();
   if (!canSwitch) return;
   await chunkLoadRecovery.replace({
     name: 'settings',
@@ -287,7 +294,12 @@ function handleBeforeUnload(event: BeforeUnloadEvent): void {
 
 onBeforeRouteLeave(confirmLeave);
 onBeforeRouteUpdate((to) => {
-  const targetTab = to.query?.tab === 'account' ? 'account' : 'service';
+  const targetTab =
+    to.query?.tab === 'tokenizer'
+      ? 'tokenizer'
+      : to.query?.tab === 'account'
+        ? 'account'
+        : 'service';
   if (targetTab === activeTab.value) return true;
   return confirmLeave();
 });
@@ -325,6 +337,18 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', handleBeforeUnl
         @click="switchTab('account')"
       >
         账号安全
+      </button>
+      <button
+        type="button"
+        role="tab"
+        :aria-selected="activeTab === 'tokenizer'"
+        :class="[
+          'rounded-md px-4 py-2 text-sm transition-[color,background-color]',
+          activeTab === 'tokenizer' ? 'bg-brand-500 text-white' : 'text-muted hover:text-text',
+        ]"
+        @click="switchTab('tokenizer')"
+      >
+        Tokenizer
       </button>
     </div>
 
@@ -440,6 +464,7 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', handleBeforeUnl
       </div>
     </CCard>
 
+    <TokenizerSettings v-else-if="activeTab === 'tokenizer'" ref="tokenizerSettings" />
     <CCard v-else title="账号安全">
       <PasswordChangeForm ref="passwordForm" />
     </CCard>

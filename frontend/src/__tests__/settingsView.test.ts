@@ -317,6 +317,7 @@ function mountView({ useRealNumberForm = false, useRealHelpInteraction = false }
     CButton: ButtonStub,
     CTooltip: useRealHelpInteraction ? false : TooltipStub,
     PasswordChangeForm: PasswordChangeFormStub,
+    TokenizerSettings: PasswordChangeFormStub,
     RefreshButton: RefreshButtonStub,
     Save: true,
     CircleHelp: true,
@@ -1183,5 +1184,40 @@ describe('SettingsView', () => {
     );
     expect(loading.findComponent(SpinStub).exists()).toBe(true);
     expect(wrapper.findComponent(FormStub).exists()).toBe(false);
+  });
+  it('Tokenizer 标签直达、切换及脏表单路由保护', async () => {
+    routeMock.query = { tab: 'tokenizer' };
+    const wrapper = mountView();
+    expect((queryOptions[0].enabled as Ref<boolean>).value).toBe(false);
+    expect(routeUpdateGuards.at(-1)!({ query: { tab: 'tokenizer' } })).toBe(true);
+    passwordConfirmDiscardMock.mockReturnValue(false);
+    expect(routeLeaveGuards.at(-1)!()).toBe(false);
+    expect(routeUpdateGuards.at(-1)!({ query: { tab: 'service' } })).toBe(false);
+    await wrapper
+      .findAll('[role=tab]')
+      .find((item) => item.text() === '服务配置')!
+      .trigger('click');
+    expect(replaceRouteMock).not.toHaveBeenCalled();
+    passwordConfirmDiscardMock.mockReturnValue(true);
+    await wrapper
+      .findAll('[role=tab]')
+      .find((item) => item.text() === '服务配置')!
+      .trigger('click');
+    expect(replaceRouteMock).toHaveBeenCalledWith({ name: 'settings', query: { tab: 'service' } });
+    await wrapper
+      .findAll('[role=tab]')
+      .find((item) => item.text() === 'Tokenizer')!
+      .trigger('click');
+  });
+  it('服务配置可以导航到 Tokenizer', async () => {
+    const wrapper = mountView();
+    await wrapper
+      .findAll('[role=tab]')
+      .find((item) => item.text() === 'Tokenizer')!
+      .trigger('click');
+    expect(replaceRouteMock).toHaveBeenCalledWith({
+      name: 'settings',
+      query: { tab: 'tokenizer' },
+    });
   });
 });

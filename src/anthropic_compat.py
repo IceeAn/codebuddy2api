@@ -275,26 +275,32 @@ def _translate_tool_choice(value: Any, tool_names: Set[str]) -> Dict[str, Any]:
     return result
 
 
-def _translate_thinking(value: Any, max_tokens: int) -> Dict[str, Any]:
+def _translate_thinking(value: Any, max_tokens: Optional[int]) -> Dict[str, Any]:
     if not _is_object(value):
         _fail("thinking must be an object")
+    options = {}
+    clear_thinking = value.get("clear_thinking")
+    if clear_thinking is not None:
+        if not isinstance(clear_thinking, bool):
+            _fail("thinking.clear_thinking must be a boolean")
+        options["clear_thinking"] = clear_thinking
     thinking_type = value.get("type")
     budget = value.get("budget_tokens")
     if thinking_type == "adaptive":
         if budget is not None:
             _fail("thinking.budget_tokens is not valid for adaptive thinking")
-        return {"thinking": {"type": "enabled"}, "enable_thinking": True}
+        return {"thinking": {"type": "enabled", **options}, "enable_thinking": True}
     if thinking_type == "disabled":
         if budget is not None:
             _fail("thinking.budget_tokens is not valid for disabled thinking")
-        return {"thinking": {"type": "disabled"}, "enable_thinking": False}
+        return {"thinking": {"type": "disabled", **options}, "enable_thinking": False}
     if thinking_type == "enabled":
         if not _is_integer(budget) or budget < 1024:
             _fail("thinking.budget_tokens must be an integer of at least 1024")
-        if budget >= max_tokens:
+        if max_tokens is not None and budget >= max_tokens:
             _fail("thinking.budget_tokens must be less than max_tokens")
         return {
-            "thinking": {"type": "enabled", "budget_tokens": budget},
+            "thinking": {"type": "enabled", "budget_tokens": budget, **options},
             "enable_thinking": True,
         }
     _fail("thinking.type is not supported")
@@ -441,21 +447,22 @@ def _translate_messages(value: Any) -> List[Dict[str, Any]]:
     return translated
 
 
-def translate_anthropic_request(request_body: Any) -> Dict[str, Any]:
+def translate_anthropic_request(request_body: Any, *, for_count: bool = False) -> Dict[str, Any]:
     """校验可转换语义，忽略未知字段并返回新的 CodeBuddy/OpenAI 风格对象。"""
     if not _is_object(request_body):
         _fail("request body must be a JSON object")
-    for required in ("model", "max_tokens", "messages"):
+    for required in (("model", "messages") if for_count else ("model", "max_tokens", "messages")):
         if required not in request_body:
             _fail(f"{required} is required")
 
-    max_tokens = request_body["max_tokens"]
-    if not _is_integer(max_tokens) or max_tokens < 0:
+    max_tokens = None if for_count else request_body["max_tokens"]
+    if not for_count and (not _is_integer(max_tokens) or max_tokens < 0):
         _fail("max_tokens must be a non-negative integer")
     translated: Dict[str, Any] = {
         "model": unwrap_synthetic_anthropic_model_id(request_body["model"]),
-        "max_tokens": max_tokens,
     }
+    if not for_count:
+        translated["max_tokens"] = max_tokens
     translated.update(_translate_output_options(request_body))
 
     messages = _translate_messages(request_body["messages"])
@@ -499,3 +506,8 @@ def translate_anthropic_request(request_body: Any) -> Dict[str, Any]:
     if "thinking" in request_body:
         translated.update(_translate_thinking(request_body["thinking"], max_tokens))
     return translated
+
+
+def translate_anthropic_count_request(request_body: Any) -> Dict[str, Any]:
+    """共用消息转换，但计数没有输出预算及其关联校验。"""
+    return translate_anthropic_request(request_body, for_count=True)
