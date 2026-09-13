@@ -4,6 +4,14 @@ export interface ModelListResponse {
   data: Array<{ id: string }>;
 }
 
+/** 管理台使用的无状态 Responses 文本请求。 */
+export interface ResponsesRequest {
+  model: string;
+  input: string;
+  stream?: boolean;
+  store?: false;
+}
+
 /**
  * OpenAI 兼容的 Chat Completion 请求体。
  *

@@ -24,7 +24,7 @@ import { adminQueryKeys } from '../utils/adminQueryKeys';
 const toast = useToast();
 const session = useSessionStore();
 const queryKeys = adminQueryKeys(session.username);
-type PlaygroundProtocol = 'openai' | 'anthropic';
+type PlaygroundProtocol = 'openai' | 'anthropic' | 'responses';
 const protocol = ref<PlaygroundProtocol>('openai');
 const selectedModel = ref('');
 const prompt = ref('Hello, what is 2+2?');
@@ -75,7 +75,7 @@ function resetStreamOutput(): void {
 const modelsQuery = useQuery({
   queryKey: computed(() => queryKeys.playgroundModels(protocol.value)),
   queryFn: ({ queryKey, signal }) =>
-    queryKey[3] === 'openai'
+    queryKey[3] !== 'anthropic'
       ? openaiPlaygroundApi.models(signal)
       : anthropicPlaygroundApi.models(signal),
 });
@@ -118,32 +118,37 @@ async function doSend(): Promise<void> {
   const model =
     selectedModel.value ||
     modelOptions.value[0]?.value ||
-    (requestProtocol === 'openai' ? 'glm-5.2' : 'anthropic/codebuddy/glm-5.2');
+    (requestProtocol === 'anthropic' ? 'anthropic/codebuddy/glm-5.2' : 'glm-5.2');
   const controller = new AbortController();
   abortController.value = controller;
 
   try {
     const messages = [{ role: 'user' as const, content: prompt.value }];
     const response =
-      requestProtocol === 'openai'
-        ? await openaiPlaygroundApi.chat(
-            {
-              model,
-              messages,
-              stream: requestStream,
-            } satisfies ChatCompletionRequest,
+      requestProtocol === 'responses'
+        ? await openaiPlaygroundApi.responses(
+            { model, input: prompt.value, stream: requestStream, store: false },
             controller.signal,
           )
-        : await anthropicPlaygroundApi.chat(
-            {
-              model,
-              max_tokens: 1024,
-              system: 'You are a helpful assistant.',
-              messages,
-              stream: requestStream,
-            } satisfies AnthropicMessageRequest,
-            controller.signal,
-          );
+        : requestProtocol === 'openai'
+          ? await openaiPlaygroundApi.chat(
+              {
+                model,
+                messages,
+                stream: requestStream,
+              } satisfies ChatCompletionRequest,
+              controller.signal,
+            )
+          : await anthropicPlaygroundApi.chat(
+              {
+                model,
+                max_tokens: 1024,
+                system: 'You are a helpful assistant.',
+                messages,
+                stream: requestStream,
+              } satisfies AnthropicMessageRequest,
+              controller.signal,
+            );
 
     if (!response.ok) {
       output.value = await response.text();
@@ -152,7 +157,12 @@ async function doSend(): Promise<void> {
     }
 
     if (!requestStream) {
-      output.value = JSON.stringify(await response.json(), null, 2);
+      const result = await response.json();
+      output.value = JSON.stringify(result, null, 2);
+      if (requestProtocol === 'responses' && result.status !== 'completed') {
+        toast.error('Responses 响应未完整完成');
+        return;
+      }
       toast.success('请求完成');
       return;
     }
@@ -185,6 +195,16 @@ async function doSend(): Promise<void> {
           queueStreamOutput(
             result.event ? { event: result.event, data: result.data } : result.data,
           );
+          if (requestProtocol === 'responses') {
+            const eventType = result.event ?? (result.data as { type?: string } | null)?.type;
+            if (eventType === 'response.incomplete') throw new Error('Responses 响应未完整完成');
+            if (eventType === 'response.failed' || eventType === 'error')
+              throw new Error('Responses 响应失败');
+            if (eventType === 'response.completed') {
+              doneReceived = true;
+              break readLoop;
+            }
+          }
           if (requestProtocol === 'anthropic' && result.event === 'message_stop') {
             doneReceived = true;
             break readLoop;
@@ -198,7 +218,9 @@ async function doSend(): Promise<void> {
         throw new Error(
           requestProtocol === 'openai'
             ? '流式响应在 [DONE] 之前结束'
-            : '流式响应在 message_stop 之前结束',
+            : requestProtocol === 'responses'
+              ? '流式响应在 response.completed 之前结束'
+              : '流式响应在 message_stop 之前结束',
         );
       }
       flushStreamOutput();
@@ -264,6 +286,7 @@ onBeforeUnmount(() => {
         <div class="flex flex-col gap-4">
           <CRadioGroup v-model="protocol" class="self-start" aria-label="协议">
             <CRadioButton value="openai">OpenAI</CRadioButton>
+            <CRadioButton value="responses">OpenAI Responses</CRadioButton>
             <CRadioButton value="anthropic">Anthropic</CRadioButton>
           </CRadioGroup>
           <div class="console-model-row flex items-center gap-2">

@@ -50,6 +50,31 @@ jobs:
       - name: Check backend coverage
         run: venv/bin/python3 -m coverage report
 
+  codex-contract:
+    name: Codex CLI Responses 契约
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+      - name: 设置 Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: 设置 Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.18.0"
+      - name: 安装契约测试依赖
+        run: |
+          python3 -m venv venv
+          venv/bin/python3 -m pip install -r requirements-dev.txt
+          npm install -g @openai/codex@0.153.4
+      - name: 验证真实客户端
+        env:
+          CODEBUDDY_TEST_CODEX: "1"
+          CODEBUDDY_LOG_LEVEL: CRITICAL
+        run: venv/bin/python3 -m unittest tests.test_codex_responses_contract
+
   release-lock-windows:
     name: Release Lock (Windows)
     runs-on: windows-latest
@@ -86,7 +111,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: "24.11.1"
+          node-version: "24.18.0"
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
 

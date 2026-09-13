@@ -83,7 +83,7 @@ docker compose run --rm codebuddy2api set-user <用户名>
 
 - CodeBuddy 上游只支持流式响应。即使客户端请求非流式，也必须用 `client.stream()` 增量消费 SSE，再由 `StreamResponseAggregator` 聚合；禁止先缓冲完整上游响应体。`RequestProcessor.prepare_request()` 必须强制注入 `stream=True`。
 - 上游响应采用宽松事件提取，不在事件模型层承担完整协议验证。流式与非流式路径共享首个 choice 语义；`OpenAIStreamNormalizer` 负责拆分混合的 reasoning/content delta，并在首块补 `role: assistant`。
-- 上游工具调用 ID 原样透传，只为 OpenAI 流式兼容补充缺失的 `index`，不要重新生成 ID。
+- CodeBuddy 的工具参数后续分块可能携带空名称／空 ID，流结尾可能附带 name/arguments 均为空的旧 function_call 占位对象；不能把这些占位误判为新调用或不支持的实际旧版调用。上游工具调用 ID 原样透传，只为 OpenAI 流式兼容补充缺失的 `index`，不要重新生成 ID。
 - OpenAI 客户端 `stream_options.include_usage` 必须独立于上游强制 include_usage 保存；统计消费原始事件，下游仅按客户端选项发送最终空 choices 的 usage 块，不补造缺失 usage。`max_completion_tokens` 在入口校验后映射为 `max_tokens`，双字段不同值必须返回 400。
 - 多模态字段可透传不等于上游支持。图片内容保持顺序，网关不下载或转码；未知请求扩展交由上游判断。音频非流式聚合必须先解码各 Base64 分块、拼接字节，再在最终响应统一编码，不能直接拼接带 padding 的字符串。标准响应聚合仅保证明确实现的字段，未知分片不得猜测合并规则。
 - 强制推理模型会覆盖为最大推理并启用 thinking，但 `clear_thinking` 等其他客户端 `thinking` 子项必须继续透传，不能用新对象整体替换；其他模型默认开启 thinking，但客户端显式禁用时必须尊重。`CODEBUDDY_FORCED_TEMPERATURE` 非空时覆盖客户端值；模型命名空间是否剥离由 `CODEBUDDY_STRIP_MODEL_NAMESPACE` 控制。修改请求转换时注意这些优先级。
@@ -96,6 +96,11 @@ docker compose run --rm codebuddy2api set-user <用户名>
 - Anthropic 外部路由接受 `x-api-key` 或 Bearer API Key，两者并存时必须一致且只验证一次摘要；只接受 `anthropic-version: 2023-06-01`。playground 仅接受会话 Cookie并隐藏于 OpenAPI。不得记录 metadata、beta、被忽略字段、Claude Code session/agent ID、thinking/tool 内容或认证头。
 - `anthropic/codebuddy/` 是供 Claude Code 模型列表发现使用的网关保留合成前缀。Messages 请求接受真实 ID 与合成 ID，但不查询模型列表，也不校验模型是否存在或可用；合成 ID 必须先严格匹配并移除该前缀一次，空后缀必须失败。剩余模型名再进入与 OpenAI 兼容接口相同的请求策略，由 `CODEBUDDY_STRIP_MODEL_NAMESPACE` 决定按最后一个 `/` 截断或原样保留，最终交由上游判断，不能回退到列表首项。
 - 聊天请求正常路径只在准备成功后实际选择一次凭证。请求准备发生服务端异常时才补做一次不读取轮换设置、不推进轮换状态的凭证快照检查：明确无凭证则返回 401，检查成功或无法判断则保留原准备异常；协议校验 4xx 不得被凭证状态覆盖。
+
+- Responses 是同一 CodeBuddy 上游的无状态适配，入口为 `/openai/v1/responses`；不实现服务端存储、WebSocket 或 `/responses/compact`。Codex 使用自定义 provider 的客户端历史压缩，模型目录必须使用真实模型 ID 并显式声明 freeform apply_patch、图片和客户端工具搜索能力，不能借用 OpenAI 模型 ID 伪造能力。
+- `codex-auto-review` 是精确匹配的客户端模型别名，按用户设置映射一次后再应用模型前缀、推理和温度策略；响应保留请求模型，统计使用真实上游模型。映射不等于开启或绕过 Codex 审批。
+- Responses custom 工具统一包装为只有 input 字符串的 function 参数，完整校验后恢复原文；grammar 仅作为工具说明，不能默默修复或重试。CodeBuddy 的 tool_choice 只接受字符串，指定／限定工具必须先过滤工具集合。命名空间别名必须稳定，返回时恢复 namespace/name，上游 call_id 原样保留。
+- Responses 与其他协议共享一次中立 SSE 解析；只缓冲连续工具组并按上游 index 输出。成功终态为 response.completed，不发送 `[DONE]`；截断和内容过滤返回 response.incomplete，未发出的连续工具组必须丢弃，不能校验半截参数或发布为可执行调用；不能把 EOF 当成功。客户端 tool_search 的发现结果必须纳入后续工具声明，但网关不得执行 MCP 或保存客户端元数据。
 
 ## OAuth、凭证与模型缓存
 

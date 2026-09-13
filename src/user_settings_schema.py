@@ -1,7 +1,9 @@
 """用户级设置字段与类型规范。"""
 from typing import Any, Dict
+import re
 
 USER_SETTING_KEYS = {
+    "CODEBUDDY_CODEX_AUTO_REVIEW_MODEL",
     "CODEBUDDY_MODELS",
     "CODEBUDDY_FORCED_REASONING_MODELS",
     "CODEBUDDY_FORCED_TEMPERATURE",
@@ -36,6 +38,14 @@ def coerce_user_setting(key: str, value: Any) -> Any:
 
     if key in BOOL_USER_SETTING_KEYS:
         return _parse_bool_setting(value)
+
+    if key == "CODEBUDDY_CODEX_AUTO_REVIEW_MODEL":
+        if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}", value.strip()):
+            raise ValueError("CODEBUDDY_CODEX_AUTO_REVIEW_MODEL must be a non-empty model ID")
+        model = value.strip()
+        if model.rsplit("/", 1)[-1] in ("", "codex-auto-review"):
+            raise ValueError("CODEBUDDY_CODEX_AUTO_REVIEW_MODEL must reference a real model")
+        return model
 
     if key == "CODEBUDDY_ROTATION_COUNT":
         if isinstance(value, bool):

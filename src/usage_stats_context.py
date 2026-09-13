@@ -180,6 +180,10 @@ class UsageStatsContext:
         ) or "unknown"
         self._client_stream = bool(request_body.get("stream", False))
         messages = request_body.get("messages")
+        if "input" in request_body:
+            messages = request_body["input"]
+            if isinstance(messages, str):
+                messages = [messages]
         tools = request_body.get("tools")
         self._message_count = len(messages) if isinstance(messages, list) else None
         self._tool_count = len(tools) if isinstance(tools, list) else None

@@ -10,6 +10,7 @@ const {
   toastMock,
   openaiModelsMock,
   chatMock,
+  responsesMock,
   anthropicChatMock,
   anthropicModelsMock,
   validateMock,
@@ -33,6 +34,7 @@ const {
     },
     openaiModelsMock: vi.fn<typeof openaiPlaygroundApi.models>(),
     chatMock: vi.fn<typeof openaiPlaygroundApi.chat>(),
+    responsesMock: vi.fn<() => Promise<Response>>(),
     anthropicChatMock: vi.fn<typeof anthropicPlaygroundApi.chat>(),
     anthropicModelsMock: vi.fn<typeof anthropicPlaygroundApi.models>(),
     validateMock: vi.fn<() => Promise<void>>(),
@@ -54,6 +56,7 @@ vi.mock('../api/admin', () => ({
   openaiPlaygroundApi: {
     models: openaiModelsMock,
     chat: chatMock,
+    responses: responsesMock,
   },
   anthropicPlaygroundApi: {
     models: anthropicModelsMock,
@@ -229,6 +232,7 @@ describe('ApiConsoleView', () => {
     modelsQuery.isFetching.value = false;
     modelsQuery.refetch.mockReset();
     chatMock.mockReset();
+    responsesMock.mockReset();
     anthropicChatMock.mockReset();
     anthropicModelsMock.mockReset();
     toastMock.success.mockReset();
@@ -237,6 +241,54 @@ describe('ApiConsoleView', () => {
     toastMock.info.mockReset();
     validateMock.mockReset();
     validateMock.mockResolvedValue(undefined);
+  });
+
+  it('Responses 使用 OpenAI 模型入口并发送 input', async () => {
+    responsesMock.mockResolvedValue(response('{"status":"completed","output":[]}'));
+    const wrapper = mountView();
+    const state = (wrapper.vm.$ as any).setupState;
+    state.protocol = 'responses';
+    await wrapper.vm.$nextTick();
+    await queryOptions.value.queryFn({ queryKey: ['admin', 'admin', 'playground', 'responses'] });
+    await state.send();
+    expect(responsesMock).toHaveBeenCalledWith(
+      { model: 'glm-5.2', input: state.prompt, stream: false, store: false },
+      expect.any(AbortSignal),
+    );
+    expect(state.output).toContain('completed');
+    expect(toastMock.success).toHaveBeenCalledWith('请求完成');
+  });
+
+  it.each([
+    ['event: response.completed\ndata: {"type":"response.completed"}\n\n', '流式请求完成'],
+    ['data: {"type":"response.completed"}\n\n', '流式请求完成'],
+    ['event: response.incomplete\ndata: {}\n\n', 'Responses 响应未完整完成'],
+    ['event: response.failed\ndata: {}\n\n', 'Responses 响应失败'],
+    ['event: error\ndata: {}\n\n', 'Responses 响应失败'],
+    ['data: null\n\ndata: [DONE]\n\n', '流式响应在 response.completed 之前结束'],
+  ])('Responses 流正确处理结束事件 %s', async (wire, expected) => {
+    responsesMock.mockResolvedValue(response(wire));
+    const wrapper = mountView();
+    const state = (wrapper.vm.$ as any).setupState;
+    state.protocol = 'responses';
+    state.stream = true;
+    await wrapper.vm.$nextTick();
+    await state.send();
+    const observed =
+      expected === '流式请求完成' ? toastMock.success.mock.calls.flat().join('') : state.output;
+    expect(observed).toContain(expected);
+  });
+
+  it('Responses 非流式不完整响应保留原文并显示错误', async () => {
+    responsesMock.mockResolvedValue(response('{"status":"incomplete","output":[]}'));
+    const wrapper = mountView();
+    const state = (wrapper.vm.$ as any).setupState;
+    state.protocol = 'responses';
+    await wrapper.vm.$nextTick();
+    await state.send();
+    expect(state.output).toContain('incomplete');
+    expect(toastMock.error).toHaveBeenCalledWith('Responses 响应未完整完成');
+    expect(toastMock.success).not.toHaveBeenCalled();
   });
 
   it('构造模型选项并校验空消息', async () => {

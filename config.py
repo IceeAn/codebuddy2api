@@ -74,6 +74,7 @@ _DEFAULT_CONFIG = {
     "CODEBUDDY_SSL_VERIFY": True,
     "CODEBUDDY_LOG_LEVEL": "INFO",
     "CODEBUDDY_MODELS": ",".join(DEFAULT_CODEBUDDY_MODELS),
+    "CODEBUDDY_CODEX_AUTO_REVIEW_MODEL": "deepseek-v4-flash",
     "CODEBUDDY_FORCED_REASONING_MODELS": ",".join(DEFAULT_FORCED_REASONING_MODELS),
     "CODEBUDDY_FORCED_TEMPERATURE": "1",
     "CODEBUDDY_STRIP_MODEL_NAMESPACE": True,
@@ -264,6 +265,8 @@ def get_editable_config(user: Any = None, username: Optional[str] = None) -> Dic
 
 def _get_editable_config_value(key: str, user: Any = None, username: Optional[str] = None) -> Any:
     owner = user if user is not None else username
+    if key == "CODEBUDDY_CODEX_AUTO_REVIEW_MODEL":
+        return get_codex_auto_review_model(owner)
     if key == "CODEBUDDY_FORCED_TEMPERATURE":
         return get_forced_temperature(owner)
     if key == "CODEBUDDY_STRIP_MODEL_NAMESPACE":
@@ -509,6 +512,14 @@ def get_forced_reasoning_models(user: Any = None) -> list:
     return _parse_csv(_get_user_config_value("CODEBUDDY_FORCED_REASONING_MODELS", user))
 
 
+def get_codex_auto_review_model(user: Any = None) -> str:
+    """用户覆盖优先于启动环境默认值，拒绝空值与自引用。"""
+    return _coerce_user_setting(
+        "CODEBUDDY_CODEX_AUTO_REVIEW_MODEL",
+        _get_user_config_value("CODEBUDDY_CODEX_AUTO_REVIEW_MODEL", user),
+    )
+
+
 def get_forced_temperature(user: Any = None) -> Optional[float]:
     value = _get_user_config_value("CODEBUDDY_FORCED_TEMPERATURE", user)
     if value is None:
@@ -556,6 +567,7 @@ def _validate_startup_config() -> None:
     get_ssl_verify()
     get_log_level()
     get_forced_temperature()
+    get_codex_auto_review_model()
     get_strip_model_namespace()
     get_auto_rotation_enabled()
     get_auto_checkin_enabled()

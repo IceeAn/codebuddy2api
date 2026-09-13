@@ -37,6 +37,12 @@ SETTING_FIELDS: List[Dict[str, Any]] = [
         ),
     },
     {
+        "key": "CODEBUDDY_CODEX_AUTO_REVIEW_MODEL",
+        "label": "Codex 自动审批模型",
+        "type": "text",
+        "description": "将 codex-auto-review 映射为此真实 CodeBuddy 模型 ID；仅对当前用户生效，保存后立即生效，不能为空。",
+    },
+    {
         "key": "CODEBUDDY_FORCED_REASONING_MODELS",
         "label": "强制推理模型列表",
         "type": "tags",

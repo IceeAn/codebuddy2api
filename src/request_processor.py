@@ -94,7 +94,11 @@ def apply_request_policies(payload: Dict[str, Any], user: Any = None) -> None:
             DEFAULT_CODEBUDDY_MODELS[0],
         )
 
-    from config import get_strip_model_namespace
+    from config import get_codex_auto_review_model, get_strip_model_namespace
+
+    # 精确别名只映射一次，目标模型再进入统一策略；不改变客户端响应模型名。
+    if payload.get("model") == "codex-auto-review":
+        payload["model"] = get_codex_auto_review_model(user)
 
     if get_strip_model_namespace(user):
         payload["model"] = strip_model_namespace(payload.get("model"))

@@ -18,6 +18,7 @@
 
 ## 支持协议
 
+- `POST /openai/v1/responses`：兼容无状态 Responses，支持 Codex CLI 的补丁、命令、图片、客户端 MCP 和历史压缩，配置见 [Codex 接入](doc/Codex接入.md)。
 - `POST /openai/v1/chat/completions`：兼容 OpenAI Chat Completions，支持流式和非流式客户端请求。
 - 图片 URL、Base64 和多图输入支持原样传递；音频、文件和结构化输出等字段的上游能力另有限制，详见 [Chat Completions 兼容性与多模态验证](doc/协议兼容性.md)。
 - `GET /openai/v1/models`：返回当前用户可用的模型列表。
@@ -503,6 +504,7 @@ OpenAPI 文档会展示外部 `/openai/v1/*` 和 `/anthropic/v1/*` 的请求体�
 | 环境变量默认值                             | 默认值                                                 | 说明                             |
 |-------------------------------------|-----------------------------------------------------|--------------------------------|
 | `CODEBUDDY_MODELS`                  | `glm-5.2,deepseek-v4-pro`                           | 与 CodeBuddy 动态模型列表合并的附加模型      |
+| `CODEBUDDY_CODEX_AUTO_REVIEW_MODEL` | `deepseek-v4-flash` | codex-auto-review 的默认真实模型，用户可在服务配置中覆盖 |
 | `CODEBUDDY_FORCED_REASONING_MODELS` | `deepseek-v4-pro,deepseek-v4-flash,glm-5.1,glm-5.2` | 强制启用最大推理参数的模型；空表示关闭            |
 | `CODEBUDDY_FORCED_TEMPERATURE`      | `1`                                                 | 强制覆盖 `temperature`；空表示保留客户端值   |
 | `CODEBUDDY_STRIP_MODEL_NAMESPACE`   | `true`                                              | 将 `provider/model` 转换为 `model` |
@@ -513,7 +515,8 @@ OpenAPI 文档会展示外部 `/openai/v1/*` 和 `/anthropic/v1/*` 的请求体�
 ## 架构概览
 
 ```text
-OpenAI 客户端 ── /openai/v1 + API Key ──> OpenAI 请求/响应适配 ─┐
+OpenAI 客户端 ── /openai/v1 + API Key ──> Chat Completions 适配 ─┐
+Codex CLI ───── /openai/v1 + API Key ──> Responses 适配 ────────┤
                                                                 ├─> 共享请求策略、凭证与上游流传输 ─> CodeBuddy
 Anthropic 客户端 ─ /anthropic/v1 + API Key ─> Messages 请求/响应适配 ┘
 
@@ -525,6 +528,7 @@ Anthropic 客户端 ─ /anthropic/v1 + API Key ─> Messages 请求/响应适�
 - `web.py`：FastAPI 组装、路由挂载和 Uvicorn 本地入口。
 - `config.py`：启动配置、用户级设置及其持久化。
 - `src/auth_*.py`、`src/*_store.py`：系统用户、会话和 API Key。
+- `src/responses_request.py`、`src/responses_response.py`：Responses 请求转换、工具包装和流式生命周期。
 - `src/openai_router.py`、`src/openai_compat.py`：OpenAI 协议入口和响应兼容。
 - `src/anthropic_router.py`、`src/anthropic_compat.py`、`src/anthropic_response.py`：Anthropic 认证、请求转换与响应状态机。
 - `src/codebuddy_events.py`、`src/chat_execution.py`：协议中立的上游事件与共享聊天执行流程。

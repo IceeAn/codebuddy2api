@@ -338,3 +338,50 @@ describe('Anthropic Playground chat 请求', () => {
     expect(unauthorizedHandler).toHaveBeenCalledOnce();
   });
 });
+
+describe('Responses Playground 请求', () => {
+  afterEach(() => {
+    setUnauthorizedHandler(null);
+    vi.unstubAllGlobals();
+  });
+
+  it('发送 Responses 请求体及取消信号', async () => {
+    const result = new Response('{}');
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(result);
+    vi.stubGlobal('fetch', fetchMock);
+    const controller = new AbortController();
+    const body = { model: 'kimi', input: '你好', stream: true, store: false as const };
+    await expect(openaiPlaygroundApi.responses(body, controller.signal)).resolves.toBe(result);
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/admin/playground/openai/v1/responses',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'same-origin',
+        signal: controller.signal,
+        body: JSON.stringify(body),
+      }),
+    );
+  });
+
+  it('只处理本系统的会话 401', async () => {
+    const handler = vi.fn<() => void>();
+    setUnauthorizedHandler(handler);
+    const upstream = new Response('', { status: 401 });
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(
+          new Response('', { status: 401, headers: { 'WWW-Authenticate': 'Bearer' } }),
+        )
+        .mockResolvedValueOnce(upstream),
+    );
+    await expect(
+      openaiPlaygroundApi.responses({ model: 'kimi', input: 'x' }),
+    ).rejects.toBeInstanceOf(ApiError);
+    await expect(openaiPlaygroundApi.responses({ model: 'kimi', input: 'x' })).resolves.toBe(
+      upstream,
+    );
+    expect(handler).toHaveBeenCalledOnce();
+  });
+});

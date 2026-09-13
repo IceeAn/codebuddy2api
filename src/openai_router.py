@@ -17,6 +17,8 @@ from .models_manager import models_manager
 from .private_response import PrivateNoStoreRoute
 from .request_processor import RequestProcessor
 from .openai_schema import CONTENT_SCHEMA, EXTRA_REQUEST_PROPERTIES
+from .responses_request import translate_responses_request
+from .responses_response import ResponsesAdapter
 from .stream_service import CodeBuddyStreamService, UpstreamAPIError
 from .usage_stats_context import UsageStatsContext, create_usage_stats_context
 
@@ -147,6 +149,7 @@ async def chat_completions(
         x_request_id: Optional[str] = None,
         stats_context: Optional[UsageStatsContext] = None,
         request_bytes: Optional[int] = None,
+        responses_mode: bool = False,
 ):
     """执行 OpenAI Chat Completions 兼容请求。"""
     try:
@@ -166,6 +169,8 @@ async def chat_completions(
             stats_context.capture_request_shape(request_body)
 
         try:
+            if responses_mode:
+                request_body, bindings = translate_responses_request(request_body)
             RequestProcessor.validate_request(request_body)
         except HTTPException as error:
             if stats_context is not None:
@@ -201,6 +206,10 @@ async def chat_completions(
                 raise HTTPException(status_code=401, detail="没有可用的CodeBuddy凭证") from error
             raise
         try:
+            adapter_options = {"response_adapter": ResponsesAdapter(
+                prepared_request.response_model, bindings,
+                parallel_tool_calls=request_body.get("parallel_tool_calls", True),
+            )} if responses_mode else {}
             return await execute_codebuddy_chat(
                 prepared_request,
                 _user,
@@ -215,6 +224,7 @@ async def chat_completions(
                 credential_selector=CredentialManager.get_valid_credential_selection,
                 header_generator=codebuddy_api_client.generate_codebuddy_headers,
                 service_factory=CodeBuddyStreamService,
+                **adapter_options,
             )
         except HTTPException as error:
             if (
@@ -263,6 +273,32 @@ def create_openai_compatible_router(
 ) -> APIRouter:
     """创建共享协议行为、使用指定认证方式的 OpenAI 兼容路由。"""
     router = APIRouter(route_class=PrivateNoStoreRoute)
+
+    @router.post(
+        "/v1/responses",
+        name=f"{route_name_prefix}_responses",
+        include_in_schema=include_in_schema,
+        openapi_extra={"requestBody": {"required": True, "content": {"application/json": {"schema": {
+            "type": "object", "required": ["model"], "additionalProperties": True,
+            "description": "无状态 Responses；支持文字、图片、推理、客户端工具和历史回放。",
+            "properties": {
+                "model": {"type": "string"},
+                "input": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "object"}}]},
+                "instructions": {"type": "string"}, "stream": {"type": "boolean", "default": False},
+                "store": {"type": "boolean", "enum": [False], "default": False},
+                "tools": {"type": "array", "items": {"type": "object"}},
+                "tool_choice": {"oneOf": [{"type": "string"}, {"type": "object"}]},
+                "reasoning": {"type": "object"}, "text": {"type": "object"},
+                "max_output_tokens": {"type": "integer", "minimum": 1},
+                "parallel_tool_calls": {"type": "boolean"},
+            },
+        }}}}},
+    )
+    async def responses_route(request: Request, _user: AuthenticatedUser = Depends(auth_dependency)):
+        stats_context = create_usage_stats_context(request, _user, stats_source)
+        request_bytes = len(await request.body())
+        return await chat_completions(request, _user, stats_context=stats_context,
+                                      request_bytes=request_bytes, responses_mode=True)
 
     @router.post(
         "/v1/chat/completions",

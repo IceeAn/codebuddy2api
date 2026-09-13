@@ -1,0 +1,35 @@
+{
+  "models": [
+    {
+      "slug": "kimi-k3-1",
+      "display_name": "Kimi K3.1",
+      "description": "CodeBuddy 模型",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "medium",
+          "description": "默认推理"
+        }
+      ],
+      "shell_type": "unified_exec",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 1,
+      "apply_patch_tool_type": "freeform",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "supports_search_tool": true,
+      "use_responses_lite": false,
+      "support_verbosity": false,
+      "default_reasoning_summary": "auto",
+      "truncation_policy": {
+        "mode": "bytes",
+        "limit": 10000
+      },
+      "experimental_supported_tools": [],
+      "base_instructions": "你是编程助手。使用工具完成用户任务，验证修改并准确报告结果。"
+    }
+  ]
+}

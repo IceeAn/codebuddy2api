@@ -5,6 +5,7 @@ import type {
   ApiKeyCreateResponse,
   ApiKeyRecord,
   ChatCompletionRequest,
+  ResponsesRequest,
   CodeBuddyPollAuthResponse,
   CredentialRecord,
   CredentialQuota,
@@ -218,6 +219,19 @@ export const codebuddyOAuthApi = {
 };
 
 export const openaiPlaygroundApi = {
+  responses: (body: ResponsesRequest, signal?: AbortSignal) =>
+    fetch('/api/admin/playground/openai/v1/responses', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    }).then((response) => {
+      if (handleUnauthorizedResponse(response)) {
+        throw new ApiError(401, '认证过期，请重新登录');
+      }
+      return response;
+    }),
   models: (signal?: AbortSignal) => {
     const options: { timeoutMs: number; signal?: AbortSignal } = {
       timeoutMs: MODEL_LIST_TIMEOUT_MS,
