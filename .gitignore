@@ -6,6 +6,7 @@ __pycache__/
 htmlcov/
 /.venv/
 /venv/
+/src/tokenizer_assets/
 
 # 运行时配置、敏感数据与状态
 /.env

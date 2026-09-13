@@ -203,6 +203,7 @@ function mountView() {
   return mount(ApiConsoleView, {
     global: {
       stubs: {
+        TokenizerConsole: true,
         CCard: CardStub,
         CAlert: AlertStub,
         CForm: FormStub,
@@ -767,5 +768,21 @@ describe('ApiConsoleView', () => {
     expect(wrapper.findAllComponents(ButtonStub).length).toBeGreaterThan(0);
     expect(wrapper.findComponent(InputStub).exists()).toBe(true);
     expect(wrapper.findComponent(SelectStub).exists()).toBe(true);
+  });
+  it('切换本地计数停止上游模型查询，再返回聊天', async () => {
+    const wrapper = mountView();
+    expect(queryOptions.value.enabled.value).toBe(true);
+    await wrapper
+      .findAll('button')
+      .find((item) => item.text() === 'Tokenizer')!
+      .trigger('click');
+    expect(queryOptions.value.enabled.value).toBe(false);
+    expect(wrapper.find('tokenizer-console-stub').exists()).toBe(true);
+    await wrapper
+      .findAll('button')
+      .find((item) => item.text() === '聊天')!
+      .trigger('click');
+    expect(queryOptions.value.enabled.value).toBe(true);
+    wrapper.unmount();
   });
 });

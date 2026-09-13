@@ -1,0 +1,167 @@
+[
+  {
+    "tools": [
+      {
+        "function": {
+          "description": "工具",
+          "name": "tool",
+          "parameters": {}
+        },
+        "type": "function"
+      }
+    ],
+    "expected": "# Tools\n\n## functions\nnamespace functions {\n// 工具\ntype tool = (_: {}) => any;\n}\n"
+  },
+  {
+    "tools": [
+      {
+        "function": {
+          "description": "工具",
+          "name": "tool",
+          "parameters": {
+            "properties": {
+              "count": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "name": {
+                "default": "x",
+                "description": "描述\n第二行",
+                "minLength": 1,
+                "type": "string"
+              },
+              "xs": {
+                "items": {
+                  "type": "number"
+                },
+                "maxItems": 3,
+                "type": "array"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "function"
+      }
+    ],
+    "expected": "# Tools\n\n## functions\nnamespace functions {\n// 工具\ntype tool = (_: {\n  // 描述\n  // 第二行\n  // minLength: 1\n  // Default: \"x\"\n  name: string,\n  // minimum: 0\n  count?: number,\n  // maxItems: 3\n  xs?: Array<number>\n}) => any;\n}\n"
+  },
+  {
+    "tools": [
+      {
+        "function": {
+          "description": "工具",
+          "name": "tool",
+          "parameters": {
+            "additionalProperties": false,
+            "type": "object"
+          }
+        },
+        "type": "function"
+      }
+    ],
+    "expected": "# Tools\n\n## functions\nnamespace functions {\n// 工具\ntype tool = (_: {\n  [k: string]: never\n}) => any;\n}\n"
+  },
+  {
+    "tools": [
+      {
+        "function": {
+          "description": "工具",
+          "name": "tool",
+          "parameters": {
+            "properties": {
+              "a": {
+                "enum": [
+                  "a",
+                  "b",
+                  null
+                ]
+              },
+              "b": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "c": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "d": true,
+              "e": false
+            },
+            "type": "object"
+          }
+        },
+        "type": "function"
+      }
+    ],
+    "expected": "# Tools\n\n## functions\nnamespace functions {\n// 工具\ntype tool = (_: {\n  a?: \"a\" | \"b\" | None,\n  b?: string | number,\n  c?: number | null,\n  d?: any,\n  e?: null\n}) => any;\n}\n"
+  },
+  {
+    "tools": [
+      {
+        "function": {
+          "description": "工具",
+          "name": "tool",
+          "parameters": {
+            "$defs": {
+              "X": {
+                "properties": {
+                  "next": {
+                    "$ref": "#"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "properties": {
+              "ref": {
+                "$ref": "#/$defs/X"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "type": "function"
+      }
+    ],
+    "expected": "# Tools\n\n## functions\nnamespace functions {\ninterface X {\n  next?: parameters\n}\n// 工具\ntype tool = (_: {\n  ref?: X\n}) => any;\n}\n"
+  },
+  {
+    "tools": [
+      {
+        "function": {
+          "description": "工具",
+          "name": "tool",
+          "parameters": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "properties": {
+              "a": {
+                "items": {
+                  "description": "项目",
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "type": "function"
+      }
+    ],
+    "expected": "# Tools\n\n## functions\nnamespace functions {\n// 工具\ntype tool = (_: {\n  a?: Array<\n    // 项目\n    string\n  >,\n  [k: string]: string\n}) => any;\n}\n"
+  }
+]

@@ -401,6 +401,21 @@ class AnthropicRequestTranslationTests(unittest.TestCase):
         ):
             self.assertNotIn(field, translated)
 
+    def test_clear_thinking_survives_translation_in_all_modes(self):
+        for mode in ("enabled", "disabled", "adaptive"):
+            for clear in (False, True, None):
+                thinking = {"type": mode, "clear_thinking": clear}
+                if mode == "enabled":
+                    thinking["budget_tokens"] = 1024
+                result = self._translate(max_tokens=2048, thinking=thinking)
+                if clear is None:
+                    self.assertNotIn("clear_thinking", result["thinking"])
+                else:
+                    self.assertIs(result["thinking"]["clear_thinking"], clear)
+        for invalid in (0, 1, "false", [], {}):
+            with self.subTest(value=invalid), self.assertRaises(AnthropicProtocolError):
+                self._translate(thinking={"type":"disabled", "clear_thinking":invalid})
+
 
 if __name__ == "__main__":
     unittest.main()

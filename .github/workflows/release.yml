@@ -182,6 +182,9 @@ jobs:
           audit-venv/bin/python3 -m pip install pip-audit==2.10.1
           audit-venv/bin/python3 -m pip_audit -r requirements.txt --vulnerability-service osv
 
+      - name: Download locked tokenizers
+        run: python3 scripts/download_tokenizers.py
+
       - name: Run backend tests
         run: venv/bin/python3 -m coverage run -m unittest discover -s tests
 
@@ -466,6 +469,9 @@ jobs:
             exit 1
           fi
           echo "source_date_epoch=${source_date_epoch}" >> "${GITHUB_OUTPUT}"
+
+      - name: Download locked tokenizers for release
+        run: python3 scripts/download_tokenizers.py
 
       - name: Build release package
         env:

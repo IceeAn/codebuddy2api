@@ -79,9 +79,9 @@ class OriginTests(unittest.IsolatedAsyncioTestCase):
     async def test_cors_never_grants_management_access(self):
         app = ExternalCORSMiddleware(self.app(), allow_origins=["https://client.example"], allow_methods=["*"])
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://localhost") as client:
-            for path in ("/auth/login", "/api/admin/settings", "/codebuddy/auth/start", "/openai/v1/responses", "/anthropic/v1/messages"):
+            for path in ("/auth/login", "/api/admin/settings", "/codebuddy/auth/start", "/api/admin/tokenizers/encode", "/api/admin/playground/tokenizer/v1/count_tokens", "/openai/v1/responses", "/anthropic/v1/messages", "/tokenizer/v1/count_tokens"):
                 response = await client.options(path, headers={"Origin":"https://client.example", "Access-Control-Request-Method":"POST"})
-                self.assertEqual("access-control-allow-origin" in response.headers, path.startswith(("/openai/", "/anthropic/")))
+                self.assertEqual("access-control-allow-origin" in response.headers, path.startswith(("/openai/", "/anthropic/", "/tokenizer/")))
 
     async def test_body_deadline_returns_408_and_cancels_receive(self):
         app = FastAPI()

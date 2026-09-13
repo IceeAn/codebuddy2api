@@ -72,6 +72,14 @@ _DEFAULT_CONFIG = {
     "CODEBUDDY_MAX_UPSTREAM_ERROR_BYTES": 64 * 1024,
     "CODEBUDDY_CSP_FRAME_ANCESTORS": "none",
     "CODEBUDDY_MAX_REQUEST_BODY_BYTES": 16 * 1024 * 1024,
+    "CODEBUDDY_TOKENIZER_UPLOAD_MAX_BYTES": 64 * 1024 * 1024,
+    "CODEBUDDY_TOKENIZER_WORKERS": 2,
+    "CODEBUDDY_TOKENIZER_TIMEOUT_SECONDS": 30,
+    "CODEBUDDY_TOKENIZER_QUEUE_TIMEOUT_SECONDS": 30,
+    "CODEBUDDY_TOKENIZER_MEMORY_MAX_BYTES": 768 * 1024 * 1024,
+    "CODEBUDDY_TOKENIZER_RENDER_MAX_BYTES": 32 * 1024 * 1024,
+    "CODEBUDDY_TOKENIZER_CACHE_SIZE": 2,
+    "CODEBUDDY_TOKENIZER_MAX_MAPPINGS": 512,
     "CODEBUDDY_LOGIN_RATE_WINDOW_SECONDS": 60,
     "CODEBUDDY_LOGIN_GLOBAL_MAX_ATTEMPTS": 60,
     "CODEBUDDY_LOGIN_IP_MAX_ATTEMPTS": 10,
@@ -481,6 +489,14 @@ def get_max_request_body_bytes() -> int:
         _get_config_value("CODEBUDDY_MAX_REQUEST_BODY_BYTES"),
         "CODEBUDDY_MAX_REQUEST_BODY_BYTES",
     )
+
+
+def get_tokenizer_limits() -> Dict[str, int]:
+    """Tokenizer 的启动级安全边界，不能被用户数据库设置覆盖。"""
+    names = ("upload_max_bytes", "workers", "timeout_seconds", "queue_timeout_seconds",
+             "memory_max_bytes", "render_max_bytes", "cache_size", "max_mappings")
+    return {name: _to_positive_int(_get_config_value("CODEBUDDY_TOKENIZER_" + name.upper()),
+                                   "CODEBUDDY_TOKENIZER_" + name.upper()) for name in names}
 
 
 def get_login_rate_window_seconds() -> int:

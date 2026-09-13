@@ -287,6 +287,41 @@ class ServerStartupTests(unittest.TestCase):
 
 
 class ServerLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cors_exposes_tokenizer_metadata_only_for_external_routes(self):
+        import httpx
+        from starlette.responses import JSONResponse
+        from src.http_security import ExternalCORSMiddleware
+
+        with mock.patch.object(config, "get_allowed_origins", return_value=["https://client.example"]):
+            namespace = runpy.run_module("web", run_name="cors_test")
+        middleware = next(
+            item for item in namespace["app"].user_middleware if item.cls is ExternalCORSMiddleware
+        )
+        metadata = {
+            "X-Tokenizer-Method": "text",
+            "X-Tokenizer-Source": "user",
+            "X-Tokenizer-Revision": "test-revision",
+        }
+
+        async def endpoint(scope, receive, send):
+            await JSONResponse({"input_tokens": 1}, headers=metadata)(scope, receive, send)
+
+        app = middleware.cls(endpoint, **middleware.kwargs)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://localhost") as client:
+            for path in ("/tokenizer/v1/count_tokens", "/anthropic/v1/messages/count_tokens"):
+                response = await client.post(path, headers={"Origin": "https://client.example"})
+                self.assertEqual(response.headers["access-control-allow-origin"], "https://client.example")
+                exposed = {name.strip().lower() for name in response.headers.get("access-control-expose-headers", "").split(",")}
+                self.assertTrue({name.lower() for name in metadata} <= exposed)
+                for name, value in metadata.items():
+                    self.assertEqual(response.headers[name], value)
+                denied = await client.post(path, headers={"Origin": "https://denied.example"})
+                self.assertNotIn("access-control-allow-origin", denied.headers)
+            for path in ("/api/admin/tokenizers/encode", "/api/admin/playground/tokenizer/v1/count_tokens"):
+                response = await client.post(path, headers={"Origin": "https://client.example"})
+                self.assertNotIn("access-control-allow-origin", response.headers)
+                self.assertNotIn("access-control-expose-headers", response.headers)
+
     async def test_lifespan_starts_and_stops_resources(self):
         with (
             mock.patch.object(web, "initialize_system_users") as initialize_users,

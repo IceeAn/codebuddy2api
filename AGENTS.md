@@ -18,8 +18,9 @@ source venv/bin/activate && python3 web.py
 # 前端开发服务器（代理后端 8001）
 cd frontend && pnpm run dev
 
-# 安装后端开发依赖
+# 安装后端开发依赖及首次下载离线分词资源
 venv/bin/python3 -m pip install -r requirements-dev.txt
+python3 scripts/download_tokenizers.py
 
 # 后端验证（unittest，行/分支覆盖率门槛 100%；使用环境变量阻止大量日志污染输出）
 CODEBUDDY_LOG_LEVEL=CRITICAL venv/bin/python3 -m coverage run -m unittest discover -s tests
@@ -103,7 +104,7 @@ docker compose run --rm codebuddy2api set-user <用户名>
 - 强制推理模型会覆盖为最大推理并启用 thinking，但 `clear_thinking` 等其他客户端 `thinking` 子项必须继续透传，不能用新对象整体替换；其他模型默认开启 thinking，但客户端显式禁用时必须尊重。`CODEBUDDY_FORCED_TEMPERATURE` 非空时覆盖客户端值；模型命名空间是否剥离由 `CODEBUDDY_STRIP_MODEL_NAMESPACE` 控制。修改请求转换时注意这些优先级。
 - 全局上游 HTTP 客户端保持 `trust_env=False`，避免环境中的 SOCKS 代理在缺少 `socksio` 时破坏服务启动。
 - Anthropic 兼容面是 `/anthropic/v1/*` 下的 Messages wire protocol，不是 Anthropic 原生模型或 provider；不得增加 root `/v1/*`、伪造 Anthropic 计费/限流/cache 字段或把运行时改成多 provider 网关。模型、token usage 和账单语义始终来自 CodeBuddy。
-- Anthropic 请求转换以兼容为先：`anthropic-beta`、cache 控制和未知附加字段接受后忽略，不转发或记录；已知 `output_config.format/effort`、`top_k` 和工具 `strict` 仅映射参数，不保证上游执行约束。非空 `stop_sequences`、PDF/文件引用、原生 citations、服务端工具及原生 thinking signature 等无法转换的语义仍需失败。`messages/count_tokens` 固定 404 以触发客户端本地回退。
+- Anthropic 请求转换以兼容为先：`anthropic-beta`、cache 控制和未知附加字段接受后忽略，不转发或记录；已知 `output_config.format/effort`、`top_k` 和工具 `strict` 仅映射参数，不保证上游执行约束。非空 `stop_sequences`、PDF/文件引用、原生 citations、服务端工具及原生 thinking signature 等无法转换的语义仍需失败。`messages/count_tokens` 复用转换和请求策略后在本地计数，不选择凭证、不调用上游、不写用量统计。缺失模板仅允许用户资源使用显式 `budget_v1`；缺失模型映射、无效模板和多模态计数不能猜测或悄悄回退。
 - Anthropic 图片及文本／图文文档仅转换 user 和 tool_result 内容，媒体留在原消息角色中；工具媒体依赖 CodeBuddy 扩展，不代表标准 OpenAI tool message 支持图片。工具错误标记不能假设首块为文本，空 tool_result 仍须转换为空 tool message。refusal 文本映射不应扩大 content_filter 缺失 usage 时的零值特例。
 - CodeBuddy 原始 SSE 必须只解析一次为 `codebuddy_events` 中的协议中立事件，再由 OpenAI/Anthropic 下游适配器消费。OpenAI 继续以 `[DONE]` 结束；Anthropic 必须按 Messages SSE 状态机以 `message_stop` 结束且不发送 `[DONE]`。Anthropic 流式工具调用只缓冲连续工具组，在 text/thinking 边界或流结束时完整校验并按上游 index 输出，不能按元数据到达顺序改变工具顺序。
 - Anthropic 响应 usage 以 CodeBuddy 观测为准；正常完成缺失 usage 仍是协议错误，但 `content_filter` 已知可能不带 usage，为避免 Claude Code 无限重试可返回零 usage，且必须在文档中声明该值不是实际上游 token。
@@ -168,3 +169,7 @@ docker compose run --rm codebuddy2api set-user <用户名>
 - 发布镜像必须同时支持 `linux/amd64`、`linux/arm64` 和 `linux/arm/v7`，构建时生成 SBOM/provenance，并使用 Cosign keyless signing 对最终镜像 digest 签名。发布顺序必须保持“完整验证 → 多架构按 digest 推送 → 每个架构漏洞扫描 → 对 digest 加版本/`latest` tag → 签名与 GitHub Release”；任一架构存在 `CRITICAL` 漏洞都应阻断发布。Trivy 默认包含尚无修复版本的漏洞，手动发布仅可通过 `ignore_unfixed=true` 忽略这类漏洞。只有最高稳定版本更新 `latest`。
 - 发布归档必须可复现：使用 tag commit 时间，规范成员顺序、时间、权限和 owner 元数据；只收录生产文件，拒绝输入路径中的符号链接及其他非普通文件。输出目录不能位于任何输入目录内，所有产物先在临时目录完整生成再原子替换，checksum 最后发布。
 - 本地 Release 更新器必须从自身所在的 `scripts` 目录解析项目根目录，不能依赖调用时工作目录；只能在非 Git 的 Release 安装目录中由项目外系统 Python 执行。Release 服务与更新/回滚共用项目根目录的 `.codebuddy2api-runtime.lock` 独占锁，Git 开发环境和 Docker 不启用该锁；锁文件不得进入完整备份，也不得在部署或恢复时删除、替换。服务启动遇到不完整或无效 Release 标记时必须失败；更新/回滚的必需锁路径在此状态下仅可复用既存锁文件，仍须成功获取同一 OS 排他锁，禁止创建新锁绕过安装识别。`--yes` 只能跳过交互确认，不能绕过锁。Release 清单必须与归档成员完全一致，本地包仅接受以 `codebuddy2api` 开头的 `.zip` 或 `.tar.gz`；清单和归档成员路径除 POSIX 越界形式外，还必须拒绝任意分段中的 Windows 盘符语义。完整备份固定为项目根目录下的 `.update-backups/latest`，正常完成更新或回滚后只能保留这一份完整备份，且备份时必须排除 `.update-backups` 自身。回滚提交后的残留备份清理失败不能反转事务结果或报告回滚失败；必须报告回滚已经成功、列出残留路径并提醒用户不要重试回滚。更新默认重建 `venv`；`--reuse-venv` 只接受 `pyvenv.cfg` 中唯一且明确设置 `include-system-site-packages = false` 的环境，必须确保 pip 至少为 23.0 并验证安装报告版本为稳定的 `1`，再用全新解析报告确定新版完整依赖闭包，只保留闭包和 `pip`、`setuptools`、`wheel`，清理其余包并通过 `pip check`，任何失败都必须触发完整快照恢复。
+
+- Tokenizer 大词表只通过固定 commit、SHA-256 和大小的资源清单下载，不能提交词表或执行远程 Python；CI、Docker 和 Release 必须携带完整离线资源。用户显式选择内置资源时创建独立数据快照，禁止升级时自动重写用户映射。上传请求体使用独立的启动级环境变量上限，不能受用户数据库设置覆盖。
+
+- Tokenizer 的消息模板参数必须逐模型对照锁定的官方模板，并使用真实模板验证思考模式及历史推理保留；词表可加载或分词计数正确，不代表消息模板参数正确。计数须使用协议转换和请求策略生效后的模式，不能为模拟客户端原始模式而绕过聊天策略。

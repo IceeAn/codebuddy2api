@@ -62,7 +62,7 @@ class ExternalCORSMiddleware(CORSMiddleware):
 
     async def __call__(self, scope, receive, send):
         path = scope.get("path", "")
-        if path.startswith(("/openai/", "/anthropic/")):
+        if path.startswith(("/openai/", "/anthropic/", "/tokenizer/")):
             await super().__call__(scope, receive, send)
         else:
             await self.app(scope, receive, send)

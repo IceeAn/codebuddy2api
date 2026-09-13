@@ -5,3 +5,8 @@ pydantic==2.13.4
 python-dotenv==1.2.3
 # AnyIO 取消作用域用于保证 Python 3.10/3.12 的总期限和取消语义一致。
 anyio==4.14.2
+tokenizers==0.23.2
+tiktoken==0.14.0
+Jinja2==3.1.6
+python-multipart==0.0.32
+psutil==7.2.2

@@ -25,7 +25,9 @@ class RequestBodyLimitMiddlewareTests(unittest.IsolatedAsyncioTestCase):
 
     async def _request(self, app, path, **kwargs):
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://localhost"
+        ) as client:
             return await client.post(path, **kwargs)
 
     async def test_declared_oversize_is_rejected_before_body_is_read(self):
@@ -107,7 +109,9 @@ class RequestBodyLimitMiddlewareTests(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(declared.status_code, 413)
                 self.assertEqual(declared.json()["error"]["type"], "request_too_large")
-                self.assertEqual(declared.json()["request_id"], declared.headers["request-id"])
+                self.assertEqual(
+                    declared.json()["request_id"], declared.headers["request-id"]
+                )
 
         async def chunks():
             for chunk in (b"123", b"456", b"789"):
@@ -171,6 +175,38 @@ class RequestBodyLimitMiddlewareTests(unittest.IsolatedAsyncioTestCase):
         scope = {"type": "lifespan"}
         await middleware(scope, receive, send)
         self.assertEqual(scopes, [scope])
+
+    async def test_upload_limit_is_independent_and_configurable_for_declared_and_chunked_bodies(
+        self,
+    ):
+        app = self._app(global_limit=4)
+        app.user_middleware[0].kwargs["tokenizer_upload_max_bytes"] = 10
+        for path in (
+            "/api/admin/tokenizers/resources",
+            "/api/admin/tokenizers/resources/",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    (await self._request(app, path, content=b"1234567890")).status_code,
+                    200,
+                )
+                self.assertEqual(
+                    (
+                        await self._request(app, path, content=b"12345678901")
+                    ).status_code,
+                    413,
+                )
+
+                async def chunks():
+                    yield b"123456"
+                    yield b"78901"
+
+                self.assertEqual(
+                    (await self._request(app, path, content=chunks())).status_code, 413
+                )
+        self.assertEqual(
+            (await self._request(app, "/echo", content=b"12345")).status_code, 413
+        )
 
 
 if __name__ == "__main__":

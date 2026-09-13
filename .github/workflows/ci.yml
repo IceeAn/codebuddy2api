@@ -50,6 +50,9 @@ jobs:
           audit-venv/bin/python3 -m pip install pip-audit==2.10.1
           audit-venv/bin/python3 -m pip_audit -r requirements.txt --vulnerability-service osv
 
+      - name: Download locked tokenizers
+        run: python3 scripts/download_tokenizers.py
+
       - name: Run backend tests
         run: venv/bin/python3 -m coverage run -m unittest discover -s tests
 

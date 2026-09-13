@@ -48,7 +48,7 @@ class SQLiteDatabaseTests(unittest.TestCase):
                 if path.name != DATABASE_FILENAME
             }
 
-        self.assertEqual(version, 5)
+        self.assertEqual(version, 6)
         self.assertTrue({
             "api_keys",
             "user_settings",
@@ -173,7 +173,7 @@ class SQLiteDatabaseTests(unittest.TestCase):
                 )
             }
 
-        self.assertEqual(version, 5)
+        self.assertEqual(version, 6)
         self.assertEqual(value, "true")
         self.assertTrue({
             "usage_events",
@@ -208,7 +208,7 @@ class SQLiteDatabaseTests(unittest.TestCase):
                 "AND name = 'credential_daily_checkins'"
             ).fetchone()
 
-        self.assertEqual(version, 5)
+        self.assertEqual(version, 6)
         self.assertEqual(value, "true")
         self.assertIsNotNone(checkin_table)
 
@@ -309,7 +309,7 @@ class SQLiteDatabaseTests(unittest.TestCase):
                 "SELECT SUM(request_count), SUM(total_tokens_sum) FROM usage_hourly"
             ).fetchone())
 
-        self.assertEqual(version, 5)
+        self.assertEqual(version, 6)
         self.assertEqual(event_buckets, [
             ("model-a", "success", "known", "model-a"),
             ("model-a", "failure", "known", "model-a"),

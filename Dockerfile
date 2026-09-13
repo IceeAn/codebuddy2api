@@ -14,6 +14,23 @@ RUN corepack enable && pnpm install --frozen-lockfile
 COPY frontend/ ./
 RUN pnpm run build
 
+# 分词数据在构建阶段锁定下载，运行时完全离线。
+FROM --platform=$BUILDPLATFORM python:${PYTHON_VERSION}-slim AS tokenizer-assets
+WORKDIR /download
+COPY src/tokenizer_catalog.json ./src/tokenizer_catalog.json
+COPY scripts/download_tokenizers.py ./scripts/download_tokenizers.py
+RUN python3 scripts/download_tokenizers.py
+
+# ARMv7 缺少部分原生 wheel；仅构建阶段安装 Rust/C 编译器。
+FROM python:${PYTHON_VERSION}-slim AS python-wheels
+ARG RUST_VERSION=1.94.0
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential curl ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup.sh && \
+    sh /tmp/rustup.sh -y --profile minimal --default-toolchain "${RUST_VERSION}" && rm /tmp/rustup.sh
+ENV PATH="/root/.cargo/bin:${PATH}"
+COPY requirements.txt /requirements.txt
+RUN python3 -m pip wheel --no-cache-dir --wheel-dir /wheels -r /requirements.txt
+
 # 运行时使用与 CI 推荐版本一致的 Python。
 FROM python:${PYTHON_VERSION}-slim AS runtime
 
@@ -33,11 +50,13 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
-RUN python3 -m pip install --no-cache-dir -r requirements.txt
+COPY --from=python-wheels /wheels /wheels
+RUN python3 -m pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt && rm -rf /wheels
 
 COPY LICENSE LICENSING.md ./
 COPY config.py release_runtime_lock.py web.py ./
 COPY src ./src
+COPY --from=tokenizer-assets /download/src/tokenizer_assets ./src/tokenizer_assets
 COPY scripts/hash_password.py ./scripts/hash_password.py
 COPY scripts/manage_users.py ./scripts/manage_users.py
 COPY frontend/public ./frontend/public

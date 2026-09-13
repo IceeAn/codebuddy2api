@@ -41,6 +41,7 @@ export function isUnauthorizedError(err: unknown): boolean {
 interface ApiRequestOptions extends RequestInit {
   json?: unknown;
   timeoutMs?: number;
+  onResponse?: (response: Response) => void;
 }
 
 function throwApiError(status: number, body: unknown, isUnauthorized: boolean): never {
@@ -91,7 +92,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     headers.set('Content-Type', 'application/json');
   }
 
-  const { signal: callerSignal, timeoutMs = REQUEST_TIMEOUT_MS, ...rest } = options;
+  const { signal: callerSignal, timeoutMs = REQUEST_TIMEOUT_MS, onResponse, ...rest } = options;
   const signal = buildSignal(callerSignal, timeoutMs);
 
   const response = await fetch(path, {
@@ -109,5 +110,6 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     ? await response.json()
     : await response.text();
 
+  onResponse?.(response);
   return response.ok ? (body as T) : throwApiError(response.status, body, isUnauthorized);
 }

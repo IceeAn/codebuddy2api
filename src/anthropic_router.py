@@ -38,6 +38,8 @@ from .request_processor import PreparedCodeBuddyRequest, RequestProcessor
 from .stream_service import UpstreamAPIError
 from .usage_stats_context import UsageStatsContext, create_usage_stats_context
 from .users_store import users_store
+from .tokenizer_engine import TokenizerError
+from .tokenizer_service import count_tokens
 
 logger = logging.getLogger(__name__)
 ANTHROPIC_MODEL_DISCOVERY_TIMEOUT_SECONDS = 2.5
@@ -104,7 +106,7 @@ ANTHROPIC_MESSAGES_OPENAPI_REQUEST_BODY = {
 }
 
 ANTHROPIC_COUNT_TOKENS_NOT_FOUND_OPENAPI_RESPONSE = {
-    "description": "Token counting is not supported",
+    "description": "模型没有已配置的 Tokenizer",
     "content": {
         "application/json": {
             "schema": {
@@ -403,22 +405,36 @@ def create_anthropic_router(
         "/v1/messages/count_tokens",
         name=f"{route_name_prefix}_count_tokens",
         include_in_schema=include_in_schema,
-        status_code=404,
         response_model=None,
-        responses={404: ANTHROPIC_COUNT_TOKENS_NOT_FOUND_OPENAPI_RESPONSE},
+        openapi_extra={"requestBody": {
+            "required": True,
+            "content": {"application/json": {"schema": {
+                **ANTHROPIC_MESSAGES_OPENAPI_REQUEST_BODY["content"]["application/json"]["schema"],
+                "required": ["model", "messages"],
+            }}},
+        }},
+        responses={200: {"description": "本地输入 token 计数；算法和来源见 X-Tokenizer-* 响应头", "content": {"application/json": {"schema": {
+            "type": "object", "required": ["input_tokens"], "properties": {"input_tokens": {"type": "integer", "minimum": 0}},
+        }}}}, 404: ANTHROPIC_COUNT_TOKENS_NOT_FOUND_OPENAPI_RESPONSE},
     )
     async def count_tokens_route(
             request: Request,
             _version: None = Depends(require_anthropic_version),
-            _user: AuthenticatedUser = Depends(auth_dependency),
+            user: AuthenticatedUser = Depends(auth_dependency),
     ):
-        del _version, _user
-        raise _error(
-            request,
-            404,
-            "not_found_error",
-            "Token counting is not supported by this CodeBuddy gateway",
-        )
+        del _version
+        try:
+            body = await request.json()
+        except ValueError as error:
+            raise _error(request, 400, "invalid_request_error", "请求 JSON 无效") from error
+        try:
+            data, headers = await count_tokens(body, user, messages=True)
+            return JSONResponse(data, headers={**headers, "request-id": get_anthropic_request_id(request)})
+        except AnthropicProtocolError as error:
+            raise _error(request, 400, "invalid_request_error", str(error)) from error
+        except TokenizerError as error:
+            kind = {404: "not_found_error", 413: "request_too_large", 429: "rate_limit_error"}.get(error.status_code, "api_error" if error.status_code >= 500 else "invalid_request_error")
+            raise _error(request, error.status_code, kind, str(error)) from error
 
     return router
 

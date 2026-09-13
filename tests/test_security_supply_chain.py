@@ -41,8 +41,13 @@ class SupplyChainTests(unittest.TestCase):
             "anyio",
             "fastapi",
             "httpx",
+            "Jinja2",
+            "psutil",
             "pydantic",
             "python-dotenv",
+            "python-multipart",
+            "tiktoken",
+            "tokenizers",
             "uvicorn",
         })
 

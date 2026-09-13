@@ -184,7 +184,7 @@ class ApiDocumentationTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         count_responses = schema["paths"]["/anthropic/v1/messages/count_tokens"][
             "post"
         ]["responses"]
-        self.assertNotIn("200", count_responses)
+        self.assertIn("200", count_responses)
         self.assertIn("404", count_responses)
         count_error_schema = count_responses["404"]["content"]["application/json"][
             "schema"
