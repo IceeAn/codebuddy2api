@@ -223,6 +223,11 @@ it('后台查询变化保留映射草稿，失败显示重试提示', async () =
 
 it('纯文本和 Anthropic JSON 请求计数、错误及离线处理', async () => {
   vi.spyOn(tokenizerApi, 'resources').mockResolvedValue({ ...data, mappings: { custom: 'r1' } });
+  const encode = vi.spyOn(tokenizerApi, 'encode').mockResolvedValue({
+    text: 'hello',
+    input_tokens: 1,
+    tokens: [{ id: 42, start: 0, end: 5 }],
+  });
   const count = vi
     .spyOn(tokenizerApi, 'count')
     .mockResolvedValue({ input_tokens: 3, method: 'text', source: 'user', revision: 'r1' });
@@ -234,12 +239,11 @@ it('纯文本和 Anthropic JSON 请求计数、错误及离线处理', async () 
   wrapper.findAllComponents(CInput)[1].vm.$emit('update:modelValue', 'hello');
   await button(wrapper, '计数').trigger('click');
   await flushPromises();
-  expect(count.mock.calls[0].slice(0, 3)).toEqual([
-    'tokenizer',
-    { model: 'custom', text: 'hello' },
-    90000,
-  ]);
-  expect(wrapper.text()).toContain('"input_tokens": 3');
+  expect(encode.mock.calls[0].slice(0, 2)).toEqual([{ model: 'custom', text: 'hello' }, 90000]);
+  expect(wrapper.get('[data-testid="token-text"]').text()).toBe('hello');
+  expect(wrapper.text()).toContain('1 tokens');
+  expect(wrapper.find('pre').exists()).toBe(false);
+  expect(wrapper.text()).not.toContain('/tokenizer/v1/count_tokens');
   wrapper.getComponent(CRadioGroup).vm.$emit('update:modelValue', 'anthropic');
   await flushPromises();
   for (const json of ['{', 'null', '[]', '42']) {
@@ -270,13 +274,8 @@ it('纯文本和 Anthropic JSON 请求计数、错误及离线处理', async () 
 
 it('计数期间防重复发送，卸载取消请求', async () => {
   vi.spyOn(tokenizerApi, 'resources').mockResolvedValue(data);
-  let resolve!: (value: {
-    input_tokens: number;
-    method: null;
-    source: null;
-    revision: null;
-  }) => void;
-  const count = vi.spyOn(tokenizerApi, 'count').mockImplementation(
+  let resolve!: (value: { input_tokens: number; text: string; tokens: [] }) => void;
+  const count = vi.spyOn(tokenizerApi, 'encode').mockImplementation(
     () =>
       new Promise((done) => {
         resolve = done;
@@ -289,11 +288,37 @@ it('计数期间防重复发送，卸载取消请求', async () => {
   button(wrapper, '计数').vm.$emit('click');
   await flushPromises();
   expect(count).toHaveBeenCalledOnce();
-  const signal = count.mock.calls[0][3]!;
+  const signal = count.mock.calls[0][2]!;
   wrapper.unmount();
   expect(signal.aborted).toBe(true);
-  resolve({ input_tokens: 1, method: null, source: null, revision: null });
+  resolve({ input_tokens: 0, text: '', tokens: [] });
   await flushPromises();
+});
+
+it('修改文本清除旧可视化，规范化结果明确提示，纯文本错误单独显示', async () => {
+  vi.spyOn(tokenizerApi, 'resources').mockResolvedValue(data);
+  const encode = vi.spyOn(tokenizerApi, 'encode').mockResolvedValue({
+    text: 'é',
+    input_tokens: 1,
+    tokens: [{ id: 1, start: 0, end: 2 }],
+  });
+  const wrapper = render(TokenizerConsole);
+  await flushPromises();
+  wrapper.findAllComponents(CInput)[0].vm.$emit('update:modelValue', 'custom');
+  wrapper.findAllComponents(CInput)[1].vm.$emit('update:modelValue', 'e\u0301');
+  await flushPromises();
+  await button(wrapper, '计数').trigger('click');
+  await flushPromises();
+  expect(wrapper.text()).toContain('分词器规范化后的文本');
+  wrapper.findAllComponents(CInput)[1].vm.$emit('update:modelValue', 'new');
+  await flushPromises();
+  expect(wrapper.find('[data-testid="token-text"]').exists()).toBe(false);
+  encode.mockRejectedValueOnce(new Error('分词失败'));
+  await button(wrapper, '计数').trigger('click');
+  await flushPromises();
+  expect(wrapper.text()).toContain('分词失败');
+  expect(wrapper.find('pre').exists()).toBe(false);
+  wrapper.unmount();
 });
 
 it('计数配置失败时显示加载错误', async () => {

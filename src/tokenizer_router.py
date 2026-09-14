@@ -53,6 +53,17 @@ admin_tokenizer_router = APIRouter(
 )
 
 
+@admin_tokenizer_router.post("/encode", include_in_schema=False)
+async def encode_text(
+    body: TextCountRequest, user: AuthenticatedUser = Depends(require_session_user)
+):
+    try:
+        data, headers = await count_tokens(body.model_dump(), user, visualize=True)
+        return JSONResponse(data, headers=headers)
+    except TokenizerError as error:
+        raise HTTPException(error.status_code, str(error)) from error
+
+
 @admin_tokenizer_router.get("")
 def resources(user: AuthenticatedUser = Depends(require_session_user)):
     from config import get_tokenizer_limits

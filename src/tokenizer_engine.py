@@ -7,7 +7,7 @@ import json
 import tiktoken
 from jinja2 import TemplateError, meta
 from jinja2.sandbox import ImmutableSandboxedEnvironment
-from tokenizers import AddedToken, Tokenizer
+from tokenizers import AddedToken, Tokenizer, decoders
 
 ENCODERS = (
     "auto",
@@ -249,6 +249,53 @@ class TokenizerEngine:
                 disallowed_special=(),
             )
         )
+
+    def encode_text(self, text):
+        """返回 UTF-8 字节边界；不能单独解码可能只含半个字符的 token。"""
+        if not isinstance(text, str):
+            raise TokenizerError("text 必须是字符串")
+        if self.hf is None:
+            ids = self.kimi.encode(text, allowed_special="all", disallowed_special=())
+            chunks = [self.kimi.decode_single_token_bytes(index) for index in ids]
+        else:
+            encoded = self.hf.encode(text, add_special_tokens=False)
+            ids = encoded.ids
+            if not isinstance(self.hf.decoder, decoders.ByteLevel):
+                # 非字节词表使用原文偏移，未编码的空白不归给任何 token。
+                offsets = [0]
+                for character in text:
+                    offsets.append(offsets[-1] + len(character.encode("utf-8")))
+                tokens, previous = [], 0
+                for index, (start, end) in zip(ids, encoded.offsets):
+                    if start < previous:
+                        raise TokenizerError("所选分词器无法提供精确的 token 字节边界")
+                    tokens.append({"id": index, "start": offsets[start], "end": offsets[end]})
+                    previous = end
+                return {"text": text, "input_tokens": len(ids), "tokens": tokens}
+            # ByteLevel 使用 GPT-2 的可逆字节字母表，新增 token 不经过此映射。
+            values = list(range(33, 127)) + list(range(161, 173)) + list(range(174, 256))
+            alphabet = {chr(value): value for value in values}
+            for value in range(256):
+                if value not in values:
+                    alphabet[chr(256 + len(alphabet) - len(values))] = value
+            added = self.hf.get_added_tokens_decoder()
+            try:
+                chunks = [
+                    token.encode("utf-8") if index in added
+                    else bytes(alphabet[character] for character in token)
+                    for index, token in zip(ids, encoded.tokens)
+                ]
+            except KeyError as error:
+                raise TokenizerError("分词资源无法还原 token 字节") from error
+        tokens, offset = [], 0
+        for index, chunk in zip(ids, chunks):
+            tokens.append({"id": index, "start": offset, "end": offset + len(chunk)})
+            offset += len(chunk)
+        try:
+            decoded = b"".join(chunks).decode("utf-8")
+        except UnicodeError as error:
+            raise TokenizerError("分词资源无法还原有效的 UTF-8 字节") from error
+        return {"text": decoded, "input_tokens": len(ids), "tokens": tokens}
 
     def count_messages(self, payload):
         payload = text_messages(payload)

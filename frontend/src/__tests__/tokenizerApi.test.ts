@@ -56,3 +56,29 @@ it('资源 CRUD、快照及 Anthropic 计数保持正确请求格式', async () 
   expect(fetchMock.mock.calls[1][1]?.body).toBe(form);
   expect(new Headers(fetchMock.mock.calls[1][1]?.headers).has('content-type')).toBe(false);
 });
+
+it('可视化使用管理端分词接口，并保留取消信号和总超时', async () => {
+  const result = {
+    text: '你',
+    input_tokens: 2,
+    tokens: [
+      { id: 1, start: 0, end: 2 },
+      { id: 2, start: 2, end: 3 },
+    ],
+  };
+  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+    new Response(JSON.stringify(result), {
+      headers: { 'content-type': 'application/json' },
+    }),
+  );
+  vi.stubGlobal('fetch', fetchMock);
+  const controller = new AbortController();
+  expect(
+    await tokenizerApi.encode({ model: 'local', text: '你' }, 90000, controller.signal),
+  ).toEqual(result);
+  expect(fetchMock.mock.calls[0][0]).toBe('/api/admin/tokenizers/encode');
+  expect(JSON.parse(fetchMock.mock.calls[0][1]!.body as string)).toEqual({
+    model: 'local',
+    text: '你',
+  });
+});

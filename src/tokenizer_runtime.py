@@ -28,6 +28,8 @@ def perform_task(cache, operation, snapshot, value, limits=None):
         cache.popitem(last=False)
     if operation == "text":
         return engine.count_text(value), "text"
+    if operation == "encode":
+        return engine.encode_text(value), "text"
     return engine.count_messages(value)
 
 

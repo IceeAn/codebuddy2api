@@ -408,7 +408,7 @@ export CLAUDE_CODE_ATTRIBUTION_HEADER=0
 export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1
 ```
 
-`POST /anthropic/v1/messages/count_tokens` 支持本地输入计数，无需 `max_tokens` 或 CodeBuddy 凭证；纯文本使用 `/tokenizer/v1/count_tokens`。设置页支持上传分词文件及用户模型映射，API 测试页提供对应测试。开发环境首次运行前执行 `python3 scripts/download_tokenizers.py`；Docker 与 Release 包自带离线资源。支持范围、计数精度和可配置限制见 [分词与计数](doc/分词与计数.md)。
+`POST /anthropic/v1/messages/count_tokens` 支持本地输入计数，无需 `max_tokens` 或 CodeBuddy 凭证；纯文本使用 `/tokenizer/v1/count_tokens`。设置页支持上传分词文件及用户模型映射，管理台 Tokenizer 提供纯文本分词可视化和 Anthropic 计数测试；跨 token 的多字节文字保持完整，背景按字节占比分色。开发环境首次运行前执行 `python3 scripts/download_tokenizers.py`；Docker 与 Release 包自带离线资源。支持范围、计数精度和可配置限制见 [分词与计数](doc/分词与计数.md)。
 
 ## 端点与鉴权边界
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
-import { tokenizerApi, tokenizerTimeout } from '../api/tokenizer';
+import { tokenizerApi, tokenizerTimeout, type TokenEncoding } from '../api/tokenizer';
 import { adminQueryKeys } from '../utils/adminQueryKeys';
 import { useSessionStore } from '../stores/session';
 import CCard from './ui/CCard.vue';
@@ -12,6 +12,7 @@ import CAlert from './ui/CAlert.vue';
 import CRadioGroup from './ui/CRadioGroup.vue';
 import CRadioButton from './ui/CRadioButton.vue';
 import RefreshButton from './RefreshButton.vue';
+import TokenizerVisualization from './TokenizerVisualization.vue';
 
 const query = useQuery({
   queryKey: adminQueryKeys(useSessionStore().username).tokenizers,
@@ -25,7 +26,12 @@ const text = ref('你好，世界！');
 const json = ref(
   JSON.stringify({ messages: [{ role: 'user', content: '你好，世界！' }] }, null, 2),
 );
-const output = ref('点击计数查看响应');
+const output = ref('');
+const encoding = ref<TokenEncoding | null>(null);
+watch([model, text, protocol], () => {
+  encoding.value = null;
+  output.value = '';
+});
 const busy = ref(false);
 let controller: AbortController | null = null;
 const models = computed(() => {
@@ -44,6 +50,7 @@ const models = computed(() => {
 async function count() {
   if (busy.value) return;
   output.value = '';
+  encoding.value = null;
   if (!navigator.onLine) {
     output.value = '当前离线，无法连接本地服务';
     return;
@@ -51,23 +58,26 @@ async function count() {
   busy.value = true;
   controller = new AbortController();
   try {
-    let body: unknown;
     if (protocol.value === 'tokenizer') {
       if (!model.value.trim()) throw new Error('请选择或输入模型 ID');
-      body = { model: model.value.trim(), text: text.value };
+      encoding.value = await tokenizerApi.encode(
+        { model: model.value.trim(), text: text.value },
+        tokenizerTimeout(query.data.value!),
+        controller.signal,
+      );
     } else {
       const request: unknown = JSON.parse(json.value);
       if (!request || typeof request !== 'object' || Array.isArray(request))
         throw new Error('请求 JSON 必须是对象');
-      body = { ...request, ...(model.value.trim() ? { model: model.value.trim() } : {}) };
+      const body = { ...request, ...(model.value.trim() ? { model: model.value.trim() } : {}) };
+      const result = await tokenizerApi.count(
+        'anthropic',
+        body,
+        tokenizerTimeout(query.data.value!),
+        controller.signal,
+      );
+      output.value = JSON.stringify(result, null, 2);
     }
-    const result = await tokenizerApi.count(
-      protocol.value,
-      body,
-      tokenizerTimeout(query.data.value!),
-      controller.signal,
-    );
-    output.value = JSON.stringify(result, null, 2);
   } catch (error) {
     output.value = (error as Error).message;
   } finally {
@@ -79,10 +89,14 @@ onBeforeUnmount(() => controller?.abort());
 </script>
 <template>
   <div class="grid gap-4">
-    <CCard title="Tokenizer 接口测试">
+    <CCard :title="protocol === 'tokenizer' ? '纯文本分词器' : 'Anthropic 计数接口测试'">
       <template #header-extra><RefreshButton :query="query" /></template>
       <div class="grid gap-4">
-        <CAlert type="info"
+        <CAlert v-if="protocol === 'tokenizer'" type="info"
+          >输入文本，查看模型如何将文字拆分为 token。分词在本地执行，不需要 CodeBuddy
+          凭证，结果供文本预算参考。</CAlert
+        >
+        <CAlert v-else type="info"
           >计数在本地执行，不需要 CodeBuddy 凭证。template 使用模型模板；budget_v1
           为无模板资源的文本预算估算。均不代表实际上游 token 用量。</CAlert
         >
@@ -106,7 +120,7 @@ onBeforeUnmount(() => controller?.abort());
         <label
           >模型 ID（可手动输入）<CInput
             v-model="model"
-            placeholder="Anthropic 模式留空时使用 JSON 中的 model"
+            :placeholder="protocol === 'tokenizer' ? '输入模型 ID' : '留空时使用 JSON 中的 model'"
             :disabled="busy"
         /></label>
         <label v-if="protocol === 'tokenizer'"
@@ -123,12 +137,8 @@ onBeforeUnmount(() => controller?.abort());
             :autosize="{ minRows: 10, maxRows: 24 }"
             :disabled="busy"
         /></label>
-        <p class="font-mono text-xs text-muted">
-          {{
-            protocol === 'tokenizer'
-              ? '/tokenizer/v1/count_tokens'
-              : '/anthropic/v1/messages/count_tokens'
-          }}
+        <p v-if="protocol === 'anthropic'" class="font-mono text-xs text-muted">
+          /anthropic/v1/messages/count_tokens
         </p>
         <div>
           <CButton
@@ -141,10 +151,22 @@ onBeforeUnmount(() => controller?.abort());
         </div>
       </div>
     </CCard>
-    <CCard title="计数响应">
+    <CCard v-if="protocol === 'tokenizer'" title="分词结果">
+      <CAlert v-if="output" type="error">{{ output }}</CAlert>
+      <template v-else-if="encoding">
+        <p v-if="encoding.text !== text" class="mb-4 text-sm text-muted">
+          以下展示分词器规范化后的文本，可能与输入存在差异。
+        </p>
+        <TokenizerVisualization :result="encoding" />
+      </template>
+      <p v-else class="py-8 text-center text-muted">
+        {{ busy ? '正在分词…' : '输入文本并点击计数，查看 token 的文字与颜色。' }}
+      </p>
+    </CCard>
+    <CCard v-else title="计数响应">
       <pre
         class="overflow-auto rounded-lg bg-slate-950 p-4 text-sm whitespace-pre-wrap text-slate-200"
-        >{{ output }}</pre>
+        >{{ output || '点击计数查看响应' }}</pre>
     </CCard>
   </div>
 </template>
