@@ -1,4 +1,6 @@
 """固定版本 Codex CLI 的真实 HTTP 契约；显式启用后在临时目录执行工具。"""
+
+import tests  # 在生产模块导入前隔离测试数据目录。
 import base64
 import json
 import os

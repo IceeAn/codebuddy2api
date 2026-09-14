@@ -1,4 +1,6 @@
 """Responses 请求转换与 Codex 工具往返契约。"""
+
+import tests  # 在生产模块导入前隔离测试数据目录。
 import copy
 import json
 import unittest

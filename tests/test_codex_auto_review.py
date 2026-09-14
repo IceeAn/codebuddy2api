@@ -1,4 +1,6 @@
 """自动审批模型映射的配置优先级、用户隔离与请求策略。"""
+
+import tests  # 在生产模块导入前隔离测试数据目录。
 import unittest
 from unittest import mock
 

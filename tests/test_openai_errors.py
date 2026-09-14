@@ -1,4 +1,6 @@
 """OpenAI 路由及中间件错误保持统一且不泄露请求值。"""
+
+import tests  # 在生产模块导入前隔离测试数据目录。
 import unittest
 from unittest import mock
 

@@ -1,3 +1,5 @@
+
+import tests  # 在生产模块导入前隔离测试数据目录。
 import json
 import unittest
 from types import SimpleNamespace

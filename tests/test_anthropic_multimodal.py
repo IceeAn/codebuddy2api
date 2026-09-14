@@ -1,5 +1,7 @@
 """Anthropic 多模态、文档及可映射参数的请求契约。"""
 
+import tests  # 在生产模块导入前隔离测试数据目录。
+
 import copy
 import unittest
 from unittest import mock

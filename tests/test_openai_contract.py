@@ -1,4 +1,6 @@
 """OpenAI 扩展请求与流式、非流式等价契约。"""
+
+import tests  # 在生产模块导入前隔离测试数据目录。
 import base64
 import copy
 import json

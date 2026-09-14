@@ -38,6 +38,7 @@ docker compose run --rm codebuddy2api set-user <用户名>
 ## 开发规定
 
 - **测试驱动开发**：开发流程须完全遵循 TDD，保证单元测试100%覆盖、且尽可能覆盖真实用例。
+- **测试数据隔离**：每个测试模块必须在生产模块导入前先 `import tests`，由 `tests/__init__.py` 无条件将 `CODEBUDDY_DATA_DIR` 指向进程专用临时目录；不能依赖 `setUp()` 或仅给测试命令加环境变量，因为 `config` 导入时已经会访问数据库。进程级隔离与每个测试的 `ConfigIsolationMixin` 共同保留，禁止测试使用开发数据目录。
 - **后端测试**：使用标准库 `unittest` 与 `coverage.py`；`venv/bin/python3 -m coverage report` 对 `config.py`、`release_runtime_lock.py`、`web.py` 和 `src/` 生产代码强制执行行/分支综合 100% 覆盖率门槛。
 - **Python 异步超时兼容**：项目后端同时支持 Python 3.10 和 3.12；捕获 `asyncio.wait_for()` 超时必须使用 `asyncio.TimeoutError`，不能使用内置 `TimeoutError`，因为 Python 3.10 中两者并非别名。模拟该路径的测试也必须抛出 `asyncio.TimeoutError`，并应避免被新版本的别名关系掩盖兼容性问题。
 - **Python 3.10 异步上下文覆盖率兼容**：条件分支不要直接跳出 `async with` 代码块；应先在代码块内汇合到可跟踪语句，否则 `coverage.py` 可能把已执行分支误报为跳向下一行或函数出口的缺失分支。不能用覆盖率排除标记掩盖该问题。

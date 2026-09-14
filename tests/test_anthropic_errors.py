@@ -1,5 +1,7 @@
 """Anthropic 框架异常、请求体限制和会话错误契约。"""
 
+import tests  # 在生产模块导入前隔离测试数据目录。
+
 import unittest
 from unittest import mock
 

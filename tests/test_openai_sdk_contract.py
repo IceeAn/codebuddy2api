@@ -1,4 +1,6 @@
 """真实 OpenAI SDK 通过 ASGI 调用网关，使用合成上游事件。"""
+
+import tests  # 在生产模块导入前隔离测试数据目录。
 import json
 import unittest
 from unittest import mock

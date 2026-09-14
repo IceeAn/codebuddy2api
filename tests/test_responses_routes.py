@@ -1,4 +1,6 @@
 """Responses 路由、鉴权和官方 SDK 契约。"""
+
+import tests  # 在生产模块导入前隔离测试数据目录。
 import json
 import unittest
 from unittest import mock

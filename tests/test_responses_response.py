@@ -1,4 +1,6 @@
 """Responses 事件状态机及 SDK 可消费输出。"""
+
+import tests  # 在生产模块导入前隔离测试数据目录。
 import json
 import unittest
 
