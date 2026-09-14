@@ -9,7 +9,7 @@ from .tokenizer_runtime import tokenizer_runtime
 from .tokenizer_store import get_tokenizer_store
 
 
-async def count_tokens(body, user, *, messages=False):
+async def count_tokens(body, user, *, messages=False, visualize=False):
     import config
 
     if not isinstance(body, dict):
@@ -35,9 +35,12 @@ async def count_tokens(body, user, *, messages=False):
         return snapshot
 
     count, method = await run_in_threadpool(
-        tokenizer_runtime.execute, "messages" if messages else "text", resolve, value
+        tokenizer_runtime.execute,
+        "encode" if visualize else "messages" if messages else "text",
+        resolve,
+        value,
     )
-    return {"input_tokens": count}, {
+    return count if visualize else {"input_tokens": count}, {
         "X-Tokenizer-Method": method,
         "X-Tokenizer-Source": snapshot["source"],
         "X-Tokenizer-Revision": snapshot["revision"],

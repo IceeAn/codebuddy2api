@@ -78,6 +78,23 @@ class TokenizerRouteTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(response.json(), {"input_tokens": 1})
 
+    async def test_visualization_requires_session_and_returns_byte_offsets(self):
+        path = '/api/admin/tokenizers/encode'
+        body = {'model': 'custom', 'text': 'hello  你好'}
+        denied = await self.request(path, {'Authorization': 'Bearer ' + self.key}, body)
+        self.assertEqual(denied.status_code, 401)
+        headers = {'Cookie': f'{SESSION_COOKIE_NAME}={self.cookie}'}
+        response = await self.request(path, headers, body)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {
+            'text': 'hello  你好', 'input_tokens': 2,
+            'tokens': [{'id': 1, 'start': 0, 'end': 5}, {'id': 3, 'start': 7, 'end': 13}],
+        })
+        self.assertEqual(response.headers['cache-control'], 'private, no-store')
+        self.assertEqual(response.headers['x-tokenizer-method'], 'text')
+        missing = await self.request(path, headers, {'model': 'missing', 'text': 'hello'})
+        self.assertEqual(missing.status_code, 404)
+
     async def test_admin_resource_lifecycle_and_errors(self):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),

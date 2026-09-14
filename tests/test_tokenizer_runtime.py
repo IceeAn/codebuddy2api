@@ -43,6 +43,23 @@ class TokenizerRuntimeTests(unittest.TestCase):
             perform_task(cache, "validate", self.snapshot(), None)["format"], "hf"
         )
 
+    def test_visualization_uses_the_same_cached_engine_as_counting(self):
+        cache = OrderedDict()
+        snapshot = self.snapshot()
+        perform_task(cache, "text", snapshot, "hello")
+        engine = cache["a"]
+        snapshot["files"] = {}
+        result, method = perform_task(cache, "encode", snapshot, "hello  你好")
+        self.assertIs(cache["a"], engine)
+        self.assertEqual(method, "text")
+        self.assertEqual(result, {
+            "text": "hello  你好", "input_tokens": 2,
+            "tokens": [
+                {"id": 1, "start": 0, "end": 5},
+                {"id": 3, "start": 7, "end": 13},
+            ],
+        })
+
     def test_worker_handles_safe_errors_and_closes(self):
         connection = mock.Mock()
         connection.recv.side_effect = [

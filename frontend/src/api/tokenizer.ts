@@ -30,9 +30,21 @@ export interface CountResult {
   source: string | null;
   revision: string | null;
 }
+export interface TokenSpan {
+  id: number;
+  start: number;
+  end: number;
+}
+export interface TokenEncoding {
+  text: string;
+  input_tokens: number;
+  tokens: TokenSpan[];
+}
 const root = '/api/admin/tokenizers';
 
 export const tokenizerApi = {
+  encode: (body: { model: string; text: string }, timeoutMs: number, signal?: AbortSignal) =>
+    apiRequest<TokenEncoding>(`${root}/encode`, { method: 'POST', json: body, timeoutMs, signal }),
   resources: () => apiRequest<TokenizerResources>(root),
   upload: (form: FormData, timeoutMs: number) =>
     apiRequest<UserTokenizer>(`${root}/resources`, { method: 'POST', body: form, timeoutMs }),
