@@ -27,6 +27,11 @@ async def count_tokens(body, user, *, messages=False, visualize=False):
         value = body.get("text")
         if not isinstance(value, str):
             raise TokenizerError("text 必须是字符串")
+        if (
+            visualize
+            and len(value.encode("utf-8")) > config.get_tokenizer_limits()["visualize_max_bytes"]
+        ):
+            raise TokenizerError("可视化输入文本超过允许的字节上限", 413)
     snapshot = {}
 
     def resolve():

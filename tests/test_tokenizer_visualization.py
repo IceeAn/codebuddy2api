@@ -1,5 +1,7 @@
 """验证可视化使用真实字节边界，跨 token 的文字仍可完整重建。"""
 
+import tests  # 在生产模块导入前隔离测试数据目录。
+
 import base64
 import json
 import unittest
@@ -29,6 +31,41 @@ def byte_files():
 
 
 class TokenizerVisualizationTests(unittest.TestCase):
+    def test_sequence_wrappers_preserve_bytelevel_boundaries(self):
+        expected_engine = TokenizerEngine(byte_files(), {'encoder': 'auto'})
+        for decoder in (
+            decoders.Sequence([decoders.ByteLevel()]),
+            decoders.Sequence([decoders.Sequence([decoders.ByteLevel()])]),
+        ):
+            with self.subTest(decoder=decoder):
+                hf = Tokenizer.from_str(byte_files()['tokenizer.json'].decode())
+                hf.decoder = decoder
+                engine = TokenizerEngine(
+                    {'tokenizer.json': hf.to_str().encode()}, {'encoder': 'auto'}
+                )
+                for text in ('你', '你🙂\n<测试>', 'e\u0301', ''):
+                    self.assertEqual(engine.encode_text(text), expected_engine.encode_text(text))
+
+    def test_other_decoder_sequences_are_not_treated_as_pure_bytelevel(self):
+        for decoder in (
+            decoders.Sequence([]),
+            decoders.Sequence([decoders.Replace('你', '好')]),
+            decoders.Sequence([decoders.ByteLevel(), decoders.Replace('你', '好')]),
+            decoders.Sequence([decoders.ByteLevel(), decoders.Strip(' ', 1, 0)]),
+            decoders.Sequence([decoders.ByteLevel(), decoders.ByteLevel()]),
+            decoders.Sequence([decoders.Sequence([
+                decoders.ByteLevel(), decoders.Replace('你', '好')
+            ])]),
+        ):
+            with self.subTest(decoder=decoder):
+                hf = Tokenizer.from_str(byte_files()['tokenizer.json'].decode())
+                hf.decoder = decoder
+                engine = TokenizerEngine(
+                    {'tokenizer.json': hf.to_str().encode()}, {'encoder': 'auto'}
+                )
+                with self.assertRaisesRegex(TokenizerError, '精确'):
+                    engine.encode_text('你')
+
     def test_bytelevel_preserves_two_to_one_split_and_special_tokens(self):
         engine = TokenizerEngine(byte_files(), {'encoder': 'auto'})
         text = '你🙂\n<测试>'

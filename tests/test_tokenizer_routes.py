@@ -2,10 +2,12 @@
 
 import tests  # 在生产模块导入前隔离测试数据目录。
 
+import json
 import unittest
 from unittest import mock
 
 import httpx
+import config
 
 from src.api_key_store import api_key_store
 from src.auth_types import SESSION_COOKIE_NAME
@@ -98,6 +100,81 @@ class TokenizerRouteTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         missing = await self.request(path, headers, {'model': 'missing', 'text': 'hello'})
         self.assertEqual(missing.status_code, 404)
 
+    async def test_visualization_input_limit_allows_boundary_and_rejects_before_dispatch(self):
+        headers = {'Cookie': f'{SESSION_COOKIE_NAME}={self.cookie}'}
+        maximum = 256 * 1024
+        for text in (' ' * maximum, ' ' * (maximum - 3) + '你'):
+            with self.subTest(bytes=len(text.encode('utf-8'))):
+                response = await self.request(
+                    '/api/admin/tokenizers/encode', headers, {'model': 'custom', 'text': text}
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(response.json()['text'], text)
+
+        for path in ('/api/admin/tokenizers/encode', '/api/admin/tokenizers/encode/'):
+            with self.subTest(path=path), mock.patch(
+                'src.tokenizer_service.tokenizer_runtime.execute'
+            ) as execute, mock.patch('src.tokenizer_service.get_tokenizer_store') as store:
+                # 末尾汉字使输入仅比上限多 1 字节，避免误按字符数判断。
+                response = await self.request(
+                    path, headers,
+                    {'model': 'custom', 'text': ' ' * (maximum - 2) + '你'},
+                )
+                if response.status_code == 307:
+                    response = await self.request(
+                        response.headers['location'], headers,
+                        {'model': 'custom', 'text': ' ' * (maximum - 2) + '你'},
+                    )
+                self.assertEqual(response.status_code, 413, response.text)
+                self.assertIn('可视化', response.json()['detail'])
+                self.assertEqual(response.headers['cache-control'], 'private, no-store')
+                execute.assert_not_called()
+                store.assert_not_called()
+
+    async def test_visualization_limit_is_configurable_and_only_applies_to_visualization(self):
+        headers = {'Cookie': f'{SESSION_COOKIE_NAME}={self.cookie}'}
+        with mock.patch.dict(
+            config._config_cache, {'CODEBUDDY_TOKENIZER_VISUALIZE_MAX_BYTES': '6'}
+        ):
+            for text, status in (('', 200), ('你好', 200), ('你好a', 413), ('你好🙂', 413)):
+                with self.subTest(text=text):
+                    response = await self.request(
+                        '/api/admin/tokenizers/encode', headers, {'model': 'custom', 'text': text}
+                    )
+                    self.assertEqual(response.status_code, status, response.text)
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url='http://localhost',
+                headers={'Origin': 'http://localhost'},
+            ) as client:
+                # JSON Unicode 转义增加传输体积，但不改变输入文本的 UTF-8 字节数。
+                response = await client.post(
+                    '/api/admin/tokenizers/encode',
+                    headers={**headers, 'Content-Type': 'application/json'},
+                    content=json.dumps({'model': 'custom', 'text': '你好'}, ensure_ascii=True),
+                )
+            self.assertEqual(response.status_code, 200, response.text)
+            for path, auth, body in (
+                ('/tokenizer/v1/count_tokens', {'Authorization': 'Bearer ' + self.key},
+                 {'model': 'custom', 'text': 'hello world'}),
+                ('/api/admin/playground/tokenizer/v1/count_tokens', headers,
+                 {'model': 'custom', 'text': 'hello world'}),
+                ('/anthropic/v1/messages/count_tokens',
+                 {'x-api-key': self.key, 'anthropic-version': '2023-06-01'},
+                 {'model': 'custom', 'messages': [{'role': 'user', 'content': 'hello world'}]}),
+            ):
+                with self.subTest(path=path):
+                    response = await self.request(path, auth, body)
+                    self.assertEqual(response.status_code, 200, response.text)
+
+        with mock.patch.dict(
+            config._config_cache, {'CODEBUDDY_TOKENIZER_VISUALIZE_MAX_BYTES': '300000'}
+        ):
+            response = await self.request(
+                '/api/admin/tokenizers/encode', headers,
+                {'model': 'custom', 'text': ' ' * (256 * 1024 + 1)},
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+
     async def test_admin_resource_lifecycle_and_errors(self):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
@@ -107,6 +184,7 @@ class TokenizerRouteTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
             response = await client.get("/api/admin/tokenizers")
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json()["limits"]["upload_max_bytes"], 67108864)
+            self.assertEqual(response.json()["limits"]["visualize_max_bytes"], 262144)
             uploaded = await client.post(
                 "/api/admin/tokenizers/resources",
                 data={"name": "用户词表"},

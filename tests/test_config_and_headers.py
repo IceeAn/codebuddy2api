@@ -21,6 +21,20 @@ from tests.helpers import ConfigIsolationMixin
 
 
 class ConfigTests(ConfigIsolationMixin, unittest.TestCase):
+    def test_visualization_limit_is_a_positive_startup_environment_setting(self):
+        name = 'CODEBUDDY_TOKENIZER_VISUALIZE_MAX_BYTES'
+        self.assertEqual(config.get_tokenizer_limits()['visualize_max_bytes'], 256 * 1024)
+        with mock.patch.dict('os.environ', {name: '12345', 'CODEBUDDY_DATA_DIR': config.get_data_dir()}):
+            config.load_config()
+        with mock.patch.dict(config._user_settings_cache, {'admin': {name: 1}}):
+            self.assertEqual(config.get_tokenizer_limits()['visualize_max_bytes'], 12345)
+        for value in ('0', '-1', 'bad', '1.5', 'true', ''):
+            with self.subTest(value=value), mock.patch.dict(
+                'os.environ', {name: value, 'CODEBUDDY_DATA_DIR': config.get_data_dir()}
+            ):
+                with self.assertRaisesRegex(ValueError, name):
+                    config.load_config()
+
     def test_bootstrap_defaults_and_explicit_password_marker(self):
         self.assertTrue(config.get_bootstrap_enabled())
         self.assertEqual(config.get_bootstrap_username(), "admin")

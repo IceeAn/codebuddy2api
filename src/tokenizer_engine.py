@@ -51,6 +51,18 @@ def canonical_json(value):
     )
 
 
+def _is_bytelevel_decoder(decoder):
+    """仅展开不改变语义的单元素 Sequence，不能跳过其他解码操作。"""
+    if isinstance(decoder, decoders.ByteLevel):
+        return True
+    if not isinstance(decoder, decoders.Sequence):
+        return False
+    state = json.loads(decoder.__getstate__())
+    while state["type"] == "Sequence" and len(state["decoders"]) == 1:
+        state = state["decoders"][0]
+    return state["type"] == "ByteLevel"
+
+
 def _raise_template(message):
     # 上传模板的异常文案也可能包含提示词，因此不透传。
     raise TokenizerError("消息不符合所选模板要求")
@@ -260,7 +272,7 @@ class TokenizerEngine:
         else:
             encoded = self.hf.encode(text, add_special_tokens=False)
             ids = encoded.ids
-            if not isinstance(self.hf.decoder, decoders.ByteLevel):
+            if not _is_bytelevel_decoder(self.hf.decoder):
                 # 非字节词表使用原文偏移，未编码的空白不归给任何 token。
                 offsets = [0]
                 for character in text:

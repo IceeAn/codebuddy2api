@@ -73,6 +73,7 @@ _DEFAULT_CONFIG = {
     "CODEBUDDY_CSP_FRAME_ANCESTORS": "none",
     "CODEBUDDY_MAX_REQUEST_BODY_BYTES": 16 * 1024 * 1024,
     "CODEBUDDY_TOKENIZER_UPLOAD_MAX_BYTES": 64 * 1024 * 1024,
+    "CODEBUDDY_TOKENIZER_VISUALIZE_MAX_BYTES": 256 * 1024,
     "CODEBUDDY_TOKENIZER_WORKERS": 2,
     "CODEBUDDY_TOKENIZER_TIMEOUT_SECONDS": 30,
     "CODEBUDDY_TOKENIZER_QUEUE_TIMEOUT_SECONDS": 30,
@@ -493,8 +494,8 @@ def get_max_request_body_bytes() -> int:
 
 def get_tokenizer_limits() -> Dict[str, int]:
     """Tokenizer 的启动级安全边界，不能被用户数据库设置覆盖。"""
-    names = ("upload_max_bytes", "workers", "timeout_seconds", "queue_timeout_seconds",
-             "memory_max_bytes", "render_max_bytes", "cache_size", "max_mappings")
+    names = ("upload_max_bytes", "visualize_max_bytes", "workers", "timeout_seconds",
+             "queue_timeout_seconds", "memory_max_bytes", "render_max_bytes", "cache_size", "max_mappings")
     return {name: _to_positive_int(_get_config_value("CODEBUDDY_TOKENIZER_" + name.upper()),
                                    "CODEBUDDY_TOKENIZER_" + name.upper()) for name in names}
 
@@ -631,6 +632,7 @@ def _validate_startup_config() -> None:
     get_auto_checkin_enabled()
     get_rotation_count()
     get_max_request_body_bytes()
+    get_tokenizer_limits()
     get_login_rate_window_seconds()
     get_login_global_max_attempts()
     get_login_ip_max_attempts()
