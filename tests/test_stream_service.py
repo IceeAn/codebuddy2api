@@ -15,11 +15,12 @@ from src.auth_types import AuthenticatedUser
 from src.openai_compat import CodeBuddyResponseEvent, CompletionResponseContext
 from src.openai_router import list_v1_models
 from src.stream_service import (
-    AppLifecycleManager,
+    startup_http_client,
+    shutdown_http_client,
     CodeBuddyStreamService,
     HTTP_CLIENT_CONFIG,
     SSEConnectionManager,
-    SecurityConfig,
+    get_http_ssl_verify,
     StreamObservation,
     StreamResponseAggregator,
     UpstreamAPIError,
@@ -58,7 +59,7 @@ class HttpClientConfigTests(unittest.TestCase):
 
     def test_security_config_returns_disabled_ssl_setting(self):
         with mock.patch("config.get_ssl_verify", return_value=False):
-            self.assertFalse(SecurityConfig.get_ssl_verify())
+            self.assertFalse(get_http_ssl_verify())
 
 
 class HttpClientPoolTests(unittest.IsolatedAsyncioTestCase):
@@ -114,8 +115,8 @@ class HttpClientPoolTests(unittest.IsolatedAsyncioTestCase):
             mock.patch("src.stream_service.get_http_client", new=mock.AsyncMock()) as get_client,
             mock.patch("src.stream_service.close_http_client", new=mock.AsyncMock()) as close_client,
         ):
-            await AppLifecycleManager.startup()
-            await AppLifecycleManager.shutdown()
+            await startup_http_client()
+            await shutdown_http_client()
 
         get_client.assert_awaited_once_with()
         close_client.assert_awaited_once_with()

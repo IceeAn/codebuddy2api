@@ -79,7 +79,9 @@ class UsageStatsContextTests(unittest.TestCase):
             "thinking": {"type": "enabled"},
         }
 
-        context.capture_request(request_body, prepared_payload, request_bytes=321)
+        context.capture_request_bytes(321)
+        context.capture_request_shape(request_body)
+        context.capture_prepared_request(prepared_payload)
         context.capture_credential("credential-1", "credential.json")
         context(StreamObservation(
             kind="upstream_event",
@@ -279,11 +281,9 @@ class UsageStatsContextTests(unittest.TestCase):
             time_factory=lambda: 2_000,
             monotonic_factory=mock.Mock(side_effect=[1.0, 1.2]),
         )
-        context.capture_request(
-            {"messages": [], "enable_thinking": False},
-            {"model": "default", "messages": [], "enable_thinking": False},
-            request_bytes=2,
-        )
+        context.capture_request_bytes(2)
+        context.capture_request_shape({"messages": [], "enable_thinking": False})
+        context.capture_prepared_request({"model": "default", "messages": [], "enable_thinking": False})
         context(StreamObservation(kind="retry", retry_count=2, error_type="upstream_connect_error"))
         context(StreamObservation(kind="error", error_type="upstream_timeout", status_code=504))
         context(StreamObservation(kind="client_disconnect"))
@@ -429,11 +429,9 @@ class UsageStatsContextTests(unittest.TestCase):
             known_models=("fallback",),
             monotonic_factory=mock.Mock(side_effect=[1.0, 1.1]),
         )
-        context.capture_request(
-            {"model": "", "messages": "not-a-list", "tools": None},
-            {"model": "fallback", "thinking": {"type": ""}, "enable_thinking": True},
-            request_bytes=-1,
-        )
+        context.capture_request_bytes(-1)
+        context.capture_request_shape({"model": "", "messages": "not-a-list", "tools": None})
+        context.capture_prepared_request({"model": "fallback", "thinking": {"type": ""}, "enable_thinking": True})
         context.capture_credential(None, None)
         context(StreamObservation(kind="retry"))
         context.mark_success()
@@ -459,7 +457,9 @@ class UsageStatsContextTests(unittest.TestCase):
             store=FakeStore(),
             monotonic_factory=mock.Mock(side_effect=[2.0, 2.1]),
         )
-        without_thinking.capture_request({}, {"thinking": "invalid"}, request_bytes=0)
+        without_thinking.capture_request_bytes(0)
+        without_thinking.capture_request_shape({})
+        without_thinking.capture_prepared_request({"thinking": "invalid"})
         without_thinking.complete_response(
             http_status=200,
             response_bytes=0,

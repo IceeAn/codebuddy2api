@@ -57,7 +57,7 @@ class AnthropicErrorContractTests(TempConfigMixin, unittest.IsolatedAsyncioTestC
         request.state.anthropic_request_id = "req_test"
         request.json = mock.AsyncMock(side_effect=HTTPException(413, "请求体超过允许上限"))
         with self.assertRaises(HTTPException) as raised:
-            await anthropic_messages(request, AuthenticatedUser(username="admin", source="api_key"))
+            await anthropic_messages(request, AuthenticatedUser(username="admin", source="api_key"), stats_context=mock.Mock())
         self.assertEqual(raised.exception.status_code, 413)
         stats = mock.Mock()
         with self.assertRaises(HTTPException) as raised:

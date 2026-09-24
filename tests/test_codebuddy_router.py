@@ -7,7 +7,7 @@ from fastapi import HTTPException
 
 from src.auth_types import AuthenticatedUser
 from src.openai_router import (
-    CredentialManager,
+    get_valid_credential_selection,
     chat_completions,
     get_available_models_list,
     list_v1_models,
@@ -30,33 +30,33 @@ class FakeChatRequest:
 class CredentialManagerTests(unittest.TestCase):
     def test_returns_complete_credential(self):
         manager = mock.Mock()
-        manager.get_next_credential.return_value = {
+        manager.select_next_credential.return_value = ("credential-id", {
             "bearer_token": "token",
             "user_id": "user",
-        }
+        }, 0)
 
-        credential = CredentialManager.get_valid_credential(manager)
+        credential = get_valid_credential_selection(manager)
 
-        self.assertEqual(credential["bearer_token"], "token")
+        self.assertEqual(credential[1]["bearer_token"], "token")
 
     def test_rejects_missing_or_invalid_credential(self):
         for credential in (None, {}, {"user_id": "user"}):
             with self.subTest(credential=credential):
                 manager = mock.Mock()
-                manager.get_next_credential.return_value = credential
+                manager.select_next_credential.return_value = ("credential-id", credential, 0)
 
                 with self.assertRaises(HTTPException) as raised:
-                    CredentialManager.get_valid_credential(manager)
+                    get_valid_credential_selection(manager)
 
                 self.assertEqual(raised.exception.status_code, 401)
                 self.assertEqual(raised.exception.detail, "凭证获取失败")
 
     def test_maps_token_manager_error_to_unauthorized(self):
         manager = mock.Mock()
-        manager.get_next_credential.side_effect = RuntimeError("broken store")
+        manager.select_next_credential.side_effect = RuntimeError("broken store")
 
         with self.assertRaises(HTTPException) as raised:
-            CredentialManager.get_valid_credential(manager)
+            get_valid_credential_selection(manager)
 
         self.assertEqual(raised.exception.status_code, 401)
 
@@ -68,17 +68,18 @@ class CredentialManagerTests(unittest.TestCase):
             def select_next_credential(self):
                 return self.selected
 
-        selected = ("credential-id", {"bearer_token": "token"})
-        self.assertEqual(CredentialManager.get_valid_credential_selection(Manager(selected)), selected)
+        selected = ("credential-id", {"bearer_token": "token"}, 0)
+        self.assertEqual(get_valid_credential_selection(Manager(selected)), selected)
 
-        for value in (None, ("credential-id", {})):
+        for value in (None, ("credential-id", {}, 0)):
             with self.subTest(value=value), self.assertRaises(HTTPException) as raised:
-                CredentialManager.get_valid_credential_selection(Manager(value))
+                get_valid_credential_selection(Manager(value))
             self.assertEqual(raised.exception.status_code, 401)
 
 
 class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        self.stats_context = mock.Mock()
         self.user = AuthenticatedUser(username="alice", source="api_key")
         self.credential = {
             "bearer_token": "token",
@@ -104,8 +105,8 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
             "stream": True,
         }
         token_manager = mock.Mock()
-        token_manager.get_next_credential.return_value = self.credential
-        token_manager.get_current_credential_info.return_value = {
+        token_manager.select_next_credential.return_value = ("credential-1", self.credential, 0)
+        token_manager.get_credential_info_by_id.return_value = {
             "credential_id": "credential-1",
             "filename": "credential.json",
         }
@@ -156,7 +157,7 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
         )
         prepare_request.assert_called_once_with(request_body, self.user)
         stats_context.capture_credential.assert_called_once_with(
-            "credential-1", "credential.json"
+            "credential-1", "credential.json", generation=0
         )
         stats_context.capture_request_bytes.assert_called_once_with(123)
         stats_context.capture_request_shape.assert_called_once_with(request_body)
@@ -179,8 +180,8 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
             "messages": [{"role": "user", "content": "hello"}],
         }
         token_manager = mock.Mock()
-        token_manager.get_next_credential.return_value = self.credential
-        token_manager.get_current_credential_info.return_value = {
+        token_manager.select_next_credential.return_value = ("credential-2", self.credential, 0)
+        token_manager.get_credential_info_by_id.return_value = {
             "credential_id": "credential-2",
             "user_id": "fallback-label",
         }
@@ -214,7 +215,7 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, {"ok": True})
         stats_context.capture_credential.assert_called_once_with(
-            "credential-2", "fallback-label"
+            "credential-2", "fallback-label", generation=0
         )
         stats_context.capture_request_bytes.assert_called_once_with(88)
         stats_context.capture_request_shape.assert_called_once_with(request_body)
@@ -304,12 +305,28 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
         stats_context.capture_request_shape.assert_not_called()
         stats_context.mark_failure.assert_called_once_with("validation_error", 400)
 
-        with self.assertRaises(HTTPException) as without_stats:
+        with self.assertRaises(HTTPException) as with_default_request_bytes:
             await chat_completions(
                 FakeChatRequest(error=ValueError("still bad")),
                 _user=self.user,
+                stats_context=self.stats_context,
             )
-        self.assertEqual(without_stats.exception.status_code, 400)
+        self.assertEqual(with_default_request_bytes.exception.status_code, 400)
+
+    async def test_non_object_json_is_rejected_before_credential_selection(self):
+        for body in (None, [], "text", 42, True):
+            stats = mock.Mock()
+            with (
+                self.subTest(body=body),
+                mock.patch("src.openai_router.get_token_manager_for_user") as get_manager,
+                self.assertRaises(HTTPException) as raised,
+            ):
+                await chat_completions(FakeChatRequest(body), self.user, stats)
+            self.assertEqual(raised.exception.status_code, 400)
+            self.assertEqual(raised.exception.detail, "Request body must be a JSON object")
+            stats.capture_request_shape.assert_not_called()
+            stats.mark_failure.assert_called_once_with("validation_error", 400)
+            get_manager.assert_not_called()
 
     async def test_chat_completion_preserves_http_exception(self):
         stats_context = mock.Mock()
@@ -334,13 +351,13 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
             "src.openai_router.RequestProcessor.validate_request",
             side_effect=HTTPException(status_code=422, detail="invalid request"),
         ):
-            with self.assertRaises(HTTPException) as without_stats:
-                await chat_completions(FakeChatRequest({}), _user=self.user)
-        self.assertEqual(without_stats.exception.status_code, 422)
+            with self.assertRaises(HTTPException) as with_default_request_bytes:
+                await chat_completions(FakeChatRequest({}), _user=self.user, stats_context=self.stats_context)
+        self.assertEqual(with_default_request_bytes.exception.status_code, 422)
 
     async def test_chat_completion_records_missing_credential(self):
         token_manager = mock.Mock()
-        token_manager.get_next_credential.return_value = None
+        token_manager.select_next_credential.return_value = None
         stats_context = mock.Mock()
 
         with mock.patch(
@@ -370,15 +387,16 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
             "src.openai_router.get_token_manager_for_user",
             return_value=token_manager,
         ):
-            with self.assertRaises(HTTPException) as without_stats:
+            with self.assertRaises(HTTPException) as with_default_request_bytes:
                 await chat_completions(
                     FakeChatRequest({
                         "model": "model",
                         "messages": [{"role": "user", "content": "hello"}],
                     }),
                     _user=self.user,
+                    stats_context=self.stats_context,
                 )
-        self.assertEqual(without_stats.exception.status_code, 401)
+        self.assertEqual(with_default_request_bytes.exception.status_code, 401)
 
     async def test_prepare_failure_checks_credentials_only_on_server_errors(self):
         request_body = {
@@ -499,6 +517,7 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
                         await chat_completions(
                             FakeChatRequest(request_body),
                             _user=self.user,
+                            stats_context=self.stats_context,
                         )
                 self.assertEqual(raised.exception.status_code, expected_status)
 
@@ -518,6 +537,7 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
                 await chat_completions(
                     FakeChatRequest(request_body),
                     _user=self.user,
+                    stats_context=self.stats_context,
                 )
         self.assertEqual(raised.exception.status_code, 401)
 
@@ -545,13 +565,14 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
 
         stats_context.mark_failure.assert_not_called()
 
-    async def test_chat_completion_succeeds_without_optional_stats_context(self):
+    async def test_chat_completion_passes_required_stats_context_to_service(self):
         request_body = {
             "model": "model",
             "messages": [{"role": "user", "content": "hello"}],
         }
         token_manager = mock.Mock()
-        token_manager.get_next_credential.return_value = self.credential
+        token_manager.select_next_credential.return_value = ("credential-1", self.credential, 0)
+        token_manager.get_credential_info_by_id.return_value = {}
         service = mock.Mock()
         service.handle_non_stream_response = mock.AsyncMock(return_value={"ok": True})
 
@@ -571,11 +592,11 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
             ),
             mock.patch("src.openai_router.CodeBuddyStreamService", return_value=service) as service_class,
         ):
-            result = await chat_completions(FakeChatRequest(request_body), _user=self.user)
+            result = await chat_completions(FakeChatRequest(request_body), _user=self.user, stats_context=self.stats_context)
 
         self.assertEqual(result, {"ok": True})
-        token_manager.get_current_credential_info.assert_not_called()
-        service_class.assert_called_once_with(observer=None)
+        token_manager.get_credential_info_by_id.assert_called_once_with("credential-1")
+        service_class.assert_called_once_with(observer=self.stats_context)
 
     async def test_chat_completion_maps_unexpected_error(self):
         stats_context = mock.Mock()
@@ -598,26 +619,26 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
 
         with mock.patch(
             "src.openai_router.RequestProcessor.validate_request",
-            side_effect=RuntimeError("unexpected without stats"),
+            side_effect=RuntimeError("unexpected with default request bytes"),
         ):
-            with self.assertRaises(HTTPException) as without_stats:
-                await chat_completions(FakeChatRequest({}), _user=self.user)
-        self.assertEqual(without_stats.exception.status_code, 500)
+            with self.assertRaises(HTTPException) as with_default_request_bytes:
+                await chat_completions(FakeChatRequest({}), _user=self.user, stats_context=self.stats_context)
+        self.assertEqual(with_default_request_bytes.exception.status_code, 500)
 
     async def test_chat_completion_uses_credential_id_label_and_zero_request_bytes(self):
         request_body = {
             "model": "model",
             "messages": [{"role": "user", "content": "hello"}],
         }
-        class LegacyAtomicManager:
+        class AtomicManager:
             def select_next_credential(self):
-                return "credential-only-label", self_credential
+                return "credential-only-label", self_credential, 0
 
             def get_credential_info_by_id(self, _credential_id):
                 return {"credential_id": "credential-only-label"}
 
         self_credential = self.credential
-        token_manager = LegacyAtomicManager()
+        token_manager = AtomicManager()
         service = mock.Mock()
         service.handle_non_stream_response = mock.AsyncMock(return_value={"ok": True})
         stats_context = mock.Mock()
@@ -647,6 +668,7 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
         stats_context.capture_credential.assert_called_once_with(
             "credential-only-label",
             "credential-only-label",
+            generation=0,
         )
         stats_context.capture_request_bytes.assert_called_once_with(0)
         stats_context.capture_request_shape.assert_called_once_with(request_body)

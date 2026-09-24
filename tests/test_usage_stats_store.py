@@ -1374,6 +1374,76 @@ class UsageStatsStoreTests(unittest.TestCase):
         self.assertEqual(overview["totals"]["request_count"], 1)
         self.assertEqual(statements[0], "BEGIN")
 
+    def test_overview_queries_candidate_dimensions_only_once(self):
+        self.record(self.event())
+        database = SQLiteDatabase(self.database_path)
+        statements = []
+
+        @contextmanager
+        def recording_connect(*, create=True):
+            with database.connect(create=create) as connection:
+                connection.set_trace_callback(statements.append)
+                yield connection
+
+        with mock.patch.object(self.store, "_database", return_value=SimpleNamespace(
+            connect=recording_connect,
+        )):
+            overview = self.store.get_overview("alice", StatsFilters(outcome="success"))
+
+        self.assertEqual(overview["totals"]["request_count"], 1)
+        # 三项排行加四个候选维度；不得计算随后被自排除结果覆盖的候选列表。
+        dimension_queries = [
+            sql for sql in statements
+            if sql.startswith("SELECT base.") and "GROUP BY base." in sql
+        ]
+        self.assertEqual(len(dimension_queries), 7)
+
+    def test_detail_boundary_and_hourly_projection_preserve_all_overview_metrics(self):
+        # 整小时汇总与同一批明细的边界修正必须保留零值、未知值和不同 Token 计量。
+        self.record(self.event(occurred_at=self.now + 100, cache_hit_tokens=0))
+        self.record(self.event(
+            occurred_at=self.now + 200,
+            input_tokens=None, output_tokens=None, total_tokens=None,
+            cache_hit_tokens=None, cache_miss_tokens=None, credit=None,
+            duration_ms=None, first_output_ms=None,
+        ))
+        with mock.patch("src.usage_stats_store.time.time", return_value=self.now + 3600):
+            hourly = self.store.get_overview("alice", StatsFilters(
+                start_time=self.now, end_time=self.now + 3600, granularity="hour",
+            ))
+            detail = self.store.get_overview("alice", StatsFilters(
+                start_time=self.now + 1, end_time=self.now + 3599, granularity="hour",
+            ))
+        self.assertEqual(detail, hourly)
+        self.assertEqual(detail["totals"]["input_tokens"], 10)
+        self.assertEqual(detail["totals"]["output_tokens"], 6)
+        self.assertEqual(detail["totals"]["total_tokens"], 16)
+        self.assertEqual(detail["totals"]["cache_hit_tokens"], 0)
+        self.assertEqual(detail["totals"]["cache_miss_tokens"], 7)
+        self.assertEqual(detail["totals"]["total_credit"], 0.25)
+        self.assertEqual(detail["totals"]["usage_coverage"], 0.5)
+
+    def test_dimension_pages_match_ranking_metrics_for_each_dimension(self):
+        self.record(self.event(occurred_at=self.now + 100, duration_ms=20))
+        self.record(self.event(
+            occurred_at=self.now + 200, total_tokens=None, credit=None,
+            duration_ms=700_000, first_output_ms=None,
+        ))
+        filters = StatsFilters(start_time=self.now, end_time=self.now + 3600)
+        with mock.patch("src.usage_stats_store.time.time", return_value=self.now + 3600):
+            overview = self.store.get_overview("alice", filters)
+            for dimension in ("models", "api_keys", "credentials"):
+                with self.subTest(dimension=dimension):
+                    page = self.store.list_dimension_values("alice", dimension, filters)
+                    ranked = overview["breakdowns"][dimension][0].copy()
+                    if dimension == "models":
+                        ranked["id"] = ranked.pop("model")
+                        ranked["label"] = ranked["id"]
+                    elif dimension == "api_keys":
+                        ranked["label"] = ranked.pop("name")
+                    self.assertEqual(page["items"], [ranked])
+                    self.assertIsNone(page["next_cursor"])
+
     def test_overview_never_fetches_raw_hourly_or_histogram_rows(self):
         self.record(self.event())
         real_database = SQLiteDatabase(self.database_path)

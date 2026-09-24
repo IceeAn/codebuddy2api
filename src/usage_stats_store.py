@@ -73,6 +73,15 @@ _OVERVIEW_TOKEN_FIELDS = (
 )
 
 
+# 临时查询表的计量列由同一列表派生，避免小时与明细投影遗漏字段。
+_STATS_SUM_FIELDS = (*_OVERVIEW_TOKEN_FIELDS, "total_tokens", "credit")
+_STATS_SUM_COLUMNS = tuple(
+    f"{name}_{suffix}"
+    for name in _STATS_SUM_FIELDS
+    for suffix in ("sum", "known_count")
+)
+
+
 @dataclass(frozen=True)
 class TokenUsage:
     """从上游 usage 中提取的规范化计量字段。"""
@@ -883,8 +892,12 @@ class UsageStatsStore:
     ) -> None:
         connection.execute("DROP TABLE IF EXISTS temp.stats_base")
         connection.execute("DROP TABLE IF EXISTS temp.stats_hist")
+        sum_definitions = ", ".join(
+            f"{name} {'REAL' if name == 'credit_sum' else 'INTEGER'} NOT NULL"
+            for name in _STATS_SUM_COLUMNS
+        )
         connection.execute(
-            """
+            f"""
             CREATE TEMP TABLE stats_base (
                 row_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 period_time INTEGER NOT NULL,
@@ -899,18 +912,7 @@ class UsageStatsStore:
                 request_count INTEGER NOT NULL,
                 success_count INTEGER NOT NULL,
                 usage_known_count INTEGER NOT NULL,
-                input_tokens_sum INTEGER NOT NULL,
-                input_tokens_known_count INTEGER NOT NULL,
-                output_tokens_sum INTEGER NOT NULL,
-                output_tokens_known_count INTEGER NOT NULL,
-                total_tokens_sum INTEGER NOT NULL,
-                total_tokens_known_count INTEGER NOT NULL,
-                cache_hit_tokens_sum INTEGER NOT NULL,
-                cache_hit_tokens_known_count INTEGER NOT NULL,
-                cache_miss_tokens_sum INTEGER NOT NULL,
-                cache_miss_tokens_known_count INTEGER NOT NULL,
-                credit_sum REAL NOT NULL,
-                credit_known_count INTEGER NOT NULL
+                {sum_definitions}
             )
             """
         )
@@ -944,27 +946,18 @@ class UsageStatsStore:
             "h.model",
         )
         connection.execute(
-            """
+            f"""
             INSERT INTO stats_base (
                 period_time, hour, source, model, api_key_id, api_key_name,
                 credential_id, credential_label, outcome, request_count,
-                success_count, usage_known_count, input_tokens_sum,
-                input_tokens_known_count, output_tokens_sum,
-                output_tokens_known_count, total_tokens_sum,
-                total_tokens_known_count, cache_hit_tokens_sum,
-                cache_hit_tokens_known_count, cache_miss_tokens_sum,
-                cache_miss_tokens_known_count, credit_sum, credit_known_count
+                success_count, usage_known_count, {', '.join(_STATS_SUM_COLUMNS)}
             )
             SELECT
                 h.hour, h.hour, h.source, """ + hourly_model_expression + """,
                 h.api_key_id, h.api_key_name,
                 h.credential_id, h.credential_label, h.outcome, h.request_count,
-                h.success_count, h.usage_known_count, h.input_tokens_sum,
-                h.input_tokens_known_count, h.output_tokens_sum,
-                h.output_tokens_known_count, h.total_tokens_sum,
-                h.total_tokens_known_count, h.cache_hit_tokens_sum,
-                h.cache_hit_tokens_known_count, h.cache_miss_tokens_sum,
-                h.cache_miss_tokens_known_count, h.credit_sum, h.credit_known_count
+                h.success_count, h.usage_known_count,
+                """ + ", ".join(f"h.{name}" for name in _STATS_SUM_COLUMNS) + """
             FROM usage_hourly h
             WHERE """ + hourly_where + excluded,
             hourly_parameters,
@@ -1011,63 +1004,7 @@ class UsageStatsStore:
         if snapshot_event_id is not None:
             detail_where += " AND id <= :snapshot_event_id"
             detail_parameters["snapshot_event_id"] = snapshot_event_id
-        model_expression = cls._model_bucket_sql(
-            "model_bucket_type",
-            "model_bucket_model",
-        )
-        connection.execute(
-            """
-            INSERT INTO stats_base (
-                period_time, hour, source, model, api_key_id, api_key_name,
-                credential_id, credential_label, outcome, request_count,
-                success_count, usage_known_count, input_tokens_sum,
-                input_tokens_known_count, output_tokens_sum,
-                output_tokens_known_count, total_tokens_sum,
-                total_tokens_known_count, cache_hit_tokens_sum,
-                cache_hit_tokens_known_count, cache_miss_tokens_sum,
-                cache_miss_tokens_known_count, credit_sum, credit_known_count
-            )
-            SELECT
-                occurred_at, CAST(occurred_at / 3600 AS INTEGER) * 3600,
-                source, """ + model_expression + """,
-                COALESCE(api_key_id, ''), COALESCE(api_key_name, ''),
-                COALESCE(credential_id, ''), COALESCE(credential_label, ''),
-                outcome, 1, CASE WHEN outcome = 'success' THEN 1 ELSE 0 END,
-                CASE WHEN total_tokens IS NOT NULL THEN 1 ELSE 0 END,
-                COALESCE(input_tokens, 0),
-                CASE WHEN input_tokens IS NOT NULL THEN 1 ELSE 0 END,
-                COALESCE(output_tokens, 0),
-                CASE WHEN output_tokens IS NOT NULL THEN 1 ELSE 0 END,
-                COALESCE(total_tokens, 0),
-                CASE WHEN total_tokens IS NOT NULL THEN 1 ELSE 0 END,
-                COALESCE(cache_hit_tokens, 0),
-                CASE WHEN cache_hit_tokens IS NOT NULL THEN 1 ELSE 0 END,
-                COALESCE(cache_miss_tokens, 0),
-                CASE WHEN cache_miss_tokens IS NOT NULL THEN 1 ELSE 0 END,
-                COALESCE(credit, 0),
-                CASE WHEN credit IS NOT NULL THEN 1 ELSE 0 END
-            FROM usage_events
-            WHERE """ + detail_where,
-            detail_parameters,
-        )
-        for metric, column in (
-            ("total", "duration_ms"),
-            ("first_output", "first_output_ms"),
-        ):
-            connection.execute(
-                """
-                INSERT INTO stats_hist (
-                    period_time, model, api_key_id, credential_id, outcome,
-                    metric, bucket_index, sample_count
-                )
-                SELECT
-                    occurred_at, """ + model_expression + """,
-                    COALESCE(api_key_id, ''), COALESCE(credential_id, ''),
-                    outcome, :histogram_metric, """ + cls._bucket_sql(column) + """, 1
-                FROM usage_events
-                WHERE """ + detail_where + f" AND outcome = 'success' AND {column} IS NOT NULL",
-                {**detail_parameters, "histogram_metric": metric},
-            )
+        cls._insert_detail_stats(connection, detail_where, detail_parameters, subtract=False)
 
     @classmethod
     def _subtract_post_snapshot_events(
@@ -1110,43 +1047,45 @@ class UsageStatsStore:
                 f"NOT IN ({', '.join(placeholders)})"
             )
 
+        cls._insert_detail_stats(connection, detail_where, detail_parameters, subtract=True)
+
+    @classmethod
+    def _insert_detail_stats(
+            cls,
+            connection,
+            detail_where: str,
+            detail_parameters: Dict[str, Any],
+            *,
+            subtract: bool,
+    ) -> None:
+        """统一边界明细补入与快照后明细扣除，保持计量和直方图同步。"""
+        hour = "CAST(occurred_at / 3600 AS INTEGER) * 3600"
+        period_time = hour if subtract else "occurred_at"
+        sign = -1 if subtract else 1
+        detail_parameters = {**detail_parameters, "detail_sign": sign}
         model_expression = cls._model_bucket_sql(
             "model_bucket_type",
             "model_bucket_model",
         )
         connection.execute(
-            """
+            f"""
             INSERT INTO stats_base (
                 period_time, hour, source, model, api_key_id, api_key_name,
                 credential_id, credential_label, outcome, request_count,
-                success_count, usage_known_count, input_tokens_sum,
-                input_tokens_known_count, output_tokens_sum,
-                output_tokens_known_count, total_tokens_sum,
-                total_tokens_known_count, cache_hit_tokens_sum,
-                cache_hit_tokens_known_count, cache_miss_tokens_sum,
-                cache_miss_tokens_known_count, credit_sum, credit_known_count
+                success_count, usage_known_count, {', '.join(_STATS_SUM_COLUMNS)}
             )
             SELECT
-                CAST(occurred_at / 3600 AS INTEGER) * 3600,
-                CAST(occurred_at / 3600 AS INTEGER) * 3600,
+                {period_time}, {hour},
                 source, """ + model_expression + """,
                 COALESCE(api_key_id, ''), COALESCE(api_key_name, ''),
                 COALESCE(credential_id, ''), COALESCE(credential_label, ''),
-                outcome, -1,
-                CASE WHEN outcome = 'success' THEN -1 ELSE 0 END,
-                CASE WHEN total_tokens IS NOT NULL THEN -1 ELSE 0 END,
-                -COALESCE(input_tokens, 0),
-                CASE WHEN input_tokens IS NOT NULL THEN -1 ELSE 0 END,
-                -COALESCE(output_tokens, 0),
-                CASE WHEN output_tokens IS NOT NULL THEN -1 ELSE 0 END,
-                -COALESCE(total_tokens, 0),
-                CASE WHEN total_tokens IS NOT NULL THEN -1 ELSE 0 END,
-                -COALESCE(cache_hit_tokens, 0),
-                CASE WHEN cache_hit_tokens IS NOT NULL THEN -1 ELSE 0 END,
-                -COALESCE(cache_miss_tokens, 0),
-                CASE WHEN cache_miss_tokens IS NOT NULL THEN -1 ELSE 0 END,
-                -COALESCE(credit, 0),
-                CASE WHEN credit IS NOT NULL THEN -1 ELSE 0 END
+                outcome, :detail_sign, CASE WHEN outcome = 'success' THEN :detail_sign ELSE 0 END,
+                CASE WHEN total_tokens IS NOT NULL THEN :detail_sign ELSE 0 END,
+                """ + ", ".join(
+                    f":detail_sign * COALESCE({name}, 0), "
+                    f"CASE WHEN {name} IS NOT NULL THEN :detail_sign ELSE 0 END"
+                    for name in _STATS_SUM_FIELDS
+                ) + """
             FROM usage_events
             WHERE """ + detail_where,
             detail_parameters,
@@ -1164,7 +1103,7 @@ class UsageStatsStore:
                 SELECT
                     occurred_at, """ + model_expression + """,
                     COALESCE(api_key_id, ''), COALESCE(credential_id, ''),
-                    outcome, :histogram_metric, """ + cls._bucket_sql(column) + """, -1
+                    outcome, :histogram_metric, """ + cls._bucket_sql(column) + """, :detail_sign
                 FROM usage_events
                 WHERE """ + detail_where + f" AND outcome = 'success' AND {column} IS NOT NULL",
                 {**detail_parameters, "histogram_metric": metric},
@@ -1238,7 +1177,6 @@ class UsageStatsStore:
             connection,
             group_column: str,
             label_column: Optional[str],
-            limit: Optional[int],
     ):
         label_select = f", base.{group_column} AS label"
         if label_column is not None:
@@ -1247,15 +1185,12 @@ class UsageStatsStore:
                 f"WHERE latest.{group_column} = base.{group_column} "
                 "ORDER BY latest.period_time DESC, latest.row_id DESC LIMIT 1) AS label"
             )
-        limit_clause = "" if limit is None else " LIMIT :group_limit"
-        parameters = {} if limit is None else {"group_limit": limit}
         return connection.execute(
             f"SELECT base.{group_column} AS identifier{label_select}, "
             f"{cls._aggregate_select('base')} FROM stats_base base "
             f"WHERE base.{group_column} <> '' GROUP BY base.{group_column} "
-            "ORDER BY request_count DESC, identifier ASC"
-            + limit_clause,
-            parameters,
+            "ORDER BY request_count DESC, identifier ASC LIMIT :group_limit",
+            {"group_limit": BREAKDOWN_LIMIT},
         ).fetchall()
 
     @staticmethod
@@ -1379,8 +1314,18 @@ class UsageStatsStore:
             connection,
             group_column,
             label_column,
-            BREAKDOWN_LIMIT,
         )
+        return cls._dimension_metrics(connection, rows, group_column, output_key, label_key)
+
+    @classmethod
+    def _dimension_metrics(
+            cls,
+            connection,
+            rows,
+            group_column: str,
+            output_key: str,
+            label_key: Optional[str],
+    ) -> list[Dict[str, Any]]:
         identifiers = [row["identifier"] for row in rows]
         histograms = {}
         if identifiers:
@@ -1411,7 +1356,7 @@ class UsageStatsStore:
             filters: StatsFilters,
             zone: ZoneInfo,
             granularity: str,
-    ) -> Tuple[Dict[str, Any], list, Dict[str, Any], Dict[str, Any]]:
+    ) -> Tuple[Dict[str, Any], list, Dict[str, Any]]:
         total_row = connection.execute(
             f"SELECT {cls._aggregate_select()} FROM stats_base"
         ).fetchone()
@@ -1477,32 +1422,6 @@ class UsageStatsStore:
                 for row in aggregate_rows
             ]
 
-        model_dimensions = cls._group_rows(
-            connection, "model", None, None
-        )
-        api_key_dimensions = cls._group_rows(
-            connection, "api_key_id", "api_key_name", None
-        )
-        credential_dimensions = cls._group_rows(
-            connection, "credential_id", "credential_label", None
-        )
-        dimensions = {
-            "models": [row["identifier"] for row in model_dimensions],
-            "api_keys": [
-                {"id": row["identifier"], "name": row["label"]}
-                for row in api_key_dimensions
-            ],
-            "credentials": [
-                {"id": row["identifier"], "label": row["label"]}
-                for row in credential_dimensions
-            ],
-            "outcomes": [
-                row["outcome"]
-                for row in connection.execute(
-                    "SELECT outcome FROM stats_base GROUP BY outcome ORDER BY outcome"
-                ).fetchall()
-            ],
-        }
         breakdowns = {
             "models": cls._breakdown_rows(
                 connection, "model", "model", None, None
@@ -1518,7 +1437,7 @@ class UsageStatsStore:
                 "credential_label",
             ),
         }
-        return totals, series, dimensions, breakdowns
+        return totals, series, breakdowns
 
     def get_overview(
             self,
@@ -1562,7 +1481,7 @@ class UsageStatsStore:
                 replaced_hours,
                 detail_segments,
             )
-            totals, series, dimensions, breakdowns = self._read_overview(
+            totals, series, breakdowns = self._read_overview(
                 connection,
                 normalized_filters,
                 zone,
@@ -1588,10 +1507,7 @@ class UsageStatsStore:
                     replaced_hours,
                     detail_segments,
                 )
-                dimensions = self._faceted_dimensions(
-                    connection,
-                    normalized_filters,
-                )
+            dimensions = self._faceted_dimensions(connection, normalized_filters)
 
         reported_drops = (
             self.get_dropped_events(username)
@@ -1845,32 +1761,7 @@ class UsageStatsStore:
             ).fetchall()
             has_more = len(rows) > limit
             selected = rows[:limit]
-            identifiers = [row["identifier"] for row in selected]
-            histograms = {}
-            if identifiers:
-                placeholders = ", ".join("?" for _ in identifiers)
-                histogram_rows = connection.execute(
-                    f"SELECT {group_column} AS identifier, metric, bucket_index, "
-                    "SUM(sample_count) AS sample_count FROM stats_hist "
-                    f"WHERE {group_column} IN ({placeholders}) "
-                    f"GROUP BY {group_column}, metric, bucket_index",
-                    identifiers,
-                ).fetchall()
-                histograms = self._histograms(
-                    histogram_rows,
-                    key_column="identifier",
-                )
-            items = [
-                {
-                    "id": row["identifier"],
-                    "label": row["label"],
-                    **self._metrics_from_row(
-                        row,
-                        histograms.get(row["identifier"], {}),
-                    ),
-                }
-                for row in selected
-            ]
+            items = self._dimension_metrics(connection, selected, group_column, "id", "label")
         next_cursor = None
         if has_more and selected:
             last = selected[-1]

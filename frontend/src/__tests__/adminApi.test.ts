@@ -239,6 +239,7 @@ describe('OpenAI Playground chat 请求', () => {
     const body = { model: 'glm', messages: [{ role: 'user', content: 'hello' }] };
 
     await expect(openaiPlaygroundApi.chat(body, controller.signal)).resolves.toBe(response);
+    expect(response.bodyUsed).toBe(false);
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/admin/playground/openai/v1/chat/completions',
       expect.objectContaining({
@@ -303,6 +304,7 @@ describe('Anthropic Playground chat 请求', () => {
     };
 
     await expect(anthropicPlaygroundApi.chat(body, controller.signal)).resolves.toBe(response);
+    expect(response.bodyUsed).toBe(false);
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/admin/playground/anthropic/v1/messages',
       expect.objectContaining({

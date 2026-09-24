@@ -272,6 +272,45 @@ class StatsApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status_code, 422)
                 self.assertEqual(response.headers["Cache-Control"], "private, no-store")
 
+    async def test_stats_query_schema_keeps_shared_and_route_specific_parameters(self):
+        response = await self._get("/openapi.json", session=True)
+        paths = response.json()["paths"]
+        common = {"start_at", "end_at", "timezone", "traffic", "model",
+                  "api_key_id", "credential_id", "outcome"}
+        extras = {
+            "/overview": {"granularity"},
+            "/requests": {"page", "page_size", "snapshot_id", "snapshot_time"},
+            "/dimensions/{dimension}": {"dimension", "search", "cursor", "limit"},
+        }
+        for suffix, extra in extras.items():
+            with self.subTest(suffix=suffix):
+                operation = paths["/api/admin/stats" + suffix]["get"]
+                params = {item["name"]: item for item in operation["parameters"]}
+                self.assertEqual(set(params), common | extra)
+                self.assertNotIn("requestBody", operation)
+                for name in common:
+                    self.assertEqual(params[name]["in"], "query")
+                    self.assertFalse(params[name]["required"])
+                for name in ("start_at", "end_at"):
+                    numeric = params[name]["schema"]["anyOf"][0]
+                    self.assertEqual(numeric["minimum"], 0)
+                    self.assertEqual(numeric["maximum"], 253370764799)
+                self.assertEqual(params["traffic"]["schema"]["enum"], ["all", "external", "admin"])
+                self.assertEqual(params["timezone"]["schema"]["default"], "UTC")
+
+    async def test_shared_query_validation_keeps_locations_and_authentication_priority(self):
+        for suffix in ("overview", "requests", "dimensions/models"):
+            path = "/api/admin/stats/" + suffix + "?start_at=-1&traffic=invalid"
+            with self.subTest(suffix=suffix):
+                unauthenticated = await self._get(path)
+                self.assertEqual(unauthenticated.status_code, 401)
+                response = await self._get(path, session=True)
+                self.assertEqual(response.status_code, 422)
+                self.assertEqual(
+                    [item["loc"] for item in response.json()["detail"]],
+                    [["query", "start_at"], ["query", "traffic"]],
+                )
+
     async def test_openapi_exposes_stats_as_session_protected_routes(self):
         response = await self._get("/openapi.json", session=True)
         self.assertEqual(response.status_code, 200)

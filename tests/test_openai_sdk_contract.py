@@ -60,7 +60,7 @@ class OpenAISDKContractTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
             default_headers=headers, max_retries=0,
         )
 
-    @mock.patch("src.openai_router.create_usage_stats_context", return_value=None)
+    @mock.patch("src.openai_router.create_usage_stats_context")
     async def test_sdk_image_tool_roundtrip_stream_usage_and_playground(self, _stats):
         messages = [{"role": "user", "content": [
             {"type": "text", "text": "查看图片"},

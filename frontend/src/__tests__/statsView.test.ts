@@ -1189,6 +1189,36 @@ describe('StatsView', () => {
     expect(wrapper.text()).toContain('外部 API');
     const detailLists = wrapper.findAll('.stats-request-detail-list');
     expect(detailLists).toHaveLength(4);
+    expect(detailLists.map((list) => list.findAll('dt').map((term) => term.text()))).toEqual([
+      ['ID', '时间', '来源', '请求模型', '上游模型', 'API Key', '凭证', '流式', '思考模式'],
+      [
+        '结果',
+        'HTTP 状态',
+        '逻辑状态',
+        '错误类型',
+        '结束原因',
+        '消息数',
+        '声明工具数',
+        '工具调用数',
+        '重试次数',
+        '请求大小',
+        '响应大小',
+      ],
+      [
+        '输入 Token',
+        '输出 Token',
+        '总 Token',
+        '推理 Token',
+        '缓存命中 Token',
+        '缓存未命中 Token',
+        '缓存写入 Token',
+        '积分',
+      ],
+      ['总耗时', '首个 SSE 事件', '首个有效输出', '首个推理', '首个正文'],
+    ]);
+    expect(detailLists[0]!.findAll('dd')[0]!.classes()).toEqual(['font-mono', 'break-all']);
+    expect(detailLists[0]!.findAll('dd')[3]!.classes()).toEqual(['break-all']);
+    expect(detailLists[0]!.findAll('dd')[4]!.classes()).toEqual(['break-all']);
     for (const list of detailLists) {
       expect(list.classes()).toEqual(
         expect.arrayContaining([

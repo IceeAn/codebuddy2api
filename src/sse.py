@@ -15,17 +15,6 @@ SSE_HEADERS = {
 }
 
 
-def format_sse_error(message: str, error_type: str = "stream_error") -> str:
-    """格式化 SSE 错误响应。"""
-    error_data = {
-        "error": {
-            "message": message,
-            "type": error_type,
-        }
-    }
-    return format_sse_event(error_data)
-
-
 def format_sse_event(data: Any) -> str:
     """格式化 data-only SSE 事件，OpenAI 兼容客户端依赖空行作为事件边界。"""
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"

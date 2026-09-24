@@ -25,7 +25,8 @@ htmlcov/
 /frontend/playwright-report/
 /.pnpm-store/
 
-# 本地开发工具
+# 本地开发工具及代理工作产物
+/AGENT_DB/
 /.codegraph/
 
 # 编辑器

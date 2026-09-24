@@ -7,7 +7,6 @@ from src.codebuddy_events import SSE_DONE
 from src.sse import (
     SSEDataError,
     format_sse_done,
-    format_sse_error,
     format_sse_event,
     iter_sse_events,
     parse_sse_event,
@@ -23,8 +22,8 @@ class SSEFormatTests(unittest.TestCase):
     def test_format_sse_done(self):
         self.assertEqual(format_sse_done(), "data: [DONE]\n\n")
 
-    def test_format_sse_error(self):
-        event = format_sse_error("boom", "api_error")
+    def test_format_sse_event_preserves_error_payload(self):
+        event = format_sse_event({"error": {"message": "boom", "type": "api_error"}})
 
         payload = json.loads(event.removeprefix("data: ").strip())
         self.assertEqual(payload, {"error": {"message": "boom", "type": "api_error"}})

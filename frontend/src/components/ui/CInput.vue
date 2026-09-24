@@ -110,34 +110,11 @@ const textareaStyle = computed(() => {
 
 <template>
   <div class="relative inline-flex w-full min-w-0">
-    <textarea
-      v-if="currentType === 'textarea'"
+    <component
+      :is="currentType === 'textarea' ? 'textarea' : 'input'"
       ref="inputRef"
       :id="controlId"
-      :value="modelValue"
-      :placeholder="placeholder"
-      :readonly="readonly"
-      :disabled="disabled"
-      :autocomplete="autocomplete"
-      :maxlength="maxlength"
-      :aria-labelledby="labelledBy"
-      :aria-invalid="controlInvalid"
-      :aria-describedby="describedBy"
-      :class="[
-        'c-control-focus readonly:bg-surface-2 readonly:text-text readonly:font-mono readonly:text-[13px] w-full min-w-0 resize-y rounded-md border border-border bg-surface px-3 py-2 text-sm leading-relaxed text-text placeholder:text-muted/60 hover:border-border-strong disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-muted/60',
-        error ? 'border-error-500 ring-2 ring-error-500/20' : '',
-      ]"
-      :style="textareaStyle"
-      @input="onInput"
-      @blur="onBlur"
-      @keydown="onKeydown"
-      @keyup="onKeyup"
-    />
-    <input
-      v-else
-      ref="inputRef"
-      :id="controlId"
-      :type="actualInputType"
+      :type="currentType === 'textarea' ? undefined : actualInputType"
       :value="modelValue"
       :placeholder="placeholder"
       :readonly="readonly"
@@ -149,10 +126,13 @@ const textareaStyle = computed(() => {
       :aria-describedby="describedBy"
       :class="[
         'c-control-focus readonly:bg-surface-2 readonly:text-text readonly:font-mono readonly:text-[13px] w-full min-w-0 border border-border bg-surface text-text placeholder:text-muted/60 hover:border-border-strong disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-muted/60',
-        sizeClass,
+        currentType === 'textarea'
+          ? 'resize-y rounded-md px-3 py-2 text-sm leading-relaxed'
+          : sizeClass,
         error ? 'border-error-500 ring-2 ring-error-500/20' : '',
         currentType === 'password' ? 'pr-[38px]' : '',
       ]"
+      :style="currentType === 'textarea' ? textareaStyle : undefined"
       @input="onInput"
       @blur="onBlur"
       @keydown="onKeydown"

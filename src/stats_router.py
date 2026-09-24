@@ -1,5 +1,6 @@
 """管理台持久化请求统计 API。"""
 
+from dataclasses import replace
 from typing import Annotated, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
@@ -22,17 +23,15 @@ Granularity = Literal["auto", "hour", "day", "week"]
 Dimension = Literal["models", "api_keys", "credentials"]
 
 
-def _stats_filters(
-    *,
-    start_at: Optional[int],
-    end_at: Optional[int],
-    timezone: str,
-    traffic: Traffic,
-    model: Optional[str],
-    api_key_id: Optional[str],
-    credential_id: Optional[str],
-    outcome: Optional[str],
-    granularity: Granularity = "auto",
+async def _stats_filters(
+    start_at: Annotated[Optional[int], Query(ge=0, le=MAX_STATS_TIMESTAMP)] = None,
+    end_at: Annotated[Optional[int], Query(ge=0, le=MAX_STATS_TIMESTAMP)] = None,
+    timezone: str = "UTC",
+    traffic: Traffic = "all",
+    model: Optional[str] = None,
+    api_key_id: Optional[str] = None,
+    credential_id: Optional[str] = None,
+    outcome: Optional[str] = None,
 ) -> StatsFilters:
     return StatsFilters(
         start_time=start_at,
@@ -43,7 +42,6 @@ def _stats_filters(
         api_key_id=api_key_id,
         credential_id=credential_id,
         outcome=outcome,
-        granularity=granularity,
     )
 
 
@@ -53,33 +51,15 @@ def _invalid_query(error: ValueError) -> HTTPException:
 
 @router.get("/overview")
 def get_stats_overview(
-    start_at: Annotated[Optional[int], Query(ge=0, le=MAX_STATS_TIMESTAMP)] = None,
-    end_at: Annotated[Optional[int], Query(ge=0, le=MAX_STATS_TIMESTAMP)] = None,
-    timezone: str = "UTC",
-    traffic: Traffic = "all",
-    model: Optional[str] = None,
-    api_key_id: Optional[str] = None,
-    credential_id: Optional[str] = None,
-    outcome: Optional[str] = None,
+    filters: StatsFilters = Depends(_stats_filters),
     granularity: Granularity = "auto",
     user: AuthenticatedUser = Depends(require_session_user),
 ):
     """返回当前用户在指定时间范围内的统计总览。"""
     try:
-        filters = _stats_filters(
-            start_at=start_at,
-            end_at=end_at,
-            timezone=timezone,
-            traffic=traffic,
-            model=model,
-            api_key_id=api_key_id,
-            credential_id=credential_id,
-            outcome=outcome,
-            granularity=granularity,
-        )
         return usage_stats_store.get_overview(
             user.username,
-            filters,
+            replace(filters, granularity=granularity),
             dropped_events=(
                 usage_stats_store.get_dropped_events(user.username)
                 + dropped_completion_events.get(user.username)
@@ -91,14 +71,7 @@ def get_stats_overview(
 
 @router.get("/requests")
 def list_stats_requests(
-    start_at: Annotated[Optional[int], Query(ge=0, le=MAX_STATS_TIMESTAMP)] = None,
-    end_at: Annotated[Optional[int], Query(ge=0, le=MAX_STATS_TIMESTAMP)] = None,
-    timezone: str = "UTC",
-    traffic: Traffic = "all",
-    model: Optional[str] = None,
-    api_key_id: Optional[str] = None,
-    credential_id: Optional[str] = None,
-    outcome: Optional[str] = None,
+    filters: StatsFilters = Depends(_stats_filters),
     page: Annotated[int, Query(ge=1, le=SQLITE_MAX_INTEGER)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
     snapshot_id: Annotated[Optional[int], Query(ge=0, le=SQLITE_MAX_INTEGER)] = None,
@@ -107,16 +80,6 @@ def list_stats_requests(
 ):
     """返回当前用户最近 90 天内的脱敏请求明细。"""
     try:
-        filters = _stats_filters(
-            start_at=start_at,
-            end_at=end_at,
-            timezone=timezone,
-            traffic=traffic,
-            model=model,
-            api_key_id=api_key_id,
-            credential_id=credential_id,
-            outcome=outcome,
-        )
         return usage_stats_store.list_events(
             user.username,
             filters,
@@ -132,14 +95,7 @@ def list_stats_requests(
 @router.get("/dimensions/{dimension}")
 def list_stats_dimensions(
     dimension: Dimension,
-    start_at: Annotated[Optional[int], Query(ge=0, le=MAX_STATS_TIMESTAMP)] = None,
-    end_at: Annotated[Optional[int], Query(ge=0, le=MAX_STATS_TIMESTAMP)] = None,
-    timezone: str = "UTC",
-    traffic: Traffic = "all",
-    model: Optional[str] = None,
-    api_key_id: Optional[str] = None,
-    credential_id: Optional[str] = None,
-    outcome: Optional[str] = None,
+    filters: StatsFilters = Depends(_stats_filters),
     search: Annotated[str, Query(max_length=100)] = "",
     cursor: Annotated[Optional[str], Query(max_length=1024)] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
@@ -147,16 +103,6 @@ def list_stats_dimensions(
 ):
     """分页返回指定统计维度的完整历史排行。"""
     try:
-        filters = _stats_filters(
-            start_at=start_at,
-            end_at=end_at,
-            timezone=timezone,
-            traffic=traffic,
-            model=model,
-            api_key_id=api_key_id,
-            credential_id=credential_id,
-            outcome=outcome,
-        )
         return usage_stats_store.list_dimension_values(
             user.username,
             dimension,

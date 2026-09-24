@@ -648,8 +648,8 @@ class AnthropicRouteTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(await _available_models(user), ["configured-model"])
 
-    @mock.patch("src.anthropic_router.create_usage_stats_context", return_value=None)
-    async def test_error_paths_without_optional_stats_context(self, _create_stats):
+    @mock.patch("src.anthropic_router.create_usage_stats_context")
+    async def test_error_paths_with_request_stats_context(self, _create_stats):
         invalid_json = await self._request(
             "POST",
             "/anthropic/v1/messages",

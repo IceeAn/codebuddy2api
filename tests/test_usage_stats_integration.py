@@ -17,15 +17,15 @@ from web import app
 
 
 class FakeTokenManager:
-    def get_next_credential(self):
-        return {
+    def select_next_credential(self):
+        return "credential-1", {
             "bearer_token": "upstream-secret",
             "user_id": "upstream-user",
             "domain": "codebuddy.example",
-        }
+        }, 0
 
     @staticmethod
-    def get_current_credential_info():
+    def get_credential_info_by_id(_credential_id):
         return {
             "credential_id": "credential-1",
             "filename": "credential.json",
@@ -236,7 +236,7 @@ class UsageStatsIntegrationTests(TempConfigMixin, unittest.IsolatedAsyncioTestCa
     async def test_missing_credential_preserves_safe_client_request_shape(self):
         class EmptyTokenManager:
             @staticmethod
-            def get_next_credential():
+            def select_next_credential():
                 return None
 
         body = {

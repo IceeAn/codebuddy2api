@@ -459,10 +459,10 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
             with mock.patch.object(manager.store, "save_manager_state", side_effect=RuntimeError("disk full")):
                 manager.save_state()
 
-    def test_get_next_credential_handles_empty_and_optional_selection_metadata(self):
+    def test_select_next_credential_handles_empty_and_optional_selection_metadata(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
-            self.assertIsNone(manager.get_next_credential())
+            self.assertIsNone(manager.select_next_credential())
 
             record = credential_record("selected")
             selections = [
@@ -472,7 +472,7 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
             for selection in selections:
                 with self.subTest(selection=selection):
                     with mock.patch.object(manager.rotation_policy, "select", return_value=selection):
-                        self.assertEqual(manager.get_next_credential()["bearer_token"], "selected-token")
+                        self.assertEqual(manager.select_next_credential()[1]["bearer_token"], "selected-token")
 
     def test_preview_next_credential_does_not_advance_rotation_state(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -841,7 +841,7 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
             self.assertTrue(manager.delete_credential_by_index(0))
 
             self.assertEqual(manager.current_index, 0)
-            self.assertEqual(manager.get_next_credential()["bearer_token"], "b-token")
+            self.assertEqual(manager.select_next_credential()[1]["bearer_token"], "b-token")
 
     def test_token_manager_preserves_current_credential_after_adding_prior_file(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -854,7 +854,7 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
             self.assertTrue(add_credential(manager, "a-token", "a-user", "a"))
 
             self.assertEqual(manager.current_index, 1)
-            self.assertEqual(manager.get_next_credential()["bearer_token"], "b-token")
+            self.assertEqual(manager.select_next_credential()[1]["bearer_token"], "b-token")
 
     def test_token_manager_preserves_fixed_credential_after_deleting_prior_file(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -867,7 +867,7 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
             self.assertTrue(manager.delete_credential_by_index(0))
 
             self.assertEqual(manager.current_index, 0)
-            self.assertEqual(manager.get_next_credential()["bearer_token"], "b-token")
+            self.assertEqual(manager.select_next_credential()[1]["bearer_token"], "b-token")
 
     def test_token_manager_restores_current_credential_by_filename_after_prior_file_removed(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -882,7 +882,7 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
             reloaded_manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
 
             self.assertEqual(reloaded_manager.current_index, 0)
-            self.assertEqual(reloaded_manager.get_next_credential()["bearer_token"], "b-token")
+            self.assertEqual(reloaded_manager.select_next_credential()[1]["bearer_token"], "b-token")
 
     def test_token_manager_does_not_restore_missing_current_filename_by_index(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -897,7 +897,7 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
             reloaded_manager = CodeBuddyTokenManager(creds_dir=tmp_dir)
 
             self.assertEqual(reloaded_manager.current_index, 0)
-            self.assertEqual(reloaded_manager.get_next_credential()["bearer_token"], "a-token")
+            self.assertEqual(reloaded_manager.select_next_credential()[1]["bearer_token"], "a-token")
 
     def test_token_manager_rejects_invalid_current_credential_boundaries(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -983,13 +983,13 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
 
             self.assertTrue(manager.set_current_credential(1))
             self.assertFalse(manager._is_auto_rotation_enabled())
-            self.assertEqual(manager.get_next_credential()["bearer_token"], "b-token")
+            self.assertEqual(manager.select_next_credential()[1]["bearer_token"], "b-token")
 
             manager.enable_auto_rotation()
 
             self.assertTrue(manager._is_auto_rotation_enabled())
-            self.assertEqual(manager.get_next_credential()["bearer_token"], "b-token")
-            self.assertEqual(manager.get_next_credential()["bearer_token"], "a-token")
+            self.assertEqual(manager.select_next_credential()[1]["bearer_token"], "b-token")
+            self.assertEqual(manager.select_next_credential()[1]["bearer_token"], "a-token")
 
     def test_token_manager_registry_isolates_users(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -1037,12 +1037,12 @@ class TokenManagerTests(ConfigIsolationMixin, unittest.TestCase):
             self.assertTrue(add_credential(manager, "a-token", "a-user", "a"))
             self.assertTrue(add_credential(manager, "b-token", "b-user", "b"))
 
-            first = manager.get_next_credential()
-            second = manager.get_next_credential()
+            first = manager.select_next_credential()
+            second = manager.select_next_credential()
             current = manager.get_current_credential_info()
 
-            self.assertEqual(first["bearer_token"], "a-token")
-            self.assertEqual(second["bearer_token"], "a-token")
+            self.assertEqual(first[1]["bearer_token"], "a-token")
+            self.assertEqual(second[1]["bearer_token"], "a-token")
             self.assertEqual(current["status"], "auto_rotation_disabled")
             self.assertIs(current["auto_rotation_enabled"], False)
 

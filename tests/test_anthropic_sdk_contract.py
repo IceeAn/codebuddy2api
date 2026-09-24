@@ -80,7 +80,7 @@ class AnthropicSDKContractTests(TempConfigMixin, unittest.IsolatedAsyncioTestCas
         )
         return client, http_client
 
-    @mock.patch("src.anthropic_router.create_usage_stats_context", return_value=None)
+    @mock.patch("src.anthropic_router.create_usage_stats_context")
     async def test_sdk_multimodal_tool_round_trip_and_playground(self, _stats):
         from src.auth_types import SESSION_COOKIE_NAME
         from src.session_store import session_store
@@ -117,7 +117,7 @@ class AnthropicSDKContractTests(TempConfigMixin, unittest.IsolatedAsyncioTestCas
         finally:
             await client.close()
 
-    @mock.patch("src.anthropic_router.create_usage_stats_context", return_value=None)
+    @mock.patch("src.anthropic_router.create_usage_stats_context")
     async def test_sdk_refusal_and_unconstrained_output_are_not_lost_or_repaired(self, _stats):
         client, _ = self._client()
         try:
@@ -136,7 +136,7 @@ class AnthropicSDKContractTests(TempConfigMixin, unittest.IsolatedAsyncioTestCas
         finally:
             await client.close()
 
-    @mock.patch("src.anthropic_router.create_usage_stats_context", return_value=None)
+    @mock.patch("src.anthropic_router.create_usage_stats_context")
     @mock.patch(
         "src.anthropic_router._available_models",
         new_callable=mock.AsyncMock,
@@ -196,7 +196,7 @@ class AnthropicSDKContractTests(TempConfigMixin, unittest.IsolatedAsyncioTestCas
             if not http_client.is_closed:
                 await http_client.aclose()
 
-    @mock.patch("src.anthropic_router.create_usage_stats_context", return_value=None)
+    @mock.patch("src.anthropic_router.create_usage_stats_context")
     async def test_sdk_parses_anthropic_error_and_request_id(self, _stats):
         client, http_client = self._client(api_key="sk-invalid")
         try:

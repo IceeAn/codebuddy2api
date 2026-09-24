@@ -1068,7 +1068,7 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
                 mock.AsyncMock(return_value="target-real-model"),
             ) as first_model_for_credential,
             mock.patch(
-                "src.models_manager.ModelsManager.get_first_actual_model",
+                "src.models_manager.ModelsManager.get_actual_models",
                 mock.AsyncMock(side_effect=AssertionError("should not use current credential model lookup")),
             ) as first_model,
         ):
@@ -1116,6 +1116,9 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         config.update_settings({"CODEBUDDY_MODELS": ""}, username=self.user.username)
 
         class FakeService:
+            def __init__(self, *, observer):
+                self.observer = observer
+
             async def handle_non_stream_response(self, _payload, _headers, *, response_model):
                 raise AssertionError("stream service should not run without a model")
 
@@ -1161,6 +1164,9 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         captured = {}
 
         class FakeService:
+            def __init__(self, *, observer):
+                self.observer = observer
+
             async def handle_non_stream_response(self, payload, headers, *, response_model):
                 captured["payload"] = payload
                 captured["headers"] = headers
@@ -1179,6 +1185,7 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
                 CredentialTestRequest(),
                 self.user,
                 stream_service_factory=FakeService,
+                stats_context=mock.Mock(),
             )
 
         self.assertEqual(result, {
@@ -1207,6 +1214,7 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
                 CredentialTestRequest(),
                 self.user,
                 stream_service_factory=mock.Mock,
+                stats_context=mock.Mock(),
             )
         self.assertEqual(test_context.exception.status_code, 404)
 
@@ -1267,7 +1275,8 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
                         credential_id,
                         CredentialTestRequest(message=""),
                         self.user,
-                        stream_service_factory=lambda: service,
+                        stream_service_factory=lambda **_kwargs: service,
+                        stats_context=mock.Mock(),
                     )
 
                 self.assertFalse(result["ok"])
@@ -1276,12 +1285,15 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
                 if sensitive_detail:
                     self.assertNotIn(sensitive_detail, result["detail"])
 
-    async def test_admin_credential_test_optional_stats_branches(self):
+    async def test_admin_credential_test_records_success_and_model_lookup_failure(self):
         manager = self._manager()
         self.assertTrue(self._add_credential(manager, "target-token", "target-user", "target"))
         credential_id = manager.get_credentials_info()[0]["credential_id"]
 
         class SuccessfulService:
+            def __init__(self, *, observer):
+                self.observer = observer
+
             async def handle_non_stream_response(self, _payload, _headers, *, response_model):
                 return {"model": response_model}
 
@@ -1297,6 +1309,7 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
                 CredentialTestRequest(),
                 self.user,
                 stream_service_factory=SuccessfulService,
+                stats_context=mock.Mock(),
             )
 
         self.assertEqual(result, {"ok": True, "status_code": 200, "model_source": "actual"})
@@ -1314,6 +1327,7 @@ class AdminApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
                 CredentialTestRequest(),
                 self.user,
                 stream_service_factory=mock.Mock,
+                stats_context=mock.Mock(),
             )
 
         self.assertEqual(result["status_code"], 502)

@@ -79,11 +79,9 @@ class _ToolState:
     tool_id: Optional[str] = None
     name: Optional[str] = None
     arguments: str = ""
-    content_index: Optional[int] = None
-    started: bool = False
     closed: bool = False
 
-    def merge(self, tool_call: Dict[str, Any]) -> str:
+    def merge(self, tool_call: Dict[str, Any]) -> None:
         tool_type = tool_call.get("type")
         if tool_type is not None and tool_type != "function":
             raise UpstreamProtocolViolation("CodeBuddy tool call type must be function")
@@ -97,7 +95,7 @@ class _ToolState:
 
         function = tool_call.get("function")
         if function is None:
-            return ""
+            return
         if not isinstance(function, dict):
             raise UpstreamProtocolViolation("CodeBuddy tool call function must be an object")
         name = function.get("name")
@@ -110,11 +108,10 @@ class _ToolState:
                 self.name = name
         arguments = function.get("arguments")
         if arguments is None:
-            return ""
+            return
         if not isinstance(arguments, str):
             raise UpstreamProtocolViolation("CodeBuddy tool arguments delta must be a string")
         self.arguments += arguments
-        return arguments
 
     def parsed_input(self) -> Dict[str, Any]:
         if self.tool_id is None or self.name is None:
@@ -188,7 +185,7 @@ class _AnthropicEventConsumer:
             raise UpstreamProtocolViolation(f"CodeBuddy {field_name} delta must be a string")
         return value
 
-    def _tool_state(self, tool_call: Any) -> tuple[_ToolState, str]:
+    def _tool_state(self, tool_call: Any) -> _ToolState:
         if not isinstance(tool_call, dict):
             raise UpstreamProtocolViolation("CodeBuddy tool call delta must be an object")
         if "index" in tool_call and (
@@ -204,8 +201,8 @@ class _AnthropicEventConsumer:
             self.tools[index] = state
         if state.closed:
             raise UpstreamProtocolViolation("CodeBuddy emitted data for a closed tool call")
-        argument_delta = state.merge(tool_call)
-        return state, argument_delta
+        state.merge(tool_call)
+        return state
 
     def _tool_calls(self, event: CodeBuddyResponseEvent) -> Optional[List[Any]]:
         if "tool_calls" not in event.delta:
@@ -241,8 +238,16 @@ class AnthropicNonStreamAggregator(_AnthropicEventConsumer):
             self.tools[index]
             for index in sorted(self.pending_tool_indexes)
         ]
-        for state in states:
-            state.parsed_input()
+        blocks = [
+            {
+                "type": "tool_use",
+                "id": state.tool_id,
+                "name": state.name,
+                "input": state.parsed_input(),
+            }
+            for state in states
+        ]
+        self.blocks.extend(blocks)
         for state in states:
             state.closed = True
         self.pending_tool_indexes.clear()
@@ -256,10 +261,8 @@ class AnthropicNonStreamAggregator(_AnthropicEventConsumer):
 
     def _process_tools(self, tool_calls: List[Any]) -> None:
         for tool_call in tool_calls:
-            state, _argument_delta = self._tool_state(tool_call)
-            if state.upstream_index not in self.pending_tool_indexes:
-                self.blocks.append({"type": "tool_use", "_tool_index": state.upstream_index})
-                self.pending_tool_indexes.add(state.upstream_index)
+            state = self._tool_state(tool_call)
+            self.pending_tool_indexes.add(state.upstream_index)
 
     def process_event(self, event: CodeBuddyResponseEvent) -> None:
         self._capture_finish_and_usage(event)
@@ -278,26 +281,9 @@ class AnthropicNonStreamAggregator(_AnthropicEventConsumer):
 
     def _final_blocks(self) -> List[Dict[str, Any]]:
         blocks = [item.copy() for item in self.blocks]
-        run_start = 0
-        while run_start < len(blocks):
-            if "_tool_index" not in blocks[run_start]:
-                run_start += 1
-                continue
-            run_end = run_start
-            while run_end < len(blocks) and "_tool_index" in blocks[run_end]:
-                run_end += 1
-            blocks[run_start:run_end] = sorted(
-                blocks[run_start:run_end],
-                key=lambda item: item["_tool_index"],
-            )
-            run_start = run_end
-
         for block in blocks:
             if block["type"] == "thinking":
                 block["signature"] = anthropic_thinking_signature(block["thinking"])
-            if "_tool_index" in block:
-                state = self.tools[block.pop("_tool_index")]
-                block.update({"id": state.tool_id, "name": state.name, "input": state.parsed_input()})
         return blocks
 
     def finalize(self) -> Dict[str, Any]:
@@ -384,12 +370,11 @@ class AnthropicStreamEncoder(_AnthropicEventConsumer):
 
         chunks: List[str] = []
         for state in states:
-            state.content_index = self.next_content_index
+            content_index = self.next_content_index
             self.next_content_index += 1
-            state.started = True
             chunks.append(format_anthropic_sse("content_block_start", {
                 "type": "content_block_start",
-                "index": state.content_index,
+                "index": content_index,
                 "content_block": {
                     "type": "tool_use",
                     "id": state.tool_id,
@@ -399,7 +384,7 @@ class AnthropicStreamEncoder(_AnthropicEventConsumer):
             }))
             chunks.append(format_anthropic_sse("content_block_delta", {
                 "type": "content_block_delta",
-                "index": state.content_index,
+                "index": content_index,
                 "delta": {
                     "type": "input_json_delta",
                     "partial_json": state.arguments,
@@ -407,7 +392,7 @@ class AnthropicStreamEncoder(_AnthropicEventConsumer):
             }))
             chunks.append(format_anthropic_sse("content_block_stop", {
                 "type": "content_block_stop",
-                "index": state.content_index,
+                "index": content_index,
             }))
             state.closed = True
         self.pending_tool_indexes.clear()
@@ -443,7 +428,7 @@ class AnthropicStreamEncoder(_AnthropicEventConsumer):
     def _process_tools(self, tool_calls: List[Any]) -> List[str]:
         chunks = self._close_scalar()
         for tool_call in tool_calls:
-            state, _argument_delta = self._tool_state(tool_call)
+            state = self._tool_state(tool_call)
             self.pending_tool_indexes.add(state.upstream_index)
         return chunks
 

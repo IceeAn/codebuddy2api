@@ -256,42 +256,37 @@ async def _available_models(user: AuthenticatedUser) -> List[str]:
 async def anthropic_messages(
         request: Request,
         user: AuthenticatedUser,
-        stats_context: Optional[UsageStatsContext] = None,
+        stats_context: UsageStatsContext,
         request_bytes: int = 0,
 ) -> Any:
     """校验、转换并执行一个 Anthropic Messages 请求。"""
     request_id = get_anthropic_request_id(request)
-    if stats_context is not None:
-        stats_context.capture_request_bytes(request_bytes)
+    stats_context.capture_request_bytes(request_bytes)
     try:
         try:
             request_body = await request.json()
         except HTTPException as error:
-            if stats_context is not None:
-                stats_context.mark_failure("validation_error", error.status_code)
+            stats_context.mark_failure("validation_error", error.status_code)
             raise _error(request, error.status_code,
                          "request_too_large" if error.status_code == 413 else "invalid_request_error",
                          str(error.detail), headers=error.headers) from error
         except Exception as error:
-            if stats_context is not None:
-                stats_context.mark_failure("validation_error", 400)
+            stats_context.mark_failure("validation_error", 400)
             raise _error(request, 400, "invalid_request_error", "Invalid JSON request body") from error
 
-        if stats_context is not None and isinstance(request_body, dict):
+        if isinstance(request_body, dict):
             stats_context.capture_request_shape(request_body)
         try:
             converted = translate_anthropic_request(request_body)
         except AnthropicProtocolError as error:
-            if stats_context is not None:
-                stats_context.mark_failure("validation_error", 400)
+            stats_context.mark_failure("validation_error", 400)
             raise _error(request, 400, "invalid_request_error", str(error)) from error
 
         try:
             prepared_base = RequestProcessor.prepare_request(converted, user)
-        except HTTPException as error:
-            if error.status_code < 500:
-                if stats_context is not None:
-                    stats_context.mark_failure("validation_error", error.status_code)
+        except Exception as error:
+            if isinstance(error, HTTPException) and error.status_code < 500:
+                stats_context.mark_failure("validation_error", error.status_code)
                 raise _error(
                     request,
                     error.status_code,
@@ -303,23 +298,7 @@ async def anthropic_messages(
                 token_manager_factory=get_token_manager_for_user,
             )
             if availability is False:
-                if stats_context is not None:
-                    stats_context.mark_failure("no_credential", 401)
-                raise _error(
-                    request,
-                    401,
-                    "authentication_error",
-                    "No valid CodeBuddy credential is available",
-                ) from error
-            raise
-        except Exception as error:
-            availability = check_codebuddy_credential_availability(
-                user,
-                token_manager_factory=get_token_manager_for_user,
-            )
-            if availability is False:
-                if stats_context is not None:
-                    stats_context.mark_failure("no_credential", 401)
+                stats_context.mark_failure("no_credential", 401)
                 raise _error(
                     request,
                     401,
@@ -346,8 +325,7 @@ async def anthropic_messages(
                 response_adapter=adapter,
             )
         except CodeBuddyCredentialError as error:
-            if stats_context is not None:
-                stats_context.mark_failure("no_credential", 401)
+            stats_context.mark_failure("no_credential", 401)
             raise _error(request, 401, "authentication_error", str(error)) from error
         except UpstreamAPIError as error:
             raise upstream_error_as_anthropic(request, error) from error
@@ -359,8 +337,7 @@ async def anthropic_messages(
         raise
     except Exception as error:
         logger.error("Anthropic Messages 请求执行失败: %s", type(error).__name__)
-        if stats_context is not None:
-            stats_context.mark_failure("internal_error", 500)
+        stats_context.mark_failure("internal_error", 500)
         raise _error(request, 500, "api_error", "Internal server error") from error
 
 

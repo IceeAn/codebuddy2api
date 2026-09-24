@@ -557,39 +557,36 @@ async def toggle_admin_auto_rotation(_user: AuthenticatedUser = Depends(require_
 async def test_admin_credential(
         credential_id: str,
         request_body: CredentialTestRequest,
-        _user: AuthenticatedUser = Depends(require_session_user),
-        stream_service_factory: Callable[[], CodeBuddyStreamService] = Depends(get_stream_service_factory),
-        stats_context: Optional[UsageStatsContext] = None,
+        _user: AuthenticatedUser,
+        stream_service_factory: Callable[..., CodeBuddyStreamService],
+        stats_context: UsageStatsContext,
 ):
     """使用指定凭证发起最小请求，验证该凭证是否可用。"""
     token_manager = get_token_manager_for_user(_user)
-    if stats_context is not None:
-        stats_context.capture_credential(credential_id, credential_id)
+    stats_context.capture_credential(credential_id, credential_id)
     credential_snapshot = token_manager.snapshot_credential_for_request_by_id(credential_id)
     if credential_snapshot is None:
-        if stats_context is not None:
-            stats_context.mark_failure("credential_not_found", 404)
+        stats_context.mark_failure("credential_not_found", 404)
         raise _credential_not_found()
     credential, credential_generation = credential_snapshot
 
-    if stats_context is not None:
-        credential_info = next(
-            (
-                item for item in token_manager.get_credentials_info()
-                if item.get("credential_id") == credential_id
-            ),
-            {},
-        )
-        label = (
-            credential_info.get("filename")
-            or credential_info.get("user_id")
-            or credential_id
-        )
-        stats_context.capture_credential(
-            credential_id,
-            label,
-            generation=credential_generation,
-        )
+    credential_info = next(
+        (
+            item for item in token_manager.get_credentials_info()
+            if item.get("credential_id") == credential_id
+        ),
+        {},
+    )
+    label = (
+        credential_info.get("filename")
+        or credential_info.get("user_id")
+        or credential_id
+    )
+    stats_context.capture_credential(
+        credential_id,
+        label,
+        generation=credential_generation,
+    )
 
     try:
         model = await models_manager.get_first_actual_model_for_credential(_user, credential_id, credential)
@@ -602,8 +599,7 @@ async def test_admin_credential(
             if str(model_id).strip()
         ]
         if not configured_models:
-            if stats_context is not None:
-                stats_context.mark_failure("model_lookup", 502)
+            stats_context.mark_failure("model_lookup", 502)
             return {
                 "ok": False,
                 "status_code": 502,
@@ -611,20 +607,17 @@ async def test_admin_credential(
             }
         model = configured_models[0]
         model_source = "configured_fallback"
-    if stats_context is not None:
-        stats_context.capture_confirmed_model(model)
+    stats_context.capture_confirmed_model(model)
 
     test_request = {
         "model": model,
         "messages": [{"role": "user", "content": request_body.message or "test"}],
         "max_tokens": 1,
     }
-    if stats_context is not None:
-        stats_context.capture_request_shape(test_request)
+    stats_context.capture_request_shape(test_request)
     prepared_request = RequestProcessor.prepare_request(test_request, _user)
     payload = prepared_request.payload
-    if stats_context is not None:
-        stats_context.capture_prepared_request(payload)
+    stats_context.capture_prepared_request(payload)
     headers = codebuddy_api_client.generate_codebuddy_headers(
         bearer_token=credential.get("bearer_token"),
         user_id=credential.get("user_id"),
@@ -635,24 +628,18 @@ async def test_admin_credential(
     )
 
     try:
-        service = (
-            stream_service_factory(observer=stats_context)
-            if stats_context is not None
-            else stream_service_factory()
-        )
+        service = stream_service_factory(observer=stats_context)
         await service.handle_non_stream_response(
             payload,
             headers,
             response_model=prepared_request.response_model,
         )
-        if stats_context is not None:
-            stats_context.mark_success()
+        stats_context.mark_success()
         return {"ok": True, "status_code": 200, "model_source": model_source}
     except HTTPException as e:
-        if stats_context is not None:
-            error = getattr(e, "error", None)
-            error_type = error.get("type") if isinstance(error, dict) else "upstream_error"
-            stats_context.mark_failure(error_type, e.status_code)
+        error = getattr(e, "error", None)
+        error_type = error.get("type") if isinstance(error, dict) else "upstream_error"
+        stats_context.mark_failure(error_type, e.status_code)
         return {
             "ok": False,
             "status_code": e.status_code,
@@ -661,8 +648,7 @@ async def test_admin_credential(
         }
     except Exception:
         logger.exception("Credential test failed")
-        if stats_context is not None:
-            stats_context.mark_failure("internal_error", 500)
+        stats_context.mark_failure("internal_error", 500)
         return {
             "ok": False,
             "status_code": 500,

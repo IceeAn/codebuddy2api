@@ -299,8 +299,8 @@ class ServerLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 "shutdown",
                 new=mock.AsyncMock(),
             ) as retention_shutdown,
-            mock.patch.object(web.lifecycle_manager, "startup", new=mock.AsyncMock()) as startup,
-            mock.patch.object(web.lifecycle_manager, "shutdown", new=mock.AsyncMock()) as shutdown,
+            mock.patch.object(web, "startup_http_client", new=mock.AsyncMock()) as startup,
+            mock.patch.object(web, "shutdown_http_client", new=mock.AsyncMock()) as shutdown,
             mock.patch.object(
                 web.credential_refresh_manager,
                 "startup",
@@ -359,8 +359,8 @@ class ServerLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 "shutdown",
                 new=mock.AsyncMock(),
             ) as retention_shutdown,
-            mock.patch.object(web.lifecycle_manager, "startup", new=mock.AsyncMock()) as startup,
-            mock.patch.object(web.lifecycle_manager, "shutdown", new=mock.AsyncMock()) as shutdown,
+            mock.patch.object(web, "startup_http_client", new=mock.AsyncMock()) as startup,
+            mock.patch.object(web, "shutdown_http_client", new=mock.AsyncMock()) as shutdown,
             mock.patch.object(
                 web.credential_refresh_manager,
                 "startup",

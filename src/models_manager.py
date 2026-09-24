@@ -149,14 +149,6 @@ class ModelsManager:
         self._models_cache.pop(cache_key, None)
         self._models_cache_expires_at.pop(cache_key, None)
 
-    async def get_first_actual_model(self, user: AuthenticatedUser) -> str:
-        """返回 CodeBuddy 配置接口真实模型列表中的第一个模型。"""
-        models = await self.get_actual_models(user)
-
-        if not models:
-            raise RuntimeError("CodeBuddy 配置接口没有可用模型")
-        return models[0]
-
     async def get_first_actual_model_for_credential(
             self,
             user: AuthenticatedUser,

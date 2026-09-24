@@ -172,11 +172,6 @@ class CodeBuddyTokenManager:
         """检查 token 是否过期。"""
         return self.token_expiry.is_expired(credential_data)
 
-    def get_next_credential(self) -> Optional[Dict]:
-        """根据当前轮换策略获取下一个可用凭证。"""
-        selected = self.select_next_credential()
-        return selected[1] if selected is not None else None
-
     def select_next_credential(self) -> Optional[tuple[str, Dict, int]]:
         """原子返回下一张凭证的稳定 ID 与数据，供请求归属使用。"""
         from config import get_rotation_count

@@ -167,16 +167,6 @@ export const adminApi = {
 export const codebuddyOAuthApi = {
   startAuth: (signal?: AbortSignal) => {
     const path = '/codebuddy/auth/start';
-    if (signal) {
-      return apiRequest<{
-        verification_uri_complete?: string;
-        auth_state?: string;
-        success?: boolean;
-        message?: string;
-        interval?: number;
-        expires_in?: number;
-      }>(path, { method: 'POST', signal, timeoutMs: OAUTH_START_TIMEOUT_MS });
-    }
     return apiRequest<{
       verification_uri_complete?: string;
       auth_state?: string;
@@ -184,39 +174,42 @@ export const codebuddyOAuthApi = {
       message?: string;
       interval?: number;
       expires_in?: number;
-    }>(path, { method: 'POST', timeoutMs: OAUTH_START_TIMEOUT_MS });
+    }>(path, { method: 'POST', signal, timeoutMs: OAUTH_START_TIMEOUT_MS });
   },
-  pollAuth: (authState: string, signal?: AbortSignal) => {
-    const options: {
-      method: string;
-      json: { auth_state: string };
-      signal?: AbortSignal;
-      timeoutMs: number;
-    } = {
+  pollAuth: (authState: string, signal?: AbortSignal) =>
+    apiRequest<CodeBuddyPollAuthResponse>('/codebuddy/auth/poll', {
       method: 'POST',
       json: { auth_state: authState },
+      signal,
       timeoutMs: OAUTH_POLL_TIMEOUT_MS,
-    };
-    if (signal) {
-      options.signal = signal;
-    }
-    return apiRequest<CodeBuddyPollAuthResponse>('/codebuddy/auth/poll', options);
-  },
-  cancelAuth: (authState: string, signal?: AbortSignal) => {
-    const options: {
-      method: string;
-      json: { auth_state: string };
-      signal?: AbortSignal;
-    } = {
+    }),
+  cancelAuth: (authState: string, signal?: AbortSignal) =>
+    apiRequest<{ cancelled: true }>('/codebuddy/auth/cancel', {
       method: 'POST',
       json: { auth_state: authState },
-    };
-    if (signal) {
-      options.signal = signal;
-    }
-    return apiRequest<{ cancelled: true }>('/codebuddy/auth/cancel', options);
-  },
+      signal,
+    }),
 };
+
+/** 返回未消费的响应体，供调用方读取 SSE；只拦截本系统的会话失效。 */
+async function playgroundChat(
+  path: string,
+  body: ChatCompletionRequest | AnthropicMessageRequest,
+  headers: Headers,
+  signal?: AbortSignal,
+): Promise<Response> {
+  const response = await fetch(path, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers,
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (handleUnauthorizedResponse(response)) {
+    throw new ApiError(401, '认证过期，请重新登录');
+  }
+  return response;
+}
 
 export const openaiPlaygroundApi = {
   responses: (body: ResponsesRequest, signal?: AbortSignal) =>
@@ -232,63 +225,35 @@ export const openaiPlaygroundApi = {
       }
       return response;
     }),
-  models: (signal?: AbortSignal) => {
-    const options: { timeoutMs: number; signal?: AbortSignal } = {
+  models: (signal?: AbortSignal) =>
+    apiRequest<ModelListResponse>('/api/admin/playground/openai/v1/models', {
       timeoutMs: MODEL_LIST_TIMEOUT_MS,
-    };
-    if (signal) options.signal = signal;
-    return apiRequest<ModelListResponse>('/api/admin/playground/openai/v1/models', options);
-  },
-  /**
-   * 直接使用 fetch，避免 apiRequest 先消费 body；调用方需要自行读取流式响应。
-   * 仅将带 Bearer challenge 的 401 识别为本系统会话失效；上游凭证 401 交给调用方处理。
-   */
-  chat: (body: ChatCompletionRequest, signal?: AbortSignal) => {
-    const headers = new Headers({ 'Content-Type': 'application/json' });
-    return fetch('/api/admin/playground/openai/v1/chat/completions', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers,
-      body: JSON.stringify(body),
       signal,
-    }).then((response) => {
-      if (handleUnauthorizedResponse(response)) {
-        throw new ApiError(401, '认证过期，请重新登录');
-      }
-      return response;
-    });
-  },
+    }),
+  chat: (body: ChatCompletionRequest, signal?: AbortSignal) =>
+    playgroundChat(
+      '/api/admin/playground/openai/v1/chat/completions',
+      body,
+      new Headers({ 'Content-Type': 'application/json' }),
+      signal,
+    ),
 };
 
 export const anthropicPlaygroundApi = {
-  models: (signal?: AbortSignal) => {
-    const options: {
-      headers: { 'anthropic-version': string };
-      timeoutMs: number;
-      signal?: AbortSignal;
-    } = {
+  models: (signal?: AbortSignal) =>
+    apiRequest<ModelListResponse>('/api/admin/playground/anthropic/v1/models', {
       headers: { 'anthropic-version': '2023-06-01' },
       timeoutMs: MODEL_LIST_TIMEOUT_MS,
-    };
-    if (signal) options.signal = signal;
-    return apiRequest<ModelListResponse>('/api/admin/playground/anthropic/v1/models', options);
-  },
-  chat: (body: AnthropicMessageRequest, signal?: AbortSignal) => {
-    const headers = new Headers({
-      'Content-Type': 'application/json',
-      'anthropic-version': '2023-06-01',
-    });
-    return fetch('/api/admin/playground/anthropic/v1/messages', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers,
-      body: JSON.stringify(body),
       signal,
-    }).then((response) => {
-      if (handleUnauthorizedResponse(response)) {
-        throw new ApiError(401, '认证过期，请重新登录');
-      }
-      return response;
-    });
-  },
+    }),
+  chat: (body: AnthropicMessageRequest, signal?: AbortSignal) =>
+    playgroundChat(
+      '/api/admin/playground/anthropic/v1/messages',
+      body,
+      new Headers({
+        'Content-Type': 'application/json',
+        'anthropic-version': '2023-06-01',
+      }),
+      signal,
+    ),
 };

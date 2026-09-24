@@ -17,9 +17,6 @@ class FakeTokenManager:
         self.credential = credential
         self.credential_id = credential_id
 
-    def get_next_credential(self):
-        return self.credential
-
     def preview_next_credential(self):
         if not self.credential:
             return None
@@ -296,7 +293,7 @@ class ModelsManagerTests(ConfigIsolationMixin, unittest.IsolatedAsyncioTestCase)
         self.assertEqual(refreshed, ["model-a-refreshed"])
         self.assertEqual(len(client.requests), 2)
 
-    async def test_get_first_actual_model_returns_first_model_from_config_api(self):
+    async def test_get_first_actual_model_for_credential_returns_first_model_from_config_api(self):
         config.update_settings({"CODEBUDDY_MODELS": "manual-a"}, username="admin")
         response = FakeConfigResponse({
             "code": 0,
@@ -305,11 +302,9 @@ class ModelsManagerTests(ConfigIsolationMixin, unittest.IsolatedAsyncioTestCase)
         client = FakeConfigClient(response=response)
         manager = self._make_manager(client)
 
-        with mock.patch(
-                "src.models_manager.get_token_manager_for_user",
-                return_value=FakeTokenManager({"bearer_token": "token-value", "user_id": "user-id"}),
-        ):
-            model = await manager.get_first_actual_model(self._user())
+        model = await manager.get_first_actual_model_for_credential(
+            self._user(), "credential-id", {"bearer_token": "token-value", "user_id": "user-id"},
+        )
 
         self.assertEqual(model, "real-first")
 
@@ -596,12 +591,8 @@ class ModelsManagerTests(ConfigIsolationMixin, unittest.IsolatedAsyncioTestCase)
             with self.assertRaisesRegex(RuntimeError, "credential_id"):
                 await manager.get_actual_models(self._user())
 
-    async def test_first_model_helpers_reject_empty_results(self):
+    async def test_first_model_for_credential_rejects_empty_results(self):
         manager = self._make_manager(FakeConfigClient())
-        with mock.patch.object(manager, "get_actual_models", new=mock.AsyncMock(return_value=[])):
-            with self.assertRaisesRegex(RuntimeError, "没有可用模型"):
-                await manager.get_first_actual_model(self._user())
-
         with mock.patch.object(
             manager,
             "get_actual_models_for_credential",

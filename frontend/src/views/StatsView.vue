@@ -572,6 +572,66 @@ function displayBytes(value: number | null): string {
   return value === null ? '-' : `${value} B`;
 }
 
+type DetailRow = [label: string, value: string | number, className?: string];
+
+function detailSections(record: StatsRequestRecord): Array<{ title: string; items: DetailRow[] }> {
+  return [
+    {
+      title: '请求',
+      items: [
+        ['ID', record.id, 'font-mono break-all'],
+        ['时间', formatTimestamp(record.started_at, timezone)],
+        ['来源', sourceLabel(record.source)],
+        ['请求模型', record.requested_model, 'break-all'],
+        ['上游模型', displayNullable(record.upstream_model), 'break-all'],
+        ['API Key', displayNullable(record.api_key_name)],
+        ['凭证', displayNullable(record.credential_label)],
+        ['流式', displayBoolean(record.client_stream)],
+        ['思考模式', displayNullable(record.thinking_mode)],
+      ],
+    },
+    {
+      title: '结果',
+      items: [
+        ['结果', outcomeLabel(record.outcome)],
+        ['HTTP 状态', displayNullable(record.http_status)],
+        ['逻辑状态', displayNullable(record.result_status)],
+        ['错误类型', displayNullable(record.error_type)],
+        ['结束原因', displayNullable(record.finish_reason)],
+        ['消息数', displayNullable(record.message_count)],
+        ['声明工具数', displayNullable(record.tool_count)],
+        ['工具调用数', displayNullable(record.tool_call_count)],
+        ['重试次数', displayNullable(record.retry_count)],
+        ['请求大小', displayBytes(record.request_bytes)],
+        ['响应大小', displayBytes(record.response_bytes)],
+      ],
+    },
+    {
+      title: '用量',
+      items: [
+        ['输入 Token', formatTokenNumber(record.input_tokens)],
+        ['输出 Token', formatTokenNumber(record.output_tokens)],
+        ['总 Token', formatTokenNumber(record.total_tokens)],
+        ['推理 Token', formatTokenNumber(record.reasoning_tokens)],
+        ['缓存命中 Token', formatTokenNumber(record.cache_hit_tokens)],
+        ['缓存未命中 Token', formatTokenNumber(record.cache_miss_tokens)],
+        ['缓存写入 Token', formatTokenNumber(record.cache_write_tokens)],
+        ['积分', formatCredit(record.credit)],
+      ],
+    },
+    {
+      title: '性能',
+      items: [
+        ['总耗时', formatDurationMs(record.duration_ms)],
+        ['首个 SSE 事件', formatDurationMs(record.first_event_ms)],
+        ['首个有效输出', formatDurationMs(record.first_output_ms)],
+        ['首个推理', formatDurationMs(record.first_reasoning_ms)],
+        ['首个正文', formatDurationMs(record.first_content_ms)],
+      ],
+    },
+  ];
+}
+
 function requestCacheHitLabel(request: StatsRequestRecord): string {
   const percentage = cacheHitPercentage(request.cache_hit_tokens, request.cache_miss_tokens);
   return percentage === null ? '缓存命中率未知' : `${percentage}%缓存命中`;
@@ -1318,101 +1378,15 @@ function breakdownRows(kind: 'models' | 'api_keys' | 'credentials'): RankingRow[
       <div v-else-if="detail" class="space-y-5">
         <CAlert type="info">此处仅展示脱敏指标，不保存请求提示词、回答、Token 或工具参数。</CAlert>
 
-        <section>
-          <h3 class="mb-2 text-sm font-semibold text-text-strong">请求</h3>
+        <section v-for="section in detailSections(detail)" :key="section.title">
+          <h3 class="mb-2 text-sm font-semibold text-text-strong">{{ section.title }}</h3>
           <dl
             class="stats-request-detail-list grid grid-cols-1 gap-x-3 gap-y-1.5 text-sm sm:grid-cols-[minmax(8rem,0.8fr)_minmax(0,1.2fr)] sm:gap-y-2 [&_dd]:min-w-0 [&_dd]:break-words"
           >
-            <dt class="text-muted">ID</dt>
-            <dd class="font-mono break-all">{{ detail.id }}</dd>
-            <dt class="text-muted">时间</dt>
-            <dd>{{ formatTimestamp(detail.started_at, timezone) }}</dd>
-            <dt class="text-muted">来源</dt>
-            <dd>{{ sourceLabel(detail.source) }}</dd>
-            <dt class="text-muted">请求模型</dt>
-            <dd class="break-all">{{ detail.requested_model }}</dd>
-            <dt class="text-muted">上游模型</dt>
-            <dd class="break-all">{{ displayNullable(detail.upstream_model) }}</dd>
-            <dt class="text-muted">API Key</dt>
-            <dd>{{ displayNullable(detail.api_key_name) }}</dd>
-            <dt class="text-muted">凭证</dt>
-            <dd>{{ displayNullable(detail.credential_label) }}</dd>
-            <dt class="text-muted">流式</dt>
-            <dd>{{ displayBoolean(detail.client_stream) }}</dd>
-            <dt class="text-muted">思考模式</dt>
-            <dd>{{ displayNullable(detail.thinking_mode) }}</dd>
-          </dl>
-        </section>
-
-        <section>
-          <h3 class="mb-2 text-sm font-semibold text-text-strong">结果</h3>
-          <dl
-            class="stats-request-detail-list grid grid-cols-1 gap-x-3 gap-y-1.5 text-sm sm:grid-cols-[minmax(8rem,0.8fr)_minmax(0,1.2fr)] sm:gap-y-2 [&_dd]:min-w-0 [&_dd]:break-words"
-          >
-            <dt class="text-muted">结果</dt>
-            <dd>{{ outcomeLabel(detail.outcome) }}</dd>
-            <dt class="text-muted">HTTP 状态</dt>
-            <dd>{{ displayNullable(detail.http_status) }}</dd>
-            <dt class="text-muted">逻辑状态</dt>
-            <dd>{{ displayNullable(detail.result_status) }}</dd>
-            <dt class="text-muted">错误类型</dt>
-            <dd>{{ displayNullable(detail.error_type) }}</dd>
-            <dt class="text-muted">结束原因</dt>
-            <dd>{{ displayNullable(detail.finish_reason) }}</dd>
-            <dt class="text-muted">消息数</dt>
-            <dd>{{ displayNullable(detail.message_count) }}</dd>
-            <dt class="text-muted">声明工具数</dt>
-            <dd>{{ displayNullable(detail.tool_count) }}</dd>
-            <dt class="text-muted">工具调用数</dt>
-            <dd>{{ displayNullable(detail.tool_call_count) }}</dd>
-            <dt class="text-muted">重试次数</dt>
-            <dd>{{ displayNullable(detail.retry_count) }}</dd>
-            <dt class="text-muted">请求大小</dt>
-            <dd>{{ displayBytes(detail.request_bytes) }}</dd>
-            <dt class="text-muted">响应大小</dt>
-            <dd>{{ displayBytes(detail.response_bytes) }}</dd>
-          </dl>
-        </section>
-
-        <section>
-          <h3 class="mb-2 text-sm font-semibold text-text-strong">用量</h3>
-          <dl
-            class="stats-request-detail-list grid grid-cols-1 gap-x-3 gap-y-1.5 text-sm sm:grid-cols-[minmax(8rem,0.8fr)_minmax(0,1.2fr)] sm:gap-y-2 [&_dd]:min-w-0 [&_dd]:break-words"
-          >
-            <dt class="text-muted">输入 Token</dt>
-            <dd>{{ formatTokenNumber(detail.input_tokens) }}</dd>
-            <dt class="text-muted">输出 Token</dt>
-            <dd>{{ formatTokenNumber(detail.output_tokens) }}</dd>
-            <dt class="text-muted">总 Token</dt>
-            <dd>{{ formatTokenNumber(detail.total_tokens) }}</dd>
-            <dt class="text-muted">推理 Token</dt>
-            <dd>{{ formatTokenNumber(detail.reasoning_tokens) }}</dd>
-            <dt class="text-muted">缓存命中 Token</dt>
-            <dd>{{ formatTokenNumber(detail.cache_hit_tokens) }}</dd>
-            <dt class="text-muted">缓存未命中 Token</dt>
-            <dd>{{ formatTokenNumber(detail.cache_miss_tokens) }}</dd>
-            <dt class="text-muted">缓存写入 Token</dt>
-            <dd>{{ formatTokenNumber(detail.cache_write_tokens) }}</dd>
-            <dt class="text-muted">积分</dt>
-            <dd>{{ formatCredit(detail.credit) }}</dd>
-          </dl>
-        </section>
-
-        <section>
-          <h3 class="mb-2 text-sm font-semibold text-text-strong">性能</h3>
-          <dl
-            class="stats-request-detail-list grid grid-cols-1 gap-x-3 gap-y-1.5 text-sm sm:grid-cols-[minmax(8rem,0.8fr)_minmax(0,1.2fr)] sm:gap-y-2 [&_dd]:min-w-0 [&_dd]:break-words"
-          >
-            <dt class="text-muted">总耗时</dt>
-            <dd>{{ formatDurationMs(detail.duration_ms) }}</dd>
-            <dt class="text-muted">首个 SSE 事件</dt>
-            <dd>{{ formatDurationMs(detail.first_event_ms) }}</dd>
-            <dt class="text-muted">首个有效输出</dt>
-            <dd>{{ formatDurationMs(detail.first_output_ms) }}</dd>
-            <dt class="text-muted">首个推理</dt>
-            <dd>{{ formatDurationMs(detail.first_reasoning_ms) }}</dd>
-            <dt class="text-muted">首个正文</dt>
-            <dd>{{ formatDurationMs(detail.first_content_ms) }}</dd>
+            <template v-for="[label, value, className] in section.items" :key="label">
+              <dt class="text-muted">{{ label }}</dt>
+              <dd :class="className">{{ value }}</dd>
+            </template>
           </dl>
         </section>
       </div>

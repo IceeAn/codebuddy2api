@@ -7,7 +7,6 @@ from src.auth_types import AuthenticatedUser
 from src.chat_execution import (
     CodeBuddyCredentialError,
     execute_codebuddy_chat,
-    select_codebuddy_credential,
     select_codebuddy_credential_with_id,
 )
 from src.request_processor import PreparedCodeBuddyRequest
@@ -21,10 +20,14 @@ class ChatExecutionTests(unittest.IsolatedAsyncioTestCase):
         prepared = PreparedCodeBuddyRequest({"model": "glm"}, True, "glm", True)
         await execute_codebuddy_chat(
             prepared, AuthenticatedUser(username="alice", source="api_key"),
-            token_manager_factory=lambda _user: object(),
-            credential_selector=lambda _manager: {"bearer_token": "token"},
+            token_manager_factory=lambda _user: mock.Mock(
+                get_current_credential_info=mock.Mock(return_value={}),
+                get_credential_info_by_id=mock.Mock(return_value={}),
+            ),
+            credential_selector=lambda _manager: ("selected-id", {"bearer_token": "token"}, 0),
             header_generator=lambda **_kwargs: {}, service_factory=lambda **_kwargs: service,
             response_adapter=adapter,
+            stats_context=mock.Mock(),
         )
         service.handle_stream_response.assert_awaited_once_with(
             prepared.payload, {}, response_model="glm", response_adapter=adapter,
@@ -32,17 +35,19 @@ class ChatExecutionTests(unittest.IsolatedAsyncioTestCase):
 
     def test_default_credential_selector(self):
         manager = mock.Mock()
-        manager.get_next_credential.return_value = {"bearer_token": "token"}
-        self.assertEqual(select_codebuddy_credential(manager)["bearer_token"], "token")
+        manager.get_current_credential_info.return_value = {}
+        manager.get_credential_info_by_id.return_value = {}
+        manager.select_next_credential.return_value = ("stable-id", {"bearer_token": "token"}, 0)
+        self.assertEqual(select_codebuddy_credential_with_id(manager)[1]["bearer_token"], "token")
 
         for value in (None, [], {}, {"user_id": "missing"}):
-            manager.get_next_credential.return_value = value
+            manager.select_next_credential.return_value = ("stable-id", value, 0)
             with self.subTest(value=value), self.assertRaises(CodeBuddyCredentialError):
-                select_codebuddy_credential(manager)
+                select_codebuddy_credential_with_id(manager)
 
-        manager.get_next_credential.side_effect = RuntimeError("store")
+        manager.select_next_credential.side_effect = RuntimeError("store")
         with self.assertRaises(CodeBuddyCredentialError):
-            select_codebuddy_credential(manager)
+            select_codebuddy_credential_with_id(manager)
 
     def test_credential_selector_with_id_validates_native_manager_and_fails_fast(self):
         class NativeManager:
@@ -55,7 +60,7 @@ class ChatExecutionTests(unittest.IsolatedAsyncioTestCase):
                     raise self.error
                 return self.result
 
-        selected = ("stable-id", {"bearer_token": "token"})
+        selected = ("stable-id", {"bearer_token": "token"}, 0)
         self.assertEqual(select_codebuddy_credential_with_id(NativeManager(selected)), selected)
         selected_with_generation = ("stable-id", {"bearer_token": "token"}, 7)
         self.assertEqual(
@@ -65,8 +70,9 @@ class ChatExecutionTests(unittest.IsolatedAsyncioTestCase):
         for manager in (
             NativeManager(None),
             NativeManager(error=RuntimeError("store")),
-            NativeManager((None, {"bearer_token": "token"})),
-            NativeManager(("stable-id", {})),
+            NativeManager((None, {"bearer_token": "token"}, 0)),
+            NativeManager(("stable-id", {}, 0)),
+            NativeManager(("stable-id", {"bearer_token": "token"})),
             NativeManager(("stable-id", {"bearer_token": "token"}, 1, 2)),
         ):
             with self.subTest(manager=manager), self.assertRaises(CodeBuddyCredentialError):
@@ -89,9 +95,11 @@ class ChatExecutionTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(CodeBuddyCredentialError):
             select_codebuddy_credential_with_id(LegacyManager())
 
-    async def test_stream_execution_without_stats_or_adapter_uses_empty_optional_headers(self):
+    async def test_stream_execution_without_adapter_uses_empty_optional_headers(self):
         user = AuthenticatedUser(username="alice", source="api_key")
         manager = mock.Mock()
+        manager.get_current_credential_info.return_value = {}
+        manager.get_credential_info_by_id.return_value = {}
         service = mock.Mock()
         service.handle_stream_response = mock.AsyncMock(return_value="stream")
         header_generator = mock.Mock(return_value={"Authorization": "Bearer upstream"})
@@ -105,12 +113,13 @@ class ChatExecutionTests(unittest.IsolatedAsyncioTestCase):
             prepared,
             user,
             token_manager_factory=lambda _user: manager,
-            credential_selector=lambda _manager: {
+            credential_selector=lambda _manager: ("selected-id", {
                 "bearer_token": "token",
                 "quota_probe_mode": "enterprise",
-            },
+            }, 0),
             header_generator=header_generator,
             service_factory=lambda **_kwargs: service,
+            stats_context=mock.Mock(),
         )
 
         self.assertEqual(result, "stream")
@@ -136,6 +145,8 @@ class ChatExecutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_non_stream_execution_passes_response_adapter(self):
         user = AuthenticatedUser(username="alice", source="api_key")
         manager = mock.Mock()
+        manager.get_current_credential_info.return_value = {}
+        manager.get_credential_info_by_id.return_value = {}
         service = mock.Mock()
         service.handle_non_stream_response = mock.AsyncMock(return_value={"ok": True})
         prepared = PreparedCodeBuddyRequest(
@@ -150,9 +161,10 @@ class ChatExecutionTests(unittest.IsolatedAsyncioTestCase):
             user,
             response_adapter=adapter,
             token_manager_factory=lambda _user: manager,
-            credential_selector=lambda _manager: {"bearer_token": "token"},
+            credential_selector=lambda _manager: ("selected-id", {"bearer_token": "token"}, 0),
             header_generator=lambda **_kwargs: {},
             service_factory=lambda **_kwargs: service,
+            stats_context=mock.Mock(),
         )
 
         self.assertEqual(result, {"ok": True})
@@ -166,9 +178,12 @@ class ChatExecutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_default_execution_captures_id_returned_with_selected_credential(self):
         user = AuthenticatedUser(username="alice", source="api_key")
         manager = mock.Mock()
+        manager.get_current_credential_info.return_value = {}
+        manager.get_credential_info_by_id.return_value = {}
         manager.select_next_credential.return_value = (
             "selected-id",
             {"bearer_token": "token", "user_id": "user"},
+            0,
         )
         manager.get_credential_info_by_id.return_value = {"credential_id": "selected-id"}
         service = mock.Mock()
@@ -190,12 +205,14 @@ class ChatExecutionTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result, {"ok": True})
-        stats_context.capture_credential.assert_called_once_with("selected-id", "selected-id")
+        stats_context.capture_credential.assert_called_once_with("selected-id", "selected-id", generation=0)
         manager.get_current_credential_info.assert_not_called()
 
     async def test_execution_falls_back_to_matching_current_info(self):
         user = AuthenticatedUser(username="alice", source="api_key")
         manager = mock.Mock()
+        manager.get_current_credential_info.return_value = {}
+        manager.get_credential_info_by_id.return_value = {}
         manager.get_credential_info_by_id.return_value = None
         manager.get_current_credential_info.return_value = {
             "credential_id": "selected-id",
@@ -215,12 +232,12 @@ class ChatExecutionTests(unittest.IsolatedAsyncioTestCase):
             user,
             stats_context=stats_context,
             token_manager_factory=lambda _user: manager,
-            credential_selector=lambda _manager: ("selected-id", {"bearer_token": "token"}),
+            credential_selector=lambda _manager: ("selected-id", {"bearer_token": "token"}, 0),
             header_generator=lambda **_kwargs: {},
             service_factory=lambda **_kwargs: service,
         )
 
-        stats_context.capture_credential.assert_called_once_with("selected-id", "selected.json")
+        stats_context.capture_credential.assert_called_once_with("selected-id", "selected.json", generation=0)
 
         manager.get_current_credential_info.return_value = {
             "credential_id": "different-id",
@@ -232,8 +249,8 @@ class ChatExecutionTests(unittest.IsolatedAsyncioTestCase):
             user,
             stats_context=different_stats,
             token_manager_factory=lambda _user: manager,
-            credential_selector=lambda _manager: ("selected-id", {"bearer_token": "token"}),
+            credential_selector=lambda _manager: ("selected-id", {"bearer_token": "token"}, 0),
             header_generator=lambda **_kwargs: {},
             service_factory=lambda **_kwargs: service,
         )
-        different_stats.capture_credential.assert_called_once_with("selected-id", "selected-id")
+        different_stats.capture_credential.assert_called_once_with("selected-id", "selected-id", generation=0)

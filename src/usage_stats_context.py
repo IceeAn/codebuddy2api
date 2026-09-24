@@ -217,18 +217,6 @@ class UsageStatsContext:
             return known
         return self._known_models.get(candidate.rsplit("/", 1)[-1])
 
-    def capture_request(
-            self,
-            request_body: Mapping[str, Any],
-            prepared_payload: Mapping[str, Any],
-            *,
-            request_bytes: int,
-    ) -> None:
-        """组合记录完整请求元数据，供无需分阶段的调用方使用。"""
-        self.capture_request_bytes(request_bytes)
-        self.capture_request_shape(request_body)
-        self.capture_prepared_request(prepared_payload)
-
     def capture_credential(
             self,
             credential_id: Optional[str],

@@ -53,7 +53,7 @@ from src.openai_router import external_openai_router, playground_openai_router
 from src.private_response import PRIVATE_NO_STORE_VALUE, PrivateNoStoreFastAPI, PrivateNoStoreRoute
 from src.request_limits import RequestBodyLimitMiddleware
 from src.stats_router import router as stats_router
-from src.stream_service import UpstreamAPIError, lifecycle_manager
+from src.stream_service import UpstreamAPIError, startup_http_client, shutdown_http_client
 from src.usage_stats_store import usage_stats_retention_manager
 from src.users_store import initialize_system_users
 from src.uvicorn_limits import to_uvicorn_limit_concurrency
@@ -88,7 +88,7 @@ async def lifespan(app: FastAPI):
         initialize_database()
         initialize_system_users()
         await usage_stats_retention_manager.startup()
-        await lifecycle_manager.startup()
+        await startup_http_client()
         await credential_refresh_manager.startup()
         await credential_quota_manager.startup()
         await credential_checkin_manager.startup(
@@ -101,7 +101,7 @@ async def lifespan(app: FastAPI):
         await credential_quota_manager.shutdown()
         await credential_refresh_manager.shutdown()
         await usage_stats_retention_manager.shutdown()
-        await lifecycle_manager.shutdown()
+        await shutdown_http_client()
         logger.info("CodeBuddy2API Service stopped")
 
 

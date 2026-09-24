@@ -116,22 +116,18 @@ def get_codebuddy_api_url() -> str:
     return f"{get_codebuddy_api_endpoint()}/v2/chat/completions"
 
 
-class SecurityConfig:
-    """安全配置管理器。"""
+def get_http_ssl_verify() -> bool:
+    """读取 SSL 验证设置，禁用时明确告警。"""
+    from config import get_ssl_verify
 
-    @staticmethod
-    def get_ssl_verify() -> bool:
-        """获取 SSL 验证设置，生产默认启用。"""
-        from config import get_ssl_verify
-
-        ssl_verify = get_ssl_verify()
-        if not ssl_verify:
-            logger.warning("SSL验证已禁用，仅应在受控调试环境使用。")
-        return ssl_verify
+    ssl_verify = get_ssl_verify()
+    if not ssl_verify:
+        logger.warning("SSL验证已禁用，仅应在受控调试环境使用。")
+    return ssl_verify
 
 
 HTTP_CLIENT_CONFIG = {
-    "verify": SecurityConfig.get_ssl_verify(),
+    "verify": get_http_ssl_verify(),
     "timeout": httpx.Timeout(300.0, connect=30.0, read=300.0),
     "limits": httpx.Limits(max_keepalive_connections=20, max_connections=100),
     "trust_env": False,
@@ -163,25 +159,18 @@ async def close_http_client():
         _http_client_pool = None
 
 
-class AppLifecycleManager:
-    """应用生命周期管理器。"""
-
-    @staticmethod
-    async def startup():
-        """应用启动时初始化连接池。"""
-        logger.info("CodeBuddy Router 启动中...")
-        await get_http_client()
-        logger.info("HTTP 连接池已初始化")
-
-    @staticmethod
-    async def shutdown():
-        """应用关闭时清理连接池。"""
-        logger.info("CodeBuddy Router 关闭中...")
-        await close_http_client()
-        logger.info("资源清理完成")
+async def startup_http_client() -> None:
+    """应用启动时初始化连接池。"""
+    logger.info("CodeBuddy Router 启动中...")
+    await get_http_client()
+    logger.info("HTTP 连接池已初始化")
 
 
-lifecycle_manager = AppLifecycleManager()
+async def shutdown_http_client() -> None:
+    """应用关闭时清理连接池。"""
+    logger.info("CodeBuddy Router 关闭中...")
+    await close_http_client()
+    logger.info("资源清理完成")
 
 
 class SSEConnectionManager:

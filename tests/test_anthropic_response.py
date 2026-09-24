@@ -84,6 +84,22 @@ class AnthropicNonStreamResponseTests(unittest.TestCase):
                     factory(self.context).process_event(event(delta))
                 self.assertNotIn("secret", str(raised.exception))
 
+    def test_non_stream_parses_each_completed_tool_only_once(self):
+        aggregator = AnthropicNonStreamAggregator(self.context)
+        with mock.patch.object(response_module.json, "loads", wraps=json.loads) as decode:
+            aggregator.process_event(event({"tool_calls": [{
+                "index": 0, "id": "tool-id",
+                "function": {"name": "tool", "arguments": '{"value":1}'},
+            }]}))
+            aggregator.process_event(event({"content": "after"}, finish="stop",
+                                           usage={"prompt_tokens": 1, "completion_tokens": 1}))
+            result = aggregator.finalize()
+        self.assertEqual(decode.call_count, 1)
+        self.assertEqual(result["content"], [
+            {"type": "tool_use", "id": "tool-id", "name": "tool", "input": {"value": 1}},
+            {"type": "text", "text": "after"},
+        ])
+
     def test_reasoning_text_tools_usage_and_model(self):
         aggregator = AnthropicNonStreamAggregator(self.context)
         for item in [
@@ -703,9 +719,12 @@ class AnthropicResponseAdapterTests(unittest.TestCase):
 
     def test_tool_state_accepts_metadata_only_and_rejects_bad_json(self):
         state = response_module._ToolState(0)
-        self.assertEqual(state.merge({"id": "a"}), "")
-        self.assertEqual(state.merge({"function": {"name": ""}}), "")
-        self.assertEqual(state.merge({"function": {"name": "tool"}}), "")
+        self.assertIsNone(state.merge({"id": "a"}))
+        self.assertEqual(state.tool_id, "a")
+        self.assertIsNone(state.merge({"function": {"name": ""}}))
+        self.assertIsNone(state.name)
+        self.assertIsNone(state.merge({"function": {"name": "tool"}}))
+        self.assertEqual(state.name, "tool")
         state.merge({"function": {"arguments": "{"}})
         with self.assertRaises(UpstreamProtocolViolation):
             state.parsed_input()

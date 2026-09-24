@@ -132,7 +132,7 @@ class OpenAIErrorContractTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase
         request = mock.Mock()
         request.json = mock.AsyncMock(side_effect=HTTPException(413, "请求体超过允许上限"))
         with self.assertRaises(HTTPException) as caught:
-            await chat_completions(request, AuthenticatedUser(username="admin", source="api_key"))
+            await chat_completions(request, AuthenticatedUser(username="admin", source="api_key"), stats_context=mock.Mock())
         self.assertEqual(caught.exception.status_code, 413)
 
         test_app = FastAPI(exception_handlers=app.exception_handlers)
