@@ -18,6 +18,8 @@ class PreparedCodeBuddyRequest:
     client_wants_stream: bool
     response_model: str
     client_include_usage: bool = False
+    # 仅由服务端准备流程标记，不能信任请求载荷中的同名扩展。
+    model_is_configured: bool = False
 
 
 def strip_model_namespace(model: Any) -> str:
@@ -139,6 +141,7 @@ class RequestProcessor:
             client_wants_stream=bool(request_body.get("stream", False)),
             response_model=response_model,
             client_include_usage=(request_body.get("stream_options") or {}).get("include_usage", False),
+            model_is_configured=request_body.get("model") == "codex-auto-review",
         )
 
     @staticmethod
@@ -163,6 +166,13 @@ class RequestProcessor:
                 validate_content(msg["content"], f"messages[{i}].content")
             if "content" not in msg:
                 tool_calls = msg.get("tool_calls")
+                audio = msg.get("audio")
+                refusal = msg.get("refusal")
+                if msg["role"] == "assistant" and (
+                    isinstance(refusal, str) and bool(refusal)
+                    or isinstance(audio, dict) and isinstance(audio.get("id"), str) and bool(audio["id"])
+                ):
+                    continue
                 if msg.get("role") == "assistant" and isinstance(msg.get("function_call"), dict):
                     function = msg["function_call"]
                     require_string(function.get("name"), f"messages[{i}].function_call.name")

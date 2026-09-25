@@ -23,6 +23,26 @@ def event(delta=None, **fields):
 
 
 class OpenAIRequestContractTests(unittest.TestCase):
+    def test_assistant_special_history_without_content_is_preserved(self):
+        for fields in ({"audio": {"id": "audio-test", "future": 1}}, {"refusal": "拒绝"}):
+            body = {"model": "kimi", "messages": [{"role": "assistant", **fields}]}
+            with self.subTest(fields=fields):
+                original = copy.deepcopy(body)
+                RequestProcessor.validate_request(body)
+                self.assertEqual(RequestProcessor.prepare_request(body).payload["messages"], body["messages"])
+                self.assertEqual(body, original)
+
+    def test_missing_content_requires_valid_assistant_special_fields(self):
+        for role, fields in [
+            ("user", {"audio": {"id": "a"}}), ("user", {"refusal": "拒绝"}),
+            ("assistant", {"audio": {}}), ("assistant", {"audio": {"id": ""}}),
+            ("assistant", {"audio": {"id": 1}}), ("assistant", {"audio": "a"}),
+            ("assistant", {"refusal": None}), ("assistant", {"refusal": 1}),
+            ("assistant", {"refusal": ""}), ("assistant", {"future": "x"}),
+        ]:
+            with self.subTest(role=role, fields=fields), self.assertRaises(HTTPException):
+                RequestProcessor.validate_request({"messages": [{"role": role, **fields}]})
+
     def test_multimodal_history_and_unknown_fields_survive_preparation(self):
         body = {"model": "kimi-k3-1", "messages": [
             {"role": "developer", "content": [{"type": "text", "text": "遵守要求"}]},
@@ -92,6 +112,40 @@ class OpenAIRequestContractTests(unittest.TestCase):
 
 
 class OpenAIResponseContractTests(unittest.TestCase):
+    def test_legacy_argument_fragments_survive_empty_trailing_placeholder(self):
+        aggregator = StreamResponseAggregator(CompletionResponseContext("id", 1, "model"))
+        for part in ({"name": "read", "arguments": "{"}, {"arguments": "}"}, {"name": "", "arguments": ""}):
+            aggregator.process_event(event({"function_call": part}))
+        choice = aggregator.finalize()["choices"][0]
+        self.assertEqual(choice["message"]["function_call"], {"name": "read", "arguments": "{}"})
+        self.assertEqual(choice["finish_reason"], "function_call")
+
+    def test_empty_legacy_placeholders_do_not_create_calls(self):
+        for placeholder in ({}, {"name": "", "arguments": ""}, {"name": None, "arguments": None}):
+            for finish in (None, "stop"):
+                with self.subTest(placeholder=placeholder, finish=finish):
+                    aggregator = StreamResponseAggregator(CompletionResponseContext("id", 1, "model"))
+                    aggregator.process_event(event({"content": "回答"}))
+                    aggregator.process_event(CodeBuddyResponseEvent.parse({"choices": [{
+                        "delta": {"function_call": placeholder}, "finish_reason": finish}]}))
+                    choice = aggregator.finalize()["choices"][0]
+                    self.assertNotIn("function_call", choice["message"])
+                    self.assertEqual(choice["finish_reason"], "stop")
+
+    def test_empty_tool_ids_preserve_original_association(self):
+        for metadata_only in (False, True):
+            aggregator = StreamResponseAggregator(CompletionResponseContext("id", 1, "model"))
+            aggregator.process_event(event({"tool_calls": [{"index": 0, "id": "original", "function": {
+                "name": "read", "arguments": "{"}}]}))
+            tail = {"index": 0, "id": ""}
+            if not metadata_only:
+                tail["function"] = {"name": "", "arguments": "}"}
+            aggregator.process_event(event({"tool_calls": [tail]}))
+            if metadata_only:
+                aggregator.process_event(event({"tool_calls": [{"index": 0, "function": {"arguments": "}"}}]}))
+            self.assertEqual(aggregator.finalize()["choices"][0]["message"]["tool_calls"], [
+                {"id": "original", "type": "function", "function": {"name": "read", "arguments": "{}"}}])
+
     def setUp(self):
         self.context = CompletionResponseContext("chatcmpl-test", 1, "test")
 

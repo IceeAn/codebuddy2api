@@ -64,7 +64,10 @@ class StreamResponseAggregator:
         if isinstance(annotations, list):
             self.message_fields.setdefault("annotations", []).extend(copy.deepcopy(annotations))
         legacy = delta.get("function_call")
-        if isinstance(legacy, dict) and legacy:
+        if isinstance(legacy, dict) and any(
+            isinstance(legacy.get(field), str) and legacy[field]
+            for field in ("name", "arguments")
+        ):
             current = self.message_fields.setdefault("function_call", {"name": "", "arguments": ""})
             self._merge_call(current, legacy, "arguments")
         audio = delta.get("audio")
@@ -114,7 +117,7 @@ class StreamResponseAggregator:
             current = self.tool_call_map.get(index)
             if not any(key in tc for key in ("custom", "function")):
                 if current is not None:
-                    if tc.get("id") is not None:
+                    if tc.get("id"):
                         current["id"] = tc["id"]
                     continue
                 kind = tc.get("type")
@@ -135,7 +138,7 @@ class StreamResponseAggregator:
                     kind: {"name": "", text_field: ""},
                 }
                 self.tool_call_map[index] = current
-            elif tool_id is not None:
+            elif tool_id:
                 current["id"] = tool_id
 
             if current["type"] != kind:

@@ -14,7 +14,7 @@ class ResponsesRequestTests(unittest.TestCase):
         return translate_responses_request({"model": "kimi-k3-1", "input": "你好", **fields})
 
     def test_text_options_and_private_fields(self):
-        payload, bindings = self.translate(
+        payload, bindings, _ = self.translate(
             instructions="系统规则", stream=True, max_output_tokens=100,
             reasoning={"effort": "high", "summary": "auto"},
             text={"format": {"type": "json_schema", "name": "answer", "schema": {"type": "object"}}},
@@ -32,7 +32,7 @@ class ResponsesRequestTests(unittest.TestCase):
     def test_custom_namespace_and_history_without_declarations(self):
         tool = {"type": "namespace", "name": "editor", "description": "编辑器", "tools": [
             {"type": "custom", "name": "patch", "format": {"type": "grammar", "syntax": "lark", "definition": 'start: "x"'}}]}
-        payload, bindings = self.translate(tools=[tool])
+        payload, bindings, _ = self.translate(tools=[tool])
         alias = tool_alias("patch", "editor")
         self.assertEqual(payload["tools"][0]["function"]["name"], alias)
         self.assertIn('start: "x"', payload["tools"][0]["function"]["description"])
@@ -45,7 +45,7 @@ class ResponsesRequestTests(unittest.TestCase):
             {"type": "custom_tool_call_output", "call_id": "original", "output": ""},
         ]
         original = copy.deepcopy(history)
-        payload, _ = self.translate(input=history)
+        payload, _, _ = self.translate(input=history)
         assistant, result = payload["messages"]
         self.assertEqual(assistant["reasoning_content"], "考虑")
         self.assertEqual(assistant["tool_calls"][0]["id"], "original")
@@ -55,7 +55,7 @@ class ResponsesRequestTests(unittest.TestCase):
 
     def test_image_and_tool_result_order(self):
         image = {"type": "input_image", "image_url": "data:image/png;base64,AA==", "detail": "high"}
-        payload, _ = self.translate(input=[
+        payload, _, _ = self.translate(input=[
             {"role": "user", "content": [{"type": "input_text", "text": "看"}, image]},
             {"type": "function_call", "call_id": "a", "name": "read", "arguments": "{}"},
             {"type": "function_call_output", "call_id": "a", "output": [image, {"type": "input_text", "text": "完成"}]},
@@ -65,7 +65,7 @@ class ResponsesRequestTests(unittest.TestCase):
 
     def test_tool_search_discovers_namespace_tools(self):
         found = {"type": "namespace", "name": "mcp", "tools": [{"type": "function", "name": "lookup", "parameters": {"type": "object"}}]}
-        payload, bindings = self.translate(
+        payload, bindings, _ = self.translate(
             tools=[{"type": "tool_search", "execution": "client", "parameters": {"type": "object"}}],
             input=[{"type": "tool_search_call", "execution": "client", "call_id": "search", "arguments": {"query": "lookup"}},
                    {"type": "tool_search_output", "execution": "client", "call_id": "search", "tools": [found]},
@@ -77,7 +77,7 @@ class ResponsesRequestTests(unittest.TestCase):
 
     def test_choice_filters_upstream_definitions(self):
         tools = [{"type": "function", "name": name, "parameters": {}} for name in ("a", "b")]
-        payload, bindings = self.translate(tools=tools, tool_choice={"type": "function", "name": "b"})
+        payload, bindings, _ = self.translate(tools=tools, tool_choice={"type": "function", "name": "b"})
         self.assertEqual(payload["tool_choice"], "required")
         self.assertEqual([x["function"]["name"] for x in payload["tools"]], ["b"])
         self.assertEqual(set(bindings), {"b"})
@@ -98,7 +98,7 @@ class ResponsesRequestTests(unittest.TestCase):
                 self.translate(**case)
 
     def test_optional_options_and_reasoning_replay(self):
-        payload, _ = self.translate(input=[
+        payload, _, _ = self.translate(input=[
             {"type": "reasoning", "summary": []},
             {"role": "developer", "content": "规则"},
             {"type": "reasoning", "content": [{"type": "reasoning_text", "text": "原文"}], "summary": [{"type": "summary_text", "text": "摘要"}]},
@@ -121,7 +121,7 @@ class ResponsesRequestTests(unittest.TestCase):
 
     def test_custom_text_strict_allowed_tools_and_rediscovery(self):
         tool = {"type": "custom", "name": "patch", "format": {"type": "text"}, "strict": False}
-        payload, _ = self.translate(tools=[tool, tool], tool_choice={"type": "allowed_tools", "mode": "auto", "tools": [{"type": "custom", "name": "patch"}]})
+        payload, _, _ = self.translate(tools=[tool, tool], tool_choice={"type": "allowed_tools", "mode": "auto", "tools": [{"type": "custom", "name": "patch"}]})
         self.assertIn("自由文本", payload["tools"][0]["function"]["description"])
         self.assertFalse(payload["tools"][0]["function"]["strict"])
         self.assertEqual(payload["tool_choice"], "auto")

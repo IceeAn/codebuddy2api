@@ -20,6 +20,20 @@ from web import app, upstream_api_error_handler
 
 
 class AnthropicRouteTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
+    async def test_auto_review_preserves_configured_model_provenance(self):
+        with (mock.patch("config.get_codex_auto_review_model", return_value="deepseek-v4-flash"),
+              mock.patch("src.anthropic_router.execute_codebuddy_chat", new_callable=mock.AsyncMock,
+                         return_value={"id": "msg_test"}) as execute):
+            response = await self._request("POST", "/anthropic/v1/messages", headers=self._bearer(), json={
+                "model": "codex-auto-review", "max_tokens": 100,
+                "messages": [{"role": "user", "content": "审批测试"}],
+            })
+        self.assertEqual(response.status_code, 200, response.text)
+        prepared = execute.call_args.args[0]
+        self.assertTrue(prepared.model_is_configured)
+        self.assertEqual(prepared.payload["model"], "deepseek-v4-flash")
+        self.assertEqual(prepared.response_model, "codex-auto-review")
+
     def setUp(self):
         super().setUp()
         configure_users_file(self.temp_path)

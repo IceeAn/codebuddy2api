@@ -162,7 +162,7 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
         stats_context.capture_request_bytes.assert_called_once_with(123)
         stats_context.capture_request_shape.assert_called_once_with(request_body)
         stats_context.capture_prepared_request.assert_called_once_with(
-            {"model": "glm-5.2", "stream": True}
+            {"model": "glm-5.2", "stream": True}, model_is_configured=False,
         )
         service_class.assert_called_once_with(observer=stats_context)
         service.handle_stream_response.assert_awaited_once_with(
@@ -220,7 +220,7 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
         stats_context.capture_request_bytes.assert_called_once_with(88)
         stats_context.capture_request_shape.assert_called_once_with(request_body)
         stats_context.capture_prepared_request.assert_called_once_with(
-            {"model": "resolved-model", "stream": True}
+            {"model": "resolved-model", "stream": True}, model_is_configured=False,
         )
         service_class.assert_called_once_with(observer=stats_context)
         service.handle_non_stream_response.assert_awaited_once_with(
@@ -673,7 +673,7 @@ class OpenAIRouterTests(unittest.IsolatedAsyncioTestCase):
         stats_context.capture_request_bytes.assert_called_once_with(0)
         stats_context.capture_request_shape.assert_called_once_with(request_body)
         stats_context.capture_prepared_request.assert_called_once_with(
-            {"model": "model", "stream": True}
+            {"model": "model", "stream": True}, model_is_configured=False,
         )
 
     async def test_model_list_maps_manager_error(self):

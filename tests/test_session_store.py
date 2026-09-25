@@ -1,6 +1,8 @@
 
 import tests  # 在生产模块导入前隔离测试数据目录。
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor
 import unittest
 from unittest import mock
 
@@ -13,6 +15,42 @@ def make_record(username: str = "admin", *, revision: bytes = b"r" * 32, forced=
 
 
 class SessionStoreTests(unittest.TestCase):
+    def test_revoke_and_concurrent_invalidation_are_serialized(self):
+        store = SessionStore()
+        iterating = threading.Event()
+        release = threading.Event()
+        deleting = threading.Event()
+        deleted = threading.Event()
+
+        class PausedSession(dict):
+            def get(self, key, default=None):
+                if key == "username":
+                    iterating.set()
+                    if not release.wait(3):
+                        raise AssertionError("撤销会话未及时释放")
+                return super().get(key, default)
+
+        store.sessions = {"a": PausedSession(username="admin"), "b": {"username": "admin"}}
+
+        def invalidate():
+            deleting.set()
+            store.invalidate("b")
+            deleted.set()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            revoked = executor.submit(store.revoke_user, "admin", "password_changed_elsewhere")
+            try:
+                self.assertTrue(iterating.wait(3))
+                invalidated = executor.submit(invalidate)
+                self.assertTrue(deleting.wait(3))
+                self.assertFalse(deleted.wait(0.05))
+            finally:
+                release.set()
+            revoked.result(timeout=3)
+            invalidated.result(timeout=3)
+        self.assertNotIn("b", store.sessions)
+        self.assertEqual(store.sessions["a"]["revoked_reason"], "password_changed_elsewhere")
+
     def test_create_stores_session_and_get_user_extends_expiry(self):
         store = SessionStore()
 

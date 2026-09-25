@@ -53,6 +53,7 @@ docker compose run --rm codebuddy2api set-user <用户名>
 
 ## 架构与边界
 
+- 服务仅支持单个 Uvicorn worker，不支持多 worker 部署；会话及部分运行状态保存在进程内，不能通过增加 worker 扩容。单 worker 仍存在事件循环与线程池之间的并发，共享内存状态必须保证线程安全。
 - `web.py` 是 FastAPI/Uvicorn 入口，`config.py` 管理启动级配置；环境变量优先于硬编码默认值，安全边界配置不得由用户数据库设置覆盖。可选 `.env` 只从应用根目录加载，不得向父目录搜索。
 - `CODEBUDDY_DATA_DIR` 的相对路径以 `config.py` 所在的应用根目录为基准。SQLite 和凭证路径必须由解析后的绝对数据目录派生，不能依赖进程工作目录。
 - 管理台设置、API Key、凭证、模型缓存和统计都按系统用户隔离。新增管理端缓存时，隔离维度必须包含用户名；涉及凭证的数据还必须使用稳定的 `credential_id`，不得依赖列表下标。
@@ -99,9 +100,9 @@ docker compose run --rm codebuddy2api set-user <用户名>
 - 聊天请求正常路径只在准备成功后实际选择一次凭证。请求准备发生服务端异常时才补做一次不读取轮换设置、不推进轮换状态的凭证快照检查：明确无凭证则返回 401，检查成功或无法判断则保留原准备异常；协议校验 4xx 不得被凭证状态覆盖。
 
 - Responses 是同一 CodeBuddy 上游的无状态适配，入口为 `/openai/v1/responses`；不实现服务端存储、WebSocket 或 `/responses/compact`。Codex 使用自定义 provider 的客户端历史压缩，模型目录必须使用真实模型 ID 并显式声明 freeform apply_patch、图片和客户端工具搜索能力，不能借用 OpenAI 模型 ID 伪造能力。
-- `codex-auto-review` 是精确匹配的客户端模型别名，按用户设置映射一次后再应用模型前缀、推理和温度策略；响应保留请求模型，统计使用真实上游模型。映射不等于开启或绕过 Codex 审批。
+- `codex-auto-review` 是精确匹配的客户端模型别名，按用户设置映射一次后再应用模型前缀、推理和温度策略；响应保留请求模型，统计使用真实上游模型。本次实际使用的映射目标属于可信配置，即使不在 `CODEBUDDY_MODELS` 中且 SSE 未返回 model，也须按最终上游模型统计；不能因此信任客户端任意模型或其自称的配置来源。映射不等于开启或绕过 Codex 审批。
 - Responses custom 工具统一包装为只有 input 字符串的 function 参数，完整校验后恢复原文；grammar 仅作为工具说明，不能默默修复或重试。CodeBuddy 的 tool_choice 只接受字符串，指定／限定工具必须先过滤工具集合。命名空间别名必须稳定，返回时恢复 namespace/name，上游 call_id 原样保留。
-- Responses 与其他协议共享一次中立 SSE 解析；只缓冲连续工具组并按上游 index 输出。成功终态为 response.completed，不发送 `[DONE]`；截断和内容过滤返回 response.incomplete，未发出的连续工具组必须丢弃，不能校验半截参数或发布为可执行调用；不能把 EOF 当成功。客户端 tool_search 的发现结果必须纳入后续工具声明，但网关不得执行 MCP 或保存客户端元数据。
+- Responses 与其他协议共享一次中立 SSE 解析；只缓冲连续工具组并按上游 index 输出。成功终态为 response.completed，不发送 `[DONE]`；截断和内容过滤返回 response.incomplete，未发出的连续工具组必须丢弃，不能校验半截参数或发布为可执行调用。EOF 本身不能作为成功依据，但上游已提供有效结束原因时允许缺少 `[DONE]`，按结束原因生成下游终态。客户端 tool_search 的发现结果必须纳入后续工具声明，但网关不得执行 MCP 或保存客户端元数据。
 
 ## OAuth、凭证与模型缓存
 

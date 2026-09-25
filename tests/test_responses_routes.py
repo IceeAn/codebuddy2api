@@ -2,6 +2,7 @@
 
 import tests  # 在生产模块导入前隔离测试数据目录。
 import json
+import copy
 import unittest
 from unittest import mock
 
@@ -18,6 +19,44 @@ from web import app
 
 
 class ResponsesRoutesTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
+    async def test_response_tool_configuration_preserves_client_contract(self):
+        from openai.types.responses import Response
+
+        found = {"type": "namespace", "name": "files", "tools": [
+            {"type": "function", "name": "read", "parameters": {"type": "object"}},
+            {"type": "custom", "name": "patch", "format": {"type": "text"}},
+        ]}
+        search = {"type": "tool_search", "execution": "client"}
+        tools = [search, {"type": "function", "name": "finish", "strict": False}]
+        expected_tools = [{**found, "description": ""}, *tools]
+        history = [
+            {"type": "tool_search_call", "call_id": "search", "execution": "client", "arguments": {}},
+            {"type": "tool_search_output", "call_id": "search", "tools": [found]},
+            {"role": "user", "content": "继续"},
+        ]
+        choices = ["auto", "none", "required",
+                   {"type": "custom", "name": "patch", "namespace": "files"},
+                   {"type": "allowed_tools", "tools": [{"type": "function", "name": "read", "namespace": "files"}]}]
+        async with self.client() as client:
+            for stream in (False, True):
+                for choice in choices:
+                    with self.subTest(stream=stream, choice=choice):
+                        body = {"model": "kimi", "input": history, "tools": tools, "tool_choice": choice, "stream": stream}
+                        original = copy.deepcopy(body)
+                        with mock.patch("src.openai_router.execute_codebuddy_chat", side_effect=self.execute):
+                            result = await client.post("/openai/v1/responses", headers={"Authorization": "Bearer " + self.key}, json=body)
+                        self.assertEqual(result.status_code, 200, result.text)
+                        responses = [result.json()] if not stream else [
+                            item["response"] for item in (json.loads(line[6:]) for line in result.text.splitlines() if line.startswith("data: "))
+                            if "response" in item]
+                        expected_choice = {"mode": "auto", **choice} if isinstance(choice, dict) and choice["type"] == "allowed_tools" else choice
+                        for response in responses:
+                            Response.model_validate(response)
+                            self.assertEqual(response["tools"], expected_tools)
+                            self.assertEqual(response["tool_choice"], expected_choice)
+                        self.assertEqual(body, original)
+                        self.assertNotIn("response_options", self.payloads[-1])
+
     def setUp(self):
         super().setUp()
         configure_users_file(self.temp_path)
@@ -26,7 +65,9 @@ class ResponsesRoutesTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.fixture = [
             {"choices": [{"delta": {"reasoning_content": "考虑"}}]},
             {"choices": [{"delta": {"content": "回答"}, "finish_reason": "stop"}]},
-            {"choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12}},
+            {"choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12,
+                                      "prompt_tokens_details": {"cached_tokens": 1, "cache_write_tokens": 0},
+                                      "completion_tokens_details": {"reasoning_tokens": 1}}},
         ]
         self.payloads = []
 
@@ -85,7 +126,8 @@ class ResponsesRoutesTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
 
     async def test_official_sdk_stream_aggregation_and_images(self):
         async with self.client() as http_client:
-            client = openai.AsyncOpenAI(api_key=self.key, base_url="http://localhost/openai/v1", http_client=http_client, max_retries=0)
+            client = openai.AsyncOpenAI(api_key=self.key, base_url="http://localhost/openai/v1", http_client=http_client,
+                                        max_retries=0, _strict_response_validation=True)
             with mock.patch("src.openai_router.execute_codebuddy_chat", side_effect=self.execute):
                 result = await client.responses.create(model="kimi", input="hello")
                 async with client.responses.stream(model="kimi", input=[{"role": "user", "content": [
@@ -94,11 +136,24 @@ class ResponsesRoutesTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
                     types = [item.type async for item in stream]
                     final = await stream.get_final_response()
             self.assertEqual(result.output_text, "回答")
+            self.assertEqual(result.tools, [])
+            self.assertEqual(result.tool_choice, "auto")
             self.assertEqual(final.output_text, "回答")
             self.assertEqual(final.usage.input_tokens, 10)
             self.assertIn("response.reasoning_summary_text.delta", types)
             self.assertEqual(types[-1], "response.completed")
             self.assertEqual(self.payloads[-1]["messages"][1]["content"][0]["type"], "image_url")
+
+    async def test_official_sdk_strict_response_envelope(self):
+        # 使用完整的上游 usage；本测试只验证本轮补齐的响应契约。
+        async with self.client() as http_client:
+            client = openai.AsyncOpenAI(api_key=self.key, base_url="http://localhost/openai/v1", http_client=http_client,
+                                        max_retries=0, _strict_response_validation=True)
+            with mock.patch("src.openai_router.execute_codebuddy_chat", side_effect=self.execute):
+                result = await client.responses.create(model="kimi", input="hello")
+            self.assertEqual(result.tools, [])
+            self.assertEqual(result.tool_choice, "auto")
+            self.assertEqual(result.output_text, "回答")
 
     async def test_sdk_custom_call_roundtrip(self):
         self.fixture = [{"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "original_id", "function": {"name": "patch", "arguments": '{"input":"原始\\n补丁"}'}}]}, "finish_reason": "tool_calls"}]}]

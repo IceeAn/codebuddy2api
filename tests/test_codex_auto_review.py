@@ -23,6 +23,8 @@ class CodexAutoReviewTests(ConfigIsolationMixin, unittest.IsolatedAsyncioTestCas
         self.assertEqual(result.payload['model'], 'deepseek-v4-flash')
         self.assertEqual(result.payload['reasoning_effort'], 'max')
         self.assertEqual(result.response_model, 'codex-auto-review')
+        self.assertTrue(result.model_is_configured)
+        self.assertFalse(self.prepare('provider/codex-auto-review').model_is_configured)
         self.assertEqual(self.prepare('ordinary').payload['model'], 'ordinary')
         self.assertEqual(self.prepare('provider/codex-auto-review').payload['model'], 'codex-auto-review')
 

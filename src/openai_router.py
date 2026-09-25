@@ -144,7 +144,7 @@ async def chat_completions(
 
         try:
             if responses_mode:
-                request_body, bindings = translate_responses_request(request_body)
+                request_body, bindings, response_options = translate_responses_request(request_body)
             RequestProcessor.validate_request(request_body)
         except HTTPException as error:
             stats_context.mark_failure("validation_error", error.status_code)
@@ -170,6 +170,7 @@ async def chat_completions(
             adapter_options = {"response_adapter": ResponsesAdapter(
                 prepared_request.response_model, bindings,
                 parallel_tool_calls=request_body.get("parallel_tool_calls", True),
+                **response_options,
             )} if responses_mode else {}
             return await execute_codebuddy_chat(
                 prepared_request,

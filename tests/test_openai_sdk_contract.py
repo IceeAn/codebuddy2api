@@ -32,7 +32,8 @@ class OpenAISDKContractTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
             sse({"reasoning_content": "思考", "content": "回答"}),
             sse({"tool_calls": [{"index": 0, "id": "call-test", "type": "function",
                                  "function": {"name": "lookup", "arguments": '{"q":'}}]}),
-            sse({"tool_calls": [{"index": 0, "function": {"arguments": '"台北"}'}}]}, finish="tool_calls",
+            sse({"tool_calls": [{"index": 0, "id": "", "function": {"name": "", "arguments": '"台北"}'}}],
+                 "function_call": {"name": "", "arguments": ""}}, finish="tool_calls",
                 usage={"prompt_tokens": 12, "completion_tokens": 5, "total_tokens": 17}),
             "data: [DONE]\n\n",
         ]
@@ -103,3 +104,18 @@ class OpenAISDKContractTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         async with self._client(key="sk-invalid") as client:
             with self.assertRaises(openai.AuthenticationError):
                 await client.chat.completions.create(model="test", messages=[{"role": "user", "content": "hi"}])
+
+    @mock.patch("src.openai_router.create_usage_stats_context")
+    async def test_sdk_special_assistant_message_roundtrip_without_content(self, _stats):
+        for delta in ({"refusal": "拒绝"}, {"audio": {
+            "id": "audio-test", "data": "YQ==", "expires_at": 123, "transcript": "音频文本"}}):
+            with self.subTest(delta=delta):
+                self.fixture = [sse(delta, finish="stop"), "data: [DONE]\n\n"]
+                with mock.patch("src.openai_router.execute_codebuddy_chat", side_effect=self._execute):
+                    async with self._client() as client:
+                        result = await client.chat.completions.create(model="kimi", messages=[{"role": "user", "content": "测试"}])
+                        history = result.choices[0].message.model_dump(exclude_none=True)
+                        self.assertNotIn("content", history)
+                        self.fixture = [sse({"content": "完成"}, finish="stop"), "data: [DONE]\n\n"]
+                        await client.chat.completions.create(model="kimi", messages=[history, {"role": "user", "content": "继续"}])
+                self.assertEqual(self.prepared[-1].payload["messages"][0], history)

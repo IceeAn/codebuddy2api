@@ -9,10 +9,49 @@ from src.chat_execution import (
     execute_codebuddy_chat,
     select_codebuddy_credential_with_id,
 )
-from src.request_processor import PreparedCodeBuddyRequest
+from src.request_processor import PreparedCodeBuddyRequest, RequestProcessor
+from src.usage_stats_context import UsageStatsContext
+from src.stream_service import StreamObservation
 
 
 class ChatExecutionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_auto_review_statistics_trust_only_the_actual_configured_target(self):
+        for request_model, target, strip, observed, expected in [
+            ("codex-auto-review", "deepseek-v4-flash", True, None, "deepseek-v4-flash"),
+            ("codex-auto-review", "provider/custom", True, None, "custom"),
+            ("codex-auto-review", "provider/custom", False, None, "provider/custom"),
+            ("codex-auto-review", "configured", True, "actual", "actual"),
+            ("codex-auto-review", "invalid model", True, None, None),
+            ("unconfirmed", "unused", True, None, None),
+        ]:
+            with self.subTest(request_model=request_model, target=target, strip=strip, observed=observed):
+                user = AuthenticatedUser(username="alice", source="api_key")
+                body = {"model": request_model, "messages": [{"role": "user", "content": "测试"}],
+                        "model_is_configured": True}
+                store = mock.Mock()
+                stats = UsageStatsContext(user, "external_api", store=store, known_models=[])
+                stats.capture_request_shape(body)
+                with (mock.patch("config.get_codex_auto_review_model", return_value=target) as mapping,
+                      mock.patch("config.get_strip_model_namespace", return_value=strip)):
+                    prepared = RequestProcessor.prepare_request(body, user)
+                self.assertEqual(mapping.call_count, int(request_model == "codex-auto-review"))
+                self.assertEqual(prepared.response_model, request_model)
+                service = mock.Mock()
+                service.handle_non_stream_response = mock.AsyncMock(return_value={})
+                await execute_codebuddy_chat(
+                    prepared, user, stats_context=stats,
+                    token_manager_factory=lambda _user: mock.Mock(),
+                    credential_selector=lambda _manager: ("id", {"bearer_token": "token"}, 0),
+                    header_generator=lambda **_kwargs: {}, service_factory=lambda **_kwargs: service,
+                )
+                if observed:
+                    stats(StreamObservation(kind="upstream_event", upstream_model=observed))
+                stats.complete_response(http_status=200, response_bytes=0, client_disconnected=False)
+                event = store.record_event.call_args.args[0]
+                self.assertEqual(event.upstream_model, expected)
+                self.assertEqual(event.model_bucket_model, expected)
+                self.assertEqual(event.model_bucket_type, "known" if expected else "unknown")
+
     async def test_stream_custom_adapter_does_not_receive_openai_usage_option(self):
         service = mock.Mock()
         service.handle_stream_response = mock.AsyncMock(return_value="stream")

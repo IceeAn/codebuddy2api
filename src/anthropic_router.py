@@ -311,6 +311,7 @@ async def anthropic_messages(
             payload=prepared_base.payload,
             client_wants_stream=prepared_base.client_wants_stream,
             response_model=response_model,
+            model_is_configured=prepared_base.model_is_configured,
         )
         adapter = AnthropicDownstreamAdapter(AnthropicResponseContext(
             message_id=f"msg_{uuid.uuid4().hex}",

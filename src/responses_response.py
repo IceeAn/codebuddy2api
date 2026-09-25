@@ -72,7 +72,8 @@ class _State:
         return {"id": self.adapter.response_id, "object": "response", "created_at": self.adapter.created_at,
                 "model": self.adapter.model, "status": status, "output": copy.deepcopy(self.output),
                 "error": error, "incomplete_details": {"reason": incomplete} if status == "incomplete" else None,
-                "usage": copy.deepcopy(self.usage), "store": False, "parallel_tool_calls": self.adapter.parallel_tool_calls}
+                "usage": copy.deepcopy(self.usage), "store": False, "parallel_tool_calls": self.adapter.parallel_tool_calls,
+                "tools": copy.deepcopy(self.adapter.tools), "tool_choice": copy.deepcopy(self.adapter.tool_choice)}
 
     def emit(self, kind, **fields):
         value = {"type": kind, "sequence_number": self.sequence, **fields}
@@ -105,7 +106,9 @@ class _State:
         else:
             part = item["content"][0]
             field = "refusal" if kind == "refusal" else "text"
-            events.append(self.emit(f"response.{kind}.done", item_id=item["id"], output_index=index, content_index=0, **{field: part[field]}))
+            details = {"logprobs": []} if kind == "output_text" else {}
+            events.append(self.emit(f"response.{kind}.done", item_id=item["id"], output_index=index, content_index=0,
+                                    **{field: part[field]}, **details))
             events.append(self.emit("response.content_part.done", item_id=item["id"], output_index=index, content_index=0, part=part))
         item["status"] = status
         events.append(self.emit("response.output_item.done", output_index=index, item=item))
@@ -139,7 +142,10 @@ class _State:
             events.append(self.emit("response.reasoning_summary_text.delta", item_id=item["id"], output_index=index, summary_index=0, delta=value))
         else:
             item["content"][0]["refusal" if kind == "refusal" else "text"] += value
-            events.append(self.emit(f"response.{kind}.delta", item_id=item["id"], output_index=index, content_index=0, delta=value))
+            # 未提供概率条目时输出空列表，满足严格客户端的文本事件结构。
+            details = {"logprobs": []} if kind == "output_text" else {}
+            events.append(self.emit(f"response.{kind}.delta", item_id=item["id"], output_index=index, content_index=0,
+                                    delta=value, **details))
         return events
 
     def tools(self, calls):
@@ -251,10 +257,13 @@ class ResponsesAdapter:
     media_type = "text/event-stream"
     stream_headers = {"X-Accel-Buffering": "no", "Cache-Control": "private, no-store"}
 
-    def __init__(self, model, bindings, *, response_id=None, created_at=None, parallel_tool_calls=True):
+    def __init__(self, model, bindings, *, response_id=None, created_at=None, parallel_tool_calls=True,
+                 tools=None, tool_choice="auto"):
         self.model = model
         self.bindings = bindings
         self.parallel_tool_calls = parallel_tool_calls
+        self.tools = copy.deepcopy([] if tools is None else tools)
+        self.tool_choice = copy.deepcopy(tool_choice)
         self.response_id = response_id or "resp_" + uuid.uuid4().hex
         self.created_at = int(time.time()) if created_at is None else created_at
         self.state = None

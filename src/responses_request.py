@@ -78,6 +78,8 @@ class _Translator:
     def __init__(self):
         self.bindings = {}
         self.tools = {}
+        self.client_tools = {}
+        self.namespace_descriptions = {}
         self.messages = []
         self.calls = {}
         self.results = set()
@@ -91,6 +93,7 @@ class _Translator:
             if kind == "namespace":
                 require(namespace is None, location, "nested namespaces are not supported")
                 name = string_at(tool.get("name"), location + ".name")
+                self.namespace_descriptions[name] = desc
                 self.add_tools(tool.get("tools"), location + ".tools", name, desc)
                 continue
             require(kind in ("function", "custom", "tool_search"), location + ".type", "is not supported")
@@ -123,6 +126,24 @@ class _Translator:
                 function["strict"] = tool["strict"]
             self.bindings[binding.alias] = binding
             self.tools[binding.alias] = {"type": "function", "function": function}
+            self.client_tools[binding.alias] = copy.deepcopy(tool)
+
+    def response_tools(self):
+        """保留客户端工具定义；历史发现和重复声明按上游相同顺序合并。"""
+        result = []
+        namespaces = {}
+        for alias, tool in self.client_tools.items():
+            namespace = self.bindings[alias].namespace
+            if namespace is None:
+                result.append(tool)
+            else:
+                if namespace not in namespaces:
+                    group = {"type": "namespace", "name": namespace,
+                             "description": self.namespace_descriptions[namespace], "tools": []}
+                    namespaces[namespace] = group
+                    result.append(group)
+                namespaces[namespace]["tools"].append(tool)
+        return result
 
     def assistant(self):
         if not self.messages or self.messages[-1]["role"] != "assistant":
@@ -267,7 +288,11 @@ def translate_responses_request(body):
             require(text["verbosity"] in ("low", "medium", "high"), "text.verbosity", "is not supported")
             payload["verbosity"] = text["verbosity"]
     choice = body.get("tool_choice")
-    payload["tool_choice"] = translator.choose("auto" if choice is None else choice)
+    choice = "auto" if choice is None else copy.deepcopy(choice)
+    response_tools = translator.response_tools()
+    payload["tool_choice"] = translator.choose(choice)
+    if isinstance(choice, dict) and choice.get("type") == "allowed_tools":
+        choice.setdefault("mode", "auto")
     if translator.tools:
         payload["tools"] = list(translator.tools.values())
-    return payload, translator.bindings
+    return payload, translator.bindings, {"tools": response_tools, "tool_choice": choice}

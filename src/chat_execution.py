@@ -95,7 +95,9 @@ async def execute_codebuddy_chat(
         conversation_message_id=extra.get("conversation_message_id"),
         request_id=extra.get("request_id"),
     )
-    stats_context.capture_prepared_request(prepared_request.payload)
+    stats_context.capture_prepared_request(
+        prepared_request.payload, model_is_configured=prepared_request.model_is_configured,
+    )
     service = service_factory(observer=stats_context)
     kwargs = {
         "response_model": prepared_request.response_model,

@@ -39,7 +39,7 @@ class CodexResponsesContractTests(unittest.TestCase):
                 try:
                     body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
                     requests.append((self.path, body))
-                    payload, bindings = translate_responses_request(body)
+                    payload, bindings, response_options = translate_responses_request(body)
                     if not body.get('tools'):
                         compacted = True
                         delta = {'content': '已创建 result.txt 并执行验证命令。继续完成任务。'}
@@ -56,7 +56,7 @@ class CodexResponsesContractTests(unittest.TestCase):
                         stage += 1
                     else:
                         delta, finish = {'content': '契约完成'}, 'stop'
-                    adapter = ResponsesAdapter(payload['model'], bindings)
+                    adapter = ResponsesAdapter(payload['model'], bindings, **response_options)
                     state = adapter.create_stream_state()
                     delta['function_call'] = {'name': '', 'arguments': ''}
                     wire = adapter.process_stream_event(state, CodeBuddyResponseEvent.parse({

@@ -188,10 +188,16 @@ class UsageStatsContext:
         self._message_count = len(messages) if isinstance(messages, list) else None
         self._tool_count = len(tools) if isinstance(tools, list) else None
 
-    def capture_prepared_request(self, prepared_payload: Mapping[str, Any]) -> None:
+    def capture_prepared_request(
+            self, prepared_payload: Mapping[str, Any], *, model_is_configured: bool = False,
+    ) -> None:
         """在策略准备成功后补充上游模型及最终生效的思考模式。"""
         self._prepared_model_candidate = _safe_model_identifier(prepared_payload.get("model"))
-        self._upstream_model = self._controlled_model(self._prepared_model_candidate)
+        # 映射配置是可信来源，但仍须通过模型标识脱敏校验。
+        self._upstream_model = (
+            self._prepared_model_candidate if model_is_configured
+            else self._controlled_model(self._prepared_model_candidate)
+        )
         if self._requested_model == "unknown" and self._upstream_model is not None:
             self._requested_model = self._upstream_model
         self._thinking_mode = _thinking_mode(prepared_payload)

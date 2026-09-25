@@ -4,6 +4,8 @@ import tests  # 在生产模块导入前隔离测试数据目录。
 import json
 import unittest
 
+from openai.types.responses import ResponseTextDeltaEvent, ResponseTextDoneEvent
+
 from src.codebuddy_events import CodeBuddyResponseEvent, UpstreamProtocolViolation
 from src.responses_request import ToolBinding
 from src.responses_response import ResponsesAdapter
@@ -22,6 +24,61 @@ def decode(wires):
 
 
 class ResponsesResponseTests(unittest.TestCase):
+    def test_text_events_include_empty_logprobs_for_strict_clients(self):
+        models = {"response.output_text.delta": ResponseTextDeltaEvent,
+                  "response.output_text.done": ResponseTextDoneEvent}
+        adapter = self.adapter()
+        state = adapter.create_stream_state()
+        wires = []
+        for item in (event({"reasoning_content": "思考", "content": "第一"}),
+                     event({"content": "段"}), event({"refusal": "拒绝部分内容"}),
+                     event({"content": "第二段"}, "stop")):
+            wires += adapter.process_stream_event(state, item)
+        wires += adapter.finalize_stream(state, True)
+        events = decode(wires)
+        self.assertEqual([item["text"] for item in events if item["type"] == "response.output_text.done"],
+                         ["第一段", "第二段"])
+        for item in events:
+            with self.subTest(kind=item["type"], sequence=item["sequence_number"]):
+                if item["type"] in models:
+                    parsed = models[item["type"]].model_validate(item)
+                    self.assertEqual(parsed.logprobs, [])
+                else:
+                    self.assertNotIn("logprobs", item)
+
+    def test_finish_reason_without_done_remains_compatible(self):
+        for finish, status in (("stop", "completed"), ("tool_calls", "completed"),
+                               ("length", "incomplete"), ("content_filter", "incomplete")):
+            adapter = self.adapter()
+            state = adapter.create_stream_state()
+            aggregate = adapter.create_non_stream_aggregator()
+            source = event({"content": "已有输出"}, finish)
+            adapter.process_stream_event(state, source)
+            adapter.process_non_stream_event(aggregate, source)
+            final = adapter.finalize_non_stream(aggregate, False)
+            terminal = decode(adapter.finalize_stream(state, False))[-1]
+            self.assertEqual(terminal["type"], "response." + status)
+            self.assertEqual(terminal["response"], final)
+        for stream in (True, False):
+            adapter = self.adapter()
+            state = adapter.create_stream_state() if stream else adapter.create_non_stream_aggregator()
+            state.process(event({"content": "只有文本"}))
+            with self.assertRaises(UpstreamProtocolViolation):
+                (adapter.finalize_stream if stream else adapter.finalize_non_stream)(state, False)
+
+    def test_tool_configuration_is_isolated_and_present_on_failure(self):
+        tools = [{"type": "function", "name": "read", "parameters": {"type": "object"}}]
+        choice = {"type": "function", "name": "read"}
+        adapter = ResponsesAdapter("model", {}, tools=tools, tool_choice=choice)
+        state = adapter.create_stream_state()
+        created = decode(state.start())[0]["response"]
+        tools[0]["name"] = "changed"
+        choice["name"] = "changed"
+        created["tools"][0]["name"] = "changed"
+        failed = decode([adapter.format_stream_error(RuntimeError())])[0]["response"]
+        self.assertEqual(failed["tools"][0]["name"], "read")
+        self.assertEqual(failed["tool_choice"]["name"], "read")
+
     def test_truncated_tool_group_is_not_emitted_as_executable_calls(self):
         for finish in ("length", "content_filter"):
             for kind in ("function", "custom"):
