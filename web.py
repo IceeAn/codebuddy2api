@@ -19,8 +19,8 @@ from contextlib import asynccontextmanager
 from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
-from fastapi.responses import JSONResponse
+from fastapi.openapi.docs import get_redoc_html
+from fastapi.responses import HTMLResponse, JSONResponse
 from starlette.responses import PlainTextResponse
 from src.openai_errors import is_openai_path, openai_error_response
 from fastapi.middleware.cors import CORSMiddleware
@@ -235,23 +235,24 @@ async def protected_openapi(_user=Depends(require_session_user)):
 @docs_router.get("/docs", include_in_schema=False)
 async def protected_swagger_ui(_user=Depends(require_session_user)):
     """仅向已登录的管理台用户返回 Swagger UI。"""
-    return get_swagger_ui_html(
-        openapi_url="/openapi.json",
-        title=f"{app.title} - Swagger UI",
-        swagger_ui_parameters={
-            "deepLinking": False,
-            "validatorUrl": None,
-            "persistAuthorization": False,
-            "filter": True,
-            "displayRequestDuration": True,
-        },
-    )
+    return HTMLResponse('''<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CodeBuddy2API - Swagger UI</title>
+<link rel="stylesheet" href="/assets/api-docs/swagger-ui.css">
+<script defer src="/assets/api-docs/swagger-ui-bundle.js"></script>
+<script defer src="/assets/api-docs-init.js"></script>
+</head><body><div id="swagger-ui" data-schema-url="/openapi.json"></div></body></html>''')
 
 
 @docs_router.get("/redoc", include_in_schema=False)
 async def protected_redoc(_user=Depends(require_session_user)):
     """仅向已登录的管理台用户返回 ReDoc。"""
-    return get_redoc_html(openapi_url="/openapi.json", title=f"{app.title} - ReDoc")
+    return get_redoc_html(
+        openapi_url="/openapi.json", title=f"{app.title} - ReDoc",
+        redoc_js_url="/assets/api-docs/redoc.standalone.js",
+        redoc_favicon_url="/assets/codebuddy2api.svg", with_google_fonts=False,
+    )
 
 
 app.include_router(docs_router)

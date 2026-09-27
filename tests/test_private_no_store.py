@@ -251,22 +251,22 @@ class PrivateNoStoreResponseTests(TempConfigMixin, unittest.IsolatedAsyncioTestC
                 self.assertNotIn("'unsafe-eval'", policy)
                 self.assertNotIn("script-src 'self' 'unsafe-inline'", policy)
 
-    async def test_documentation_csp_allows_only_required_remote_assets(self):
+    async def test_documentation_csp_only_allows_same_origin_scripts(self):
         for path in ("/docs", "/redoc"):
             with self.subTest(path=path):
                 response = await self._request("GET", path)
                 policy = response.headers["Content-Security-Policy"]
                 self.assertIn(
-                    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+                    "script-src 'self';",
                     policy,
                 )
                 self.assertIn(
-                    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com",
+                    "style-src 'self' 'unsafe-inline';",
                     policy,
                 )
-                self.assertIn("font-src 'self' https://fonts.gstatic.com", policy)
+                self.assertIn("font-src 'self';", policy)
                 self.assertIn(
-                    "img-src 'self' data: https://fastapi.tiangolo.com",
+                    "img-src 'self' data:;",
                     policy,
                 )
 

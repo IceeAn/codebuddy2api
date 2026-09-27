@@ -34,13 +34,7 @@ _APPLICATION_CONTENT_SECURITY_POLICY = (
     "font-src 'self'; "
     "img-src 'self' data:; "
 )
-_DOCUMENTATION_CONTENT_SECURITY_POLICY = (
-    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-    "script-src-attr 'none'; "
-    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
-    "font-src 'self' https://fonts.gstatic.com; "
-    "img-src 'self' data: https://fastapi.tiangolo.com; "
-)
+_DOCUMENTATION_CONTENT_SECURITY_POLICY = _APPLICATION_CONTENT_SECURITY_POLICY
 
 
 def _content_security_policy(frame_ancestors: str, documentation: bool = False) -> str:
