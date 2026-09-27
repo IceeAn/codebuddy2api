@@ -63,6 +63,8 @@ _DEFAULT_CONFIG = {
     "CODEBUDDY_DATA_DIR": "data",
     "CODEBUDDY_ALLOWED_HOSTS": "localhost,127.0.0.1",
     "CODEBUDDY_ALLOWED_ORIGINS": "",
+    "CODEBUDDY_PUBLIC_ORIGIN": "",
+    "FORWARDED_ALLOW_IPS": "127.0.0.1",
     "CODEBUDDY_CSP_FRAME_ANCESTORS": "none",
     "CODEBUDDY_MAX_REQUEST_BODY_BYTES": 16 * 1024 * 1024,
     "CODEBUDDY_LOGIN_RATE_WINDOW_SECONDS": 60,
@@ -376,6 +378,36 @@ def get_allowed_hosts() -> list:
     return _parse_csv(_get_config_value("CODEBUDDY_ALLOWED_HOSTS"))
 
 
+def get_public_origin() -> str:
+    """公网入口固定使用 HTTPS；空值保留本地开发模式。"""
+    from src.http_security import normalize_origin
+
+    raw = str(_get_config_value("CODEBUDDY_PUBLIC_ORIGIN"))
+    if not raw:
+        return ""
+    origin = normalize_origin(raw)
+    if origin is None or not origin.startswith("https://"):
+        raise ValueError("CODEBUDDY_PUBLIC_ORIGIN must be an HTTPS origin")
+    return origin
+
+
+def validate_public_configuration() -> None:
+    origin = get_public_origin()
+    if not origin:
+        return
+    hosts = get_allowed_hosts()
+    if not hosts or any("*" in host for host in hosts) or urlsplit(origin).hostname not in hosts:
+        raise ValueError("CODEBUDDY_ALLOWED_HOSTS must explicitly include the public host without wildcards")
+    if not get_ssl_verify() or get_max_concurrent_requests() is None:
+        raise ValueError("Public deployments require TLS verification and a finite concurrency limit")
+    proxies = _parse_csv(_get_config_value("FORWARDED_ALLOW_IPS"))
+    if not proxies:
+        raise ValueError("Public deployments require explicit trusted proxy addresses")
+    for proxy in proxies:
+        if ipaddress.ip_network(proxy).prefixlen == 0:
+            raise ValueError("Trusted proxy ranges must not include every address")
+
+
 def get_csp_frame_ancestors() -> str:
     """校验并规范化 CSP frame-ancestors 来源列表。"""
     key = "CODEBUDDY_CSP_FRAME_ANCESTORS"
@@ -581,6 +613,7 @@ def _validate_startup_config() -> None:
     get_max_concurrent_requests()
     get_credential_background_delay_range()
     get_csp_frame_ancestors()
+    validate_public_configuration()
 
 # --- Public Setter for Hot-Reload ---
 

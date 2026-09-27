@@ -110,7 +110,7 @@ class AnthropicSDKContractTests(TempConfigMixin, unittest.IsolatedAsyncioTestCas
                 cookie = session_store.create("admin")
                 async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost") as http_client:
                     response = await http_client.post("/api/admin/playground/anthropic/v1/messages",
-                                                      headers={"anthropic-version": "2023-06-01", "Cookie": f"{SESSION_COOKIE_NAME}={cookie}"},
+                                                      headers={"Origin": "http://localhost", "anthropic-version": "2023-06-01", "Cookie": f"{SESSION_COOKIE_NAME}={cookie}"},
                                                       json={**options, "messages": history})
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.json()["content"][-1]["id"], "tool_sdk")

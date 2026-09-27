@@ -50,7 +50,7 @@ class OpenAISDKContractTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         return await service.handle_non_stream_response(prepared.payload, {}, response_model=prepared.response_model)
 
     def _client(self, *, playground=False, key=None):
-        headers = {}
+        headers = {"Origin": "http://localhost"}
         prefix = "/openai/v1"
         if playground:
             prefix = "/api/admin/playground/openai/v1"

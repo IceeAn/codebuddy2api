@@ -56,7 +56,7 @@ class AnthropicRouteTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
             raise_app_exceptions=raise_app_exceptions,
         )
         async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
-            return await client.request(method, path, headers=headers, json=json, content=content)
+            return await client.request(method, path, headers={"Origin": "http://localhost", **(headers or {})}, json=json, content=content)
 
     def _bearer(self):
         return {**self.version, "Authorization": f"Bearer {self.api_key}"}

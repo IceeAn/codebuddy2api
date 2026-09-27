@@ -64,7 +64,8 @@ def _business_error(
 
 
 def _is_secure_request(request: Request) -> bool:
-    return request.url.scheme == "https"
+    from config import get_public_origin
+    return bool(get_public_origin()) or request.url.scheme == "https"
 
 
 def _require_users() -> None:

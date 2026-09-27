@@ -80,7 +80,7 @@ class ResponsesRoutesTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         return await method(prepared.payload, {}, response_adapter=response_adapter)
 
     def client(self):
-        return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost")
+        return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost", headers={"Origin": "http://localhost"})
 
     async def test_truncated_tool_arguments_return_incomplete_for_both_transports(self):
         async with self.client() as client:

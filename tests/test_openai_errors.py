@@ -35,7 +35,7 @@ class OpenAIErrorContractTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost") as client:
             for path, headers in (
                 ("/openai/v1/chat/completions", {"Authorization": "Bearer " + self.api_key}),
-                ("/api/admin/playground/openai/v1/chat/completions", {"Cookie": f"{SESSION_COOKIE_NAME}={session_id}"}),
+                ("/api/admin/playground/openai/v1/chat/completions", {"Origin": "http://localhost", "Cookie": f"{SESSION_COOKIE_NAME}={session_id}"}),
             ):
                 for body, param in cases:
                     with self.subTest(path=path, body=body):
@@ -57,7 +57,7 @@ class OpenAIErrorContractTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase
                  {"messages": [{"role": "user", "content": "secret"}], "max_tokens": 0}, 400),
                 ("/openai/v1/missing", {}, {}, 404),
             ]:
-                response = await client.post(path, headers=auth, json=body)
+                response = await client.post(path, headers={"Origin": "http://localhost", **auth}, json=body)
                 with self.subTest(path=path, status=status):
                     self.assertEqual(response.status_code, status)
                     self.assertEqual(set(response.json()["error"]), {"message", "type", "param", "code"})
@@ -112,7 +112,7 @@ class OpenAIErrorContractTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase
         session_store.revoke_user("admin", AuthErrorCode.PASSWORD_CHANGED_ELSEWHERE.value)
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost") as client:
             response = await client.post("/api/admin/playground/openai/v1/chat/completions",
-                                         headers={"Cookie": f"{SESSION_COOKIE_NAME}={session_id}"}, json={})
+                                         headers={"Origin": "http://localhost", "Cookie": f"{SESSION_COOKIE_NAME}={session_id}"}, json={})
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["error"]["code"], "password_changed_elsewhere")
         self.assertEqual(response.headers["WWW-Authenticate"], "Bearer")

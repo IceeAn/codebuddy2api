@@ -22,6 +22,7 @@ class PasswordChangeApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         return httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
             base_url="http://localhost",
+            headers={"Origin": "http://localhost"},
         )
 
     async def test_formal_login_and_session_report_no_required_change(self):

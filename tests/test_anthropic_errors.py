@@ -70,7 +70,7 @@ class AnthropicErrorContractTests(TempConfigMixin, unittest.IsolatedAsyncioTestC
         session_store.revoke_user("admin", AuthErrorCode.PASSWORD_CHANGED_ELSEWHERE.value)
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost") as client:
             response = await client.post("/api/admin/playground/anthropic/v1/messages", json={},
-                                         headers={"anthropic-version": "2023-06-01", "Cookie": f"{SESSION_COOKIE_NAME}={session_id}"})
+                                         headers={"Origin": "http://localhost", "anthropic-version": "2023-06-01", "Cookie": f"{SESSION_COOKIE_NAME}={session_id}"})
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["error"]["type"], "authentication_error")
         self.assertEqual(response.headers["WWW-Authenticate"], "Bearer")

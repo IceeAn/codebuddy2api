@@ -22,7 +22,7 @@ class ProtocolRouteAuthenticationTests(TempConfigMixin, unittest.IsolatedAsyncio
         self.session_id = session_store.create("admin")
 
     async def _request(self, method, path, *, api_key=False, session=False, json=None):
-        headers = {}
+        headers = {"Origin": "http://localhost"}
         if api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         if session:

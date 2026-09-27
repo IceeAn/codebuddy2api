@@ -82,7 +82,8 @@ class SecurityResponseHeadersMiddleware:
 
 
 def _is_secure_scope(scope: Scope) -> bool:
-    return scope.get("scheme") == "https"
+    from config import get_public_origin
+    return bool(get_public_origin()) or scope.get("scheme") == "https"
 
 
 def _session_id_from_scope(scope: Scope) -> str:

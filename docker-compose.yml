@@ -2,8 +2,10 @@ services:
   codebuddy2api:
     image: ghcr.io/iceean/codebuddy2api:latest
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     ports:
-      - "8001:8001"
+      - "127.0.0.1:8001:8001"
     environment:
       # 容器运行数据必须写入持久化挂载点，不接受 .env 覆盖。
       CODEBUDDY_DATA_DIR: /app/data

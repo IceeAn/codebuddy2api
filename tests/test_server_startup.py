@@ -43,6 +43,8 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("image: ghcr.io/iceean/codebuddy2api:latest", compose_lines)
         self.assertIn("- ./data:/app/data", compose_lines)
         self.assertIn("- ./secrets:/app/secrets:ro", compose_lines)
+        self.assertIn('- "127.0.0.1:8001:8001"', compose_lines)
+        self.assertIn("- no-new-privileges:true", compose_lines)
         self.assertNotIn(".codebuddy_creds", compose_text)
         self.assertNotIn(
             "- ./secrets/users.txt:/app/secrets/users.txt:ro", compose_lines
@@ -279,9 +281,9 @@ class ServerStartupTests(unittest.TestCase):
 
         run.assert_called_once()
         middleware_classes = [item.cls for item in namespace["app"].user_middleware]
-        from fastapi.middleware.cors import CORSMiddleware
+        from src.http_security import ExternalCORSMiddleware
 
-        self.assertIn(CORSMiddleware, middleware_classes)
+        self.assertIn(ExternalCORSMiddleware, middleware_classes)
 
 
 class ServerLifecycleTests(unittest.IsolatedAsyncioTestCase):

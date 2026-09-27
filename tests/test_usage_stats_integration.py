@@ -87,7 +87,7 @@ class UsageStatsIntegrationTests(TempConfigMixin, unittest.IsolatedAsyncioTestCa
             json=None,
             content=None,
     ):
-        headers = {}
+        headers = {"Origin": "http://localhost"}
         if api_key:
             headers["Authorization"] = f"Bearer {self.api_key_record['api_key']}"
         if session:

@@ -253,7 +253,7 @@ class AuthSessionTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
                 {"username": "unknown", "password": "secret-password"},
             ):
                 with self.subTest(username=credentials["username"]):
-                    response = await client.post("/auth/login", json=credentials)
+                    response = await client.post("/auth/login", json=credentials, headers={"Origin": "http://localhost"})
 
                     self.assertEqual(response.status_code, 401)
                     self.assertEqual(response.json(), {"detail": "用户名或密码错误"})
@@ -312,6 +312,7 @@ class AuthSessionTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         async with httpx.AsyncClient(
             transport=transport,
             base_url="http://localhost",
+            headers={"Origin": "http://localhost"},
         ) as client:
             with (
                 mock.patch("src.auth_router.login_attempt_guard", guard),

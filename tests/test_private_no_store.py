@@ -39,7 +39,7 @@ class PrivateNoStoreResponseTests(TempConfigMixin, unittest.IsolatedAsyncioTestC
         raise_app_exceptions=True,
         base_url="http://localhost",
     ):
-        request_headers = dict(headers or {})
+        request_headers = {"Origin": base_url, **(headers or {})}
         if api_key:
             request_headers["Authorization"] = f"Bearer {self.api_key}"
         if session:
