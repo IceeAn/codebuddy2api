@@ -1,10 +1,37 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { defineConfig, type Plugin } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import tailwindcss from '@tailwindcss/vite';
 
 const THEME_INIT_SOURCE_URL = '/src/theme-init.js';
+
+function documentationAssetsPlugin(): Plugin {
+  const require = createRequire(import.meta.url);
+  return {
+    name: 'same-origin-api-documentation',
+    apply: 'build',
+    generateBundle() {
+      for (const [packagePath, fileName] of [
+        ['swagger-ui-dist/swagger-ui-bundle.js', 'swagger-ui-bundle.js'],
+        ['swagger-ui-dist/swagger-ui.css', 'swagger-ui.css'],
+        ['redoc/bundles/redoc.standalone.js', 'redoc.standalone.js'],
+        ['swagger-ui-dist/LICENSE', 'swagger-ui-LICENSE'],
+        ['swagger-ui-dist/NOTICE', 'swagger-ui-NOTICE'],
+        ['swagger-ui-dist/swagger-ui-bundle.js.LICENSE.txt', 'swagger-ui-bundle.js.LICENSE.txt'],
+        ['redoc/LICENSE', 'redoc-LICENSE'],
+        ['redoc/bundles/redoc.standalone.js.LICENSE.txt', 'redoc.standalone.js.LICENSE.txt'],
+      ]) {
+        this.emitFile({
+          type: 'asset',
+          fileName: `assets/api-docs/${fileName}`,
+          source: readFileSync(require.resolve(packagePath)),
+        });
+      }
+    },
+  };
+}
 
 export function createHashedAssetFileName(
   baseName: string,
@@ -57,7 +84,7 @@ function themeInitAssetPlugin(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [themeInitAssetPlugin(), vue(), tailwindcss()],
+  plugins: [themeInitAssetPlugin(), documentationAssetsPlugin(), vue(), tailwindcss()],
   server: {
     proxy: {
       '/auth': 'http://127.0.0.1:8001',
@@ -69,6 +96,7 @@ export default defineConfig({
       '/docs': 'http://127.0.0.1:8001',
       '/redoc': 'http://127.0.0.1:8001',
       '/openapi.json': 'http://127.0.0.1:8001',
+      '/assets/api-docs/': 'http://127.0.0.1:8001',
     },
   },
   build: {

@@ -17,3 +17,7 @@ The MIT License does not apply to upstream code, third-party code, assets, artwo
 ## License File
 
 The `LICENSE` file applies only to the current independently rewritten code authored by this fork's maintainer.
+
+## 同源 API 文档资源
+
+生产构建包含 Swagger UI（Apache-2.0）与 ReDoc（MIT）的固定版本资源，具体版本见 `frontend/pnpm-lock.yaml`。其许可证、NOTICE 和打包依赖许可证随资源一并发布到 `frontend/dist/assets/api-docs/`；这些第三方资源不适用本项目维护者的版权声明。

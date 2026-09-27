@@ -30,6 +30,8 @@
     "vue-router": "^5.2.0"
   },
   "devDependencies": {
+    "swagger-ui-dist": "5.33.0",
+    "redoc": "2.5.4",
     "@playwright/test": "^1.62.1",
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^26.2.0",
