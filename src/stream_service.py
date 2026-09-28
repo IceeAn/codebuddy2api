@@ -4,6 +4,7 @@ import copy
 import json
 import logging
 import random
+import re
 import time
 import uuid
 from contextlib import aclosing
@@ -24,6 +25,7 @@ from .codebuddy_events import (
 )
 from .openai_response import StreamResponseAggregator
 from .openai_errors import openai_error_content
+from .security_logging import safe_error_text
 from .openai_compat import (
     CompletionResponseContext,
     OpenAIStreamNormalizer,
@@ -101,12 +103,12 @@ def _extract_error_fields(
         error_type = candidate.get("type")
         code = candidate.get("code")
         return (
-            message if isinstance(message, str) and message else fallback_message,
-            error_type if isinstance(error_type, str) and error_type else fallback_type,
-            code,
+            safe_error_text(message) if isinstance(message, str) and message else fallback_message,
+            error_type if isinstance(error_type, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", error_type) else fallback_type,
+            safe_error_text(code)[:128] if isinstance(code, str) else code if type(code) is int else None,
         )
     if isinstance(candidate, str) and candidate:
-        return candidate, fallback_type, None
+        return safe_error_text(candidate), fallback_type, None
     return fallback_message, fallback_type, None
 
 
@@ -561,7 +563,7 @@ class CodeBuddyStreamService:
             error_type="upstream_incomplete",
         )
 
-    async def _raise_upstream_api_error(self, response: Any) -> None:
+    async def _raise_upstream_api_error(self, response: Any, sensitive_values=()) -> None:
         """尽力读取错误体，但始终以已经收到的上游状态码为准。"""
         try:
             from config import get_security_limit
@@ -573,6 +575,9 @@ class CodeBuddyStreamService:
                     break
                 error_text.extend(chunk)
             error_msg = error_text.decode("utf-8", errors="replace")
+            for value in sensitive_values:
+                if value:
+                    error_msg = error_msg.replace(value, "[已隐藏]")
         except httpx.HTTPError as error:
             logger.warning("读取 CodeBuddy API 错误响应体失败: %s", error)
             error_msg = "unable to read upstream error response body"
@@ -590,6 +595,7 @@ class CodeBuddyStreamService:
     async def _iter_normalized_upstream_events(
             self,
             response: Any,
+            sensitive_values=(),
     ) -> AsyncIterator[Any]:
         """统一解析上游 SSE，并把对象事件转换为共享响应语义。"""
         observed_tool_call_indexes: set[int] = set()
@@ -610,7 +616,11 @@ class CodeBuddyStreamService:
                     continue
                 if "error" in event:
                     self._observe(StreamObservation(kind="upstream_event"))
-                    raise self._upstream_sse_error(event)
+                    serialized = json.dumps(event)
+                    for value in sensitive_values:
+                        if value:
+                            serialized = serialized.replace(json.dumps(value)[1:-1], "[已隐藏]")
+                    raise self._upstream_sse_error(json.loads(serialized))
                 response_event = CodeBuddyResponseEvent.parse(event)
                 new_tool_call_count = 0
                 for tool_call in response_event.tool_calls:
@@ -648,6 +658,11 @@ class CodeBuddyStreamService:
         finally:
             await iterator.aclose()
 
+    @staticmethod
+    def _sensitive_values(headers):
+        authorization = headers.get("Authorization", "")
+        return (authorization, authorization.removeprefix("Bearer "))
+
     async def handle_stream_response(
             self,
             payload: Dict[str, Any],
@@ -660,16 +675,17 @@ class CodeBuddyStreamService:
         """处理流式响应。"""
         response_context = self._create_response_context(payload, response_model)
         adapter = response_adapter or OpenAIDownstreamAdapter(response_context, include_usage=include_usage)
+        sensitive_values = self._sensitive_values(headers)
 
         async def stream_core():
             client = await self.http_client_factory()
             async with client.stream("POST", self.api_url_factory(), json=payload, headers=headers) as response:
                 if response.status_code != 200:
-                    await self._raise_upstream_api_error(response)
+                    await self._raise_upstream_api_error(response, sensitive_values)
 
                 state = adapter.create_stream_state()
                 try:
-                    async for event in self._iter_normalized_upstream_events(response):
+                    async for event in self._iter_normalized_upstream_events(response, sensitive_values):
                         if event is SSE_DONE:
                             for outgoing_chunk in adapter.finalize_stream(state, True):
                                 yield outgoing_chunk
@@ -721,7 +737,7 @@ class CodeBuddyStreamService:
                 self._observe_error("upstream_transport_error", 502)
                 raise UpstreamAPIError(
                     status_code=502,
-                    message=f"Upstream transport error: {str(error)}",
+                    message="Upstream transport error",
                     error_type="upstream_transport_error",
                 ) from error
             except UpstreamAPIError as error:
@@ -742,14 +758,14 @@ class CodeBuddyStreamService:
                     self._observe_error("upstream_timeout", 504)
                     yield adapter.format_stream_error(UpstreamAPIError(
                         status_code=504,
-                        message=str(error),
+                        message="CodeBuddy API timeout",
                         error_type="upstream_timeout",
                     ))
                 except httpx.TransportError as error:
                     self._observe_error("upstream_transport_error", 502)
                     yield adapter.format_stream_error(UpstreamAPIError(
                         status_code=502,
-                        message=str(error),
+                        message="Upstream transport error",
                         error_type="upstream_transport_error",
                     ))
                 except UpstreamAPIError as error:
@@ -781,6 +797,7 @@ class CodeBuddyStreamService:
         """聚合上游流式响应，返回 OpenAI 非流式响应。"""
         response_context = self._create_response_context(payload, response_model)
         adapter = response_adapter or OpenAIDownstreamAdapter(response_context)
+        sensitive_values = self._sensitive_values(headers)
 
         async def request_once() -> Dict[str, Any]:
             client = await self.http_client_factory()
@@ -791,12 +808,12 @@ class CodeBuddyStreamService:
                     headers=headers,
             ) as response:
                 if response.status_code != 200:
-                    await self._raise_upstream_api_error(response)
+                    await self._raise_upstream_api_error(response, sensitive_values)
 
                 aggregator = adapter.create_non_stream_aggregator()
                 upstream_done = False
                 try:
-                    async for event in self._iter_normalized_upstream_events(response):
+                    async for event in self._iter_normalized_upstream_events(response, sensitive_values):
                         if event is SSE_DONE:
                             upstream_done = True
                             break
@@ -848,7 +865,7 @@ class CodeBuddyStreamService:
             self._observe_error("upstream_transport_error", 502)
             raise UpstreamAPIError(
                 status_code=502,
-                message=f"Upstream transport error: {str(e)}",
+                message="Upstream transport error",
                 error_type="upstream_transport_error",
             )
         except Exception:

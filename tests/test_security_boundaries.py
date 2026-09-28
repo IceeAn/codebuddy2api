@@ -2,6 +2,9 @@
 import tests
 
 import asyncio
+import io
+import json
+import logging
 import unittest
 from unittest import mock
 
@@ -11,9 +14,10 @@ from fastapi import FastAPI, Request
 import config
 from src.http_security import AdmissionMiddleware, ExternalCORSMiddleware, SessionOriginMiddleware, normalize_origin
 from src.request_limits import RequestBodyLimitMiddleware
+from src.security_logging import SafeLogFilter, configure_safe_logging
 from src.sse import SSEDataError, iter_sse_events
 from src.stream_service import CodeBuddyStreamService, UpstreamAPIError, _ManagedStreamingResponse
-from tests.helpers import ConfigIsolationMixin, async_chunks, make_request
+from tests.helpers import ConfigIsolationMixin, FakeStreamResponse, async_chunks, make_request
 
 
 class OriginTests(unittest.IsolatedAsyncioTestCase):
@@ -165,6 +169,17 @@ class StreamLimitTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(closed.is_set())
         disconnected.assert_called_once()
 
+    async def test_known_credentials_are_removed_from_http_and_sse_errors(self):
+        service = CodeBuddyStreamService()
+        secret = "private-credential-canary"
+        error = {"error":{"message":f"failed: {secret}", "code":secret}}
+        with self.assertRaises(UpstreamAPIError) as raised:
+            await service._raise_upstream_api_error(httpx.Response(401, json=error), ("", secret))
+        self.assertNotIn(secret, str(raised.exception.error))
+        response = FakeStreamResponse(chunks=["data: " + json.dumps(error) + "\n\n"])
+        with self.assertRaises(UpstreamAPIError) as raised:
+            _ = [item async for item in service._iter_normalized_upstream_events(response, ("", secret))]
+        self.assertNotIn(secret, str(raised.exception.error))
     async def test_deadline_cancels_upstream_and_closes_iterator(self):
         closed = asyncio.Event()
         async def endless():
@@ -199,6 +214,30 @@ class StreamLimitTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item async for item in iter_sse_events(async_chunks("data: {}\n"), max_line_bytes=8, max_total_bytes=9)], [{}])
 
 
+class LoggingTests(unittest.TestCase):
+    def test_mapping_exception_and_oauth_urls_do_not_leak(self):
+        record = logging.LogRecord("src.test", logging.ERROR, "", 1, "失败: %(error)s", ({"error":ValueError("SECRET")},), None)
+        SafeLogFilter().filter(record)
+        self.assertNotIn("SECRET", record.getMessage())
+        record = logging.LogRecord("src.test", logging.INFO, "", 1, "https://a/auth?state=CANARY&access_token=TOKEN Bearer SECRET sk-KEY", (), None)
+        SafeLogFilter().filter(record)
+        for value in ("CANARY", "TOKEN", "SECRET", "sk-KEY"):
+            self.assertNotIn(value, record.getMessage())
+    def test_exception_and_control_characters_are_safe(self):
+        record = logging.LogRecord("src.test", logging.ERROR, "", 1, "失败: %s", (ValueError("SECRET"),), (ValueError, ValueError("SECRET"), None))
+        self.assertTrue(SafeLogFilter().filter(record))
+        self.assertNotIn("SECRET", logging.Formatter().format(record))
+        record = logging.LogRecord("src.test", logging.INFO, "", 1, "用户\n伪造日志", (), None)
+        SafeLogFilter().filter(record)
+        self.assertNotIn("\n", record.getMessage())
+
+    def test_http_client_logging_is_disabled(self):
+        with mock.patch.object(logging.getLogger(), "handlers", [logging.StreamHandler(io.StringIO())]):
+            configure_safe_logging()
+            for name in ("httpx", "httpcore", "httpcore.http11", "httpcore.connection"):
+                self.assertTrue(logging.getLogger(name).disabled)
+
+
 class PublicConfigurationTests(ConfigIsolationMixin, unittest.TestCase):
     def test_public_origin_forces_secure_cookie_even_on_internal_http(self):
         from src.auth_router import _is_secure_request
@@ -221,3 +260,19 @@ class PublicConfigurationTests(ConfigIsolationMixin, unittest.TestCase):
             with mock.patch.dict(config._config_cache, {key:value}):
                 with self.assertRaises(ValueError, msg=key):
                     config._validate_startup_config()
+
+
+class ValidationDisclosureTests(unittest.IsolatedAsyncioTestCase):
+    async def test_validation_details_never_echo_input_context_or_arbitrary_keys(self):
+        from fastapi.exceptions import RequestValidationError
+        from web import request_validation_error_handler
+        error = RequestValidationError([
+            {"loc":("body", "password", "PRIVATE_KEY", 0), "type":"string_type",
+             "msg":"PRIVATE_MESSAGE", "input":"PRIVATE_INPUT", "ctx":{"error":"PRIVATE_CONTEXT"}}
+        ] * 25)
+        response = await request_validation_error_handler(make_request(path="/auth/login"), error)
+        self.assertEqual(response.status_code, 422)
+        self.assertNotIn(b"PRIVATE", response.body)
+        details = json.loads(response.body)["detail"]
+        self.assertEqual(len(details), 20)
+        self.assertEqual(details[0]["loc"], ["body", "password", "field", 0])

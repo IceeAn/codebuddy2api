@@ -828,7 +828,7 @@ class StreamServiceErrorTests(unittest.IsolatedAsyncioTestCase):
                 if isinstance(error, RuntimeError):
                     self.assertEqual("Upstream stream error", payloads[-1]["error"]["message"])
                 else:
-                    self.assertIn(str(error), payloads[-1]["error"]["message"])
+                    self.assertNotIn(str(error), payloads[-1]["error"]["message"])
                 self.assertEqual(client.stream.call_count, 1)
 
     async def test_stream_response_maps_transport_error_before_first_output(self):

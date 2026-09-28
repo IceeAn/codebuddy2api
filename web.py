@@ -17,13 +17,13 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, Depends, FastAPI, Request
-from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.docs import get_redoc_html
 from fastapi.responses import HTMLResponse, JSONResponse
 from starlette.responses import PlainTextResponse
 from src.openai_errors import is_openai_path, openai_error_response
 from src.http_security import AdmissionMiddleware, ExternalCORSMiddleware, SessionOriginMiddleware
+from src.security_logging import configure_safe_logging
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -77,13 +77,24 @@ logging.basicConfig(
     level=getattr(logging, get_log_level().upper()),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+configure_safe_logging()
 logger = logging.getLogger(__name__)
 APP_VERSION = "0.4.0"
+
+# 只保留 schema 定义的定位字段，避免客户端构造的字典键进入校验错误。
+_VALIDATION_LOCATION_FIELDS = frozenset({
+    "body", "query", "path", "header", "username", "password", "new_password",
+    "current_password", "bearer_token", "name", "mode", "settings", "start_at",
+    "end_at", "timezone", "traffic", "model", "api_key_id", "credential_id",
+    "outcome", "granularity", "page", "page_size", "snapshot_id", "snapshot_time",
+    "search", "cursor", "limit", "id",
+})
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
+    configure_safe_logging()
     logger.info("Starting CodeBuddy2API Service")
     try:
         # 启动时初始化资源
@@ -148,7 +159,7 @@ async def auth_business_error_handler(request, error: AuthBusinessError):
 
 @app.exception_handler(RequestValidationError)
 async def request_validation_error_handler(request: Request, error: RequestValidationError):
-    """将 Anthropic 依赖校验错误规范化为 400，其余路由保持 FastAPI 行为。"""
+    """协议入口返回受控 400；管理端保留 422，但不回显原始输入或 context。"""
     if is_openai_path(request.url.path):
         return openai_error_response(400, "Invalid OpenAI request")
     if is_anthropic_path(request.url.path):
@@ -170,7 +181,19 @@ async def request_validation_error_handler(request: Request, error: RequestValid
         ))
     return JSONResponse(
         status_code=422,
-        content={"detail": jsonable_encoder(error.errors())},
+        content={
+            "detail": [
+                {
+                    "loc": [
+                        part if isinstance(part, int) or part in _VALIDATION_LOCATION_FIELDS else "field"
+                        for part in item["loc"]
+                    ],
+                    "type": item["type"],
+                    "msg": "请求字段无效",
+                }
+                for item in error.errors()[:20]
+            ],
+        },
     )
 
 
