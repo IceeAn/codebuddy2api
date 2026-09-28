@@ -65,6 +65,11 @@ _DEFAULT_CONFIG = {
     "CODEBUDDY_ALLOWED_ORIGINS": "",
     "CODEBUDDY_PUBLIC_ORIGIN": "",
     "FORWARDED_ALLOW_IPS": "127.0.0.1",
+    "CODEBUDDY_REQUEST_BODY_TIMEOUT_SECONDS": 30,
+    "CODEBUDDY_UPSTREAM_TIMEOUT_SECONDS": 1800,
+    "CODEBUDDY_MAX_SSE_LINE_BYTES": 1024 * 1024,
+    "CODEBUDDY_MAX_UPSTREAM_RESPONSE_BYTES": 32 * 1024 * 1024,
+    "CODEBUDDY_MAX_UPSTREAM_ERROR_BYTES": 64 * 1024,
     "CODEBUDDY_CSP_FRAME_ANCESTORS": "none",
     "CODEBUDDY_MAX_REQUEST_BODY_BYTES": 16 * 1024 * 1024,
     "CODEBUDDY_LOGIN_RATE_WINDOW_SECONDS": 60,
@@ -391,6 +396,11 @@ def get_public_origin() -> str:
     return origin
 
 
+def get_security_limit(name: str) -> int:
+    """读取不可被用户设置覆盖的资源安全上限。"""
+    return _to_positive_int(_get_config_value(name), name)
+
+
 def validate_public_configuration() -> None:
     origin = get_public_origin()
     if not origin:
@@ -613,6 +623,8 @@ def _validate_startup_config() -> None:
     get_max_concurrent_requests()
     get_credential_background_delay_range()
     get_csp_frame_ancestors()
+    for name in ("CODEBUDDY_REQUEST_BODY_TIMEOUT_SECONDS", "CODEBUDDY_UPSTREAM_TIMEOUT_SECONDS", "CODEBUDDY_MAX_SSE_LINE_BYTES", "CODEBUDDY_MAX_UPSTREAM_RESPONSE_BYTES", "CODEBUDDY_MAX_UPSTREAM_ERROR_BYTES"):
+        get_security_limit(name)
     validate_public_configuration()
 
 # --- Public Setter for Hot-Reload ---

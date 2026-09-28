@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Callable, Dict, List, Literal, Optional, Protocol
 
 import httpx
+import anyio
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 from starlette.requests import ClientDisconnect
@@ -266,16 +267,27 @@ class _ManagedStreamingResponse(StreamingResponse):
     响应体发送仍委托 Starlette，避免重复实现其编码和 ASGI 消息逻辑。
     """
 
-    def __init__(self, content, close_callback, disconnect_callback, **kwargs):
+    def __init__(self, content, close_callback, disconnect_callback, *, timeout, **kwargs):
         super().__init__(content, **kwargs)
         self._close_callback = close_callback
         self._disconnect_callback = disconnect_callback
+        self._timeout = timeout
 
     async def _stream_from_first_chunk(self, first_chunk: Any, send) -> None:
         self.body_iterator = _prepend_chunk(first_chunk, self.body_iterator)
         await super().stream_response(send)
 
     async def __call__(self, _scope, receive, send) -> None:
+        deadline = asyncio.get_running_loop().time() + self._timeout
+
+        async def bounded_send(message):
+            try:
+                # 直接在当前任务发送，避免 Python 3.10 wait_for 的完成/取消竞争。
+                with anyio.fail_after(max(0, deadline - asyncio.get_running_loop().time())):
+                    await send(message)
+            except TimeoutError as error:  # AnyIO 明确抛出内置 TimeoutError。
+                raise ClientDisconnect() from error
+
         first_chunk_task = asyncio.create_task(anext(self.body_iterator))
         disconnect_task = asyncio.create_task(self.listen_for_disconnect(receive))
         tasks = [first_chunk_task, disconnect_task]
@@ -293,7 +305,7 @@ class _ManagedStreamingResponse(StreamingResponse):
 
             async def stream_from_first_chunk():
                 try:
-                    await self._stream_from_first_chunk(first_chunk, send)
+                    await self._stream_from_first_chunk(first_chunk, bounded_send)
                 except OSError as error:
                     raise ClientDisconnect() from error
 
@@ -517,7 +529,7 @@ class CodeBuddyStreamService:
         try:
             error_value = json.loads(error_msg)
         except json.JSONDecodeError:
-            return error_msg, None, None
+            return "CodeBuddy upstream error", None, None
         message, error_type, code = _extract_error_fields(
             error_value,
             "CodeBuddy upstream error",
@@ -552,8 +564,15 @@ class CodeBuddyStreamService:
     async def _raise_upstream_api_error(self, response: Any) -> None:
         """尽力读取错误体，但始终以已经收到的上游状态码为准。"""
         try:
-            error_text = await response.aread()
-            error_msg = error_text.decode("utf-8", errors="ignore")
+            from config import get_security_limit
+            limit = get_security_limit("CODEBUDDY_MAX_UPSTREAM_ERROR_BYTES")
+            error_text = bytearray()
+            async for chunk in response.aiter_bytes():
+                if len(error_text) + len(chunk) > limit:
+                    error_text = bytearray(b"upstream error body exceeds byte limit")
+                    break
+                error_text.extend(chunk)
+            error_msg = error_text.decode("utf-8", errors="replace")
         except httpx.HTTPError as error:
             logger.warning("读取 CodeBuddy API 错误响应体失败: %s", error)
             error_msg = "unable to read upstream error response body"
@@ -575,8 +594,9 @@ class CodeBuddyStreamService:
         """统一解析上游 SSE，并把对象事件转换为共享响应语义。"""
         observed_tool_call_indexes: set[int] = set()
         observation_index_state = ToolCallIndexState()
+        from config import get_security_limit
         try:
-            async for event in iter_sse_events(response.aiter_text()):
+            async for event in iter_sse_events(response.aiter_text(), max_line_bytes=get_security_limit("CODEBUDDY_MAX_SSE_LINE_BYTES"), max_total_bytes=get_security_limit("CODEBUDDY_MAX_UPSTREAM_RESPONSE_BYTES")):
                 if event is SSE_DONE:
                     self._observe(StreamObservation(
                         kind="upstream_event",
@@ -611,6 +631,22 @@ class CodeBuddyStreamService:
                 message=str(error),
                 error_type="upstream_protocol_error",
             ) from error
+
+    async def _deadline_stream(self, iterator, timeout: float):
+        """重试、心跳和工具缓冲共享总期限，取消时关闭在途迭代器。"""
+        deadline = asyncio.get_running_loop().time() + timeout
+        try:
+            while True:
+                try:
+                    with anyio.fail_after(max(0, deadline - asyncio.get_running_loop().time())):
+                        chunk = await anext(iterator)
+                except StopAsyncIteration:
+                    break
+                except TimeoutError as error:  # AnyIO 在 Python 3.10 同样使用内置异常。
+                    raise UpstreamAPIError(504, "CodeBuddy API total timeout", "upstream_timeout") from error
+                yield chunk
+        finally:
+            await iterator.aclose()
 
     async def handle_stream_response(
             self,
@@ -652,9 +688,10 @@ class CodeBuddyStreamService:
                         ) from error
                     raise
 
-        managed_stream = self.connection_manager.stream_with_retry(
-            stream_core,
-            on_retry=self._observe_retry,
+        from config import get_security_limit
+        managed_stream = self._deadline_stream(
+            self.connection_manager.stream_with_retry(stream_core, on_retry=self._observe_retry),
+            get_security_limit("CODEBUDDY_UPSTREAM_TIMEOUT_SECONDS"),
         )
 
         async def prefetch_first_chunk():
@@ -728,6 +765,7 @@ class CodeBuddyStreamService:
             response_body(),
             managed_stream.aclose,
             self._observe_client_disconnect,
+            timeout=get_security_limit("CODEBUDDY_UPSTREAM_TIMEOUT_SECONDS"),
             media_type=adapter.media_type,
             headers=adapter.stream_headers,
         )
@@ -773,22 +811,38 @@ class CodeBuddyStreamService:
                         ) from error
                     raise
 
+        timeout_scope = None
         try:
-            return await self.connection_manager.run_with_retry(
-                request_once,
-                on_retry=self._observe_retry,
-            )
+            from config import get_security_limit
+            with anyio.fail_after(
+                    get_security_limit("CODEBUDDY_UPSTREAM_TIMEOUT_SECONDS"),
+            ) as timeout_scope:
+                return await self.connection_manager.run_with_retry(
+                    request_once,
+                    on_retry=self._observe_retry,
+                )
         except UpstreamAPIError as error:
             self._observe_error(error.error["type"], error.status_code)
             raise
-        except httpx.TimeoutException:
+        except httpx.TimeoutException as error:
             logger.error("CodeBuddy API 超时")
             self._observe_error("upstream_timeout", 504)
             raise UpstreamAPIError(
                 status_code=504,
                 message="CodeBuddy API timeout",
                 error_type="upstream_timeout",
-            )
+            ) from error
+        except TimeoutError as error:  # AnyIO 在 Python 3.10 同样抛出内置 TimeoutError。
+            if timeout_scope is None or not timeout_scope.cancel_called:
+                self._observe_error("stream_error")
+                raise
+            logger.error("CodeBuddy API 超时")
+            self._observe_error("upstream_timeout", 504)
+            raise UpstreamAPIError(
+                status_code=504,
+                message="CodeBuddy API timeout",
+                error_type="upstream_timeout",
+            ) from error
         except httpx.TransportError as e:
             logger.error("上游传输错误: %s", e)
             self._observe_error("upstream_transport_error", 502)

@@ -125,6 +125,9 @@ class FakeStreamResponse:
     async def aread(self):
         return self.text.encode("utf-8")
 
+    async def aiter_bytes(self):
+        yield await self.aread()
+
 
 class FakeHttpClient:
     def __init__(self, chunks, status_code=200, text="", headers=None):

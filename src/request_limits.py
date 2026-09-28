@@ -1,6 +1,7 @@
 """预检请求体声明长度，并限制应用实际读取的字节数。"""
 
 import json
+import asyncio
 import uuid
 
 from fastapi import HTTPException
@@ -24,10 +25,12 @@ class RequestBodyLimitMiddleware:
         *,
         max_body_bytes: int,
         login_max_body_bytes: int,
+        body_timeout: float = 30,
     ) -> None:
         self.app = app
         self.max_body_bytes = max_body_bytes
         self.login_max_body_bytes = login_max_body_bytes
+        self.body_timeout = body_timeout
 
     def _limit_for_scope(self, scope: Scope) -> int:
         if scope.get("path") in {
@@ -69,7 +72,7 @@ class RequestBodyLimitMiddleware:
         if not cls._is_anthropic_scope(scope):
             return {"detail": detail}, {"Cache-Control": PRIVATE_NO_STORE_VALUE}
         request_id = cls._anthropic_request_id(scope)
-        error_type = "request_too_large" if status_code == 413 else "invalid_request_error"
+        error_type = {413: "request_too_large", 529: "overloaded_error", 403: "permission_error"}.get(status_code, "invalid_request_error")
         return {
             "type": "error",
             "error": {"type": error_type, "message": detail},
@@ -119,11 +122,20 @@ class RequestBodyLimitMiddleware:
 
         received_bytes = 0
         streamed_limit_exceeded = False
+        deadline = asyncio.get_running_loop().time() + self.body_timeout
+        body_complete = False
 
         async def receive_wrapper() -> Message:
-            nonlocal received_bytes, streamed_limit_exceeded
-            message = await receive()
+            nonlocal received_bytes, streamed_limit_exceeded, body_complete
+            if body_complete:
+                message = await receive()
+            else:
+                try:
+                    message = await asyncio.wait_for(receive(), max(0, deadline - asyncio.get_running_loop().time()))
+                except asyncio.TimeoutError as error:
+                    raise HTTPException(status_code=408, detail="请求体读取超时") from error
             if message["type"] == "http.request":
+                body_complete = not message.get("more_body", False)
                 received_bytes += len(message.get("body", b""))
                 if received_bytes > limit:
                     streamed_limit_exceeded = True

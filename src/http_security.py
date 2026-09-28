@@ -6,6 +6,7 @@ from urllib.parse import urlsplit
 from starlette.datastructures import Headers
 from starlette.middleware.cors import CORSMiddleware
 
+from .anthropic_errors import is_anthropic_path
 from .request_limits import RequestBodyLimitMiddleware
 
 
@@ -65,3 +66,25 @@ class ExternalCORSMiddleware(CORSMiddleware):
             await super().__call__(scope, receive, send)
         else:
             await self.app(scope, receive, send)
+
+
+class AdmissionMiddleware:
+    """单事件循环内不排队准入；流结束或取消后归还容量。"""
+
+    def __init__(self, app, *, limit: int | None):
+        self.app, self.limit = app, limit
+        self.active = 0
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or self.limit is None:
+            await self.app(scope, receive, send)
+            return
+        if self.active >= self.limit:
+            status_code = 529 if is_anthropic_path(scope.get("path", "")) else 503
+            await RequestBodyLimitMiddleware._send_error(scope, receive, send, status_code, "服务并发容量已满，请稍后重试")
+            return
+        self.active += 1
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            self.active -= 1

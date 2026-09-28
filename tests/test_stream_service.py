@@ -527,6 +527,92 @@ class StreamServiceErrorTests(unittest.IsolatedAsyncioTestCase):
                 http_client_factory=failed_factory,
             ).handle_non_stream_response({}, {})
 
+    async def test_non_stream_total_deadline_uses_anyio_cancel_scope(self):
+        service = CodeBuddyStreamService()
+        service.connection_manager.run_with_retry = mock.AsyncMock(
+            return_value={"completed": True},
+        )
+
+        with (
+            mock.patch("config.get_security_limit", return_value=42),
+            mock.patch.object(
+                stream_service.anyio,
+                "fail_after",
+                wraps=stream_service.anyio.fail_after,
+            ) as fail_after,
+        ):
+            response = await service.handle_non_stream_response({}, {})
+
+        self.assertEqual(response, {"completed": True})
+        fail_after.assert_called_once_with(42)
+
+    async def test_non_stream_total_deadline_maps_only_its_own_timeout(self):
+        observations = []
+        service = CodeBuddyStreamService(observer=observations.append)
+        service.connection_manager.run_with_retry = mock.AsyncMock(
+            side_effect=TimeoutError("inner timeout"),
+        )
+
+        with (
+            mock.patch("config.get_security_limit", return_value=60),
+            self.assertRaisesRegex(TimeoutError, "inner timeout"),
+        ):
+            await service.handle_non_stream_response({}, {})
+
+        self.assertEqual(observations, [StreamObservation(
+            kind="error",
+            error_type="stream_error",
+        )])
+
+    async def test_non_stream_total_deadline_cancels_operation_and_returns_504(self):
+        observations = []
+        closed = asyncio.Event()
+
+        async def blocked_request(*_args, **_kwargs):
+            try:
+                await asyncio.Event().wait()
+            finally:
+                closed.set()
+
+        service = CodeBuddyStreamService(observer=observations.append)
+        service.connection_manager.run_with_retry = blocked_request
+        with (
+            mock.patch("config.get_security_limit", return_value=0.01),
+            self.assertRaises(UpstreamAPIError) as raised,
+        ):
+            await service.handle_non_stream_response({}, {})
+
+        self.assertEqual(raised.exception.status_code, 504)
+        self.assertEqual(raised.exception.error["type"], "upstream_timeout")
+        self.assertTrue(closed.is_set())
+        self.assertEqual(observations, [StreamObservation(
+            kind="error",
+            error_type="upstream_timeout",
+            status_code=504,
+        )])
+
+    async def test_non_stream_total_deadline_propagates_external_cancellation(self):
+        entered = asyncio.Event()
+        closed = asyncio.Event()
+
+        async def blocked_request(*_args, **_kwargs):
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                closed.set()
+
+        service = CodeBuddyStreamService()
+        service.connection_manager.run_with_retry = blocked_request
+        with mock.patch("config.get_security_limit", return_value=60):
+            task = asyncio.create_task(service.handle_non_stream_response({}, {}))
+            await entered.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+        self.assertTrue(closed.is_set())
+
     async def test_non_stream_response_reads_upstream_through_stream_context(self):
         client = mock.Mock()
         client.stream.return_value = FakeHttpClient([
@@ -605,6 +691,9 @@ class StreamServiceErrorTests(unittest.IsolatedAsyncioTestCase):
 
                         async def aread(self):
                             raise httpx.ReadTimeout("error body stalled")
+
+                        async def aiter_bytes(self):
+                            yield await self.aread()
 
                     upstream = ErrorResponse()
                     client = mock.Mock()

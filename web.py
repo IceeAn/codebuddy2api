@@ -23,7 +23,7 @@ from fastapi.openapi.docs import get_redoc_html
 from fastapi.responses import HTMLResponse, JSONResponse
 from starlette.responses import PlainTextResponse
 from src.openai_errors import is_openai_path, openai_error_response
-from src.http_security import ExternalCORSMiddleware, SessionOriginMiddleware
+from src.http_security import AdmissionMiddleware, ExternalCORSMiddleware, SessionOriginMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -68,6 +68,7 @@ from config import (
     get_server_port,
     get_csp_frame_ancestors,
     get_public_origin,
+    get_security_limit,
     initialize_database,
 )
 
@@ -121,8 +122,10 @@ app.add_middleware(
     RequestBodyLimitMiddleware,
     max_body_bytes=get_max_request_body_bytes(),
     login_max_body_bytes=8 * 1024,
+    body_timeout=get_security_limit("CODEBUDDY_REQUEST_BODY_TIMEOUT_SECONDS"),
 )
 app.add_middleware(SessionOriginMiddleware, public_origin=get_public_origin())
+app.add_middleware(AdmissionMiddleware, limit=get_max_concurrent_requests())
 docs_router = APIRouter(route_class=PrivateNoStoreRoute)
 
 
