@@ -90,7 +90,7 @@ class CodeBuddyCredentialStore:
                         logger.warning(
                             f"Skipping invalid credential file (missing bearer_token): {os.path.basename(file_path)}")
             except Exception as e:
-                logger.error(f"Failed to load credential file {os.path.basename(file_path)}: {e}")
+                logger.error("凭证文件加载失败: %s", type(e).__name__)
 
         logger.info(f"Loaded a total of {len(credentials)} CodeBuddy credentials.")
         return credentials

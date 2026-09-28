@@ -153,7 +153,7 @@ class CodeBuddyTokenManager:
 
             logger.info("State loaded: current_index=%s", self.current_index)
         except Exception as e:
-            logger.warning(f"Failed to load manager state: {e}")
+            logger.warning("轮换状态加载失败: %s", type(e).__name__)
 
     def save_state(self):
         """保存管理器状态。"""
@@ -166,7 +166,7 @@ class CodeBuddyTokenManager:
 
             self.store.save_manager_state(state)
         except Exception as e:
-            logger.error(f"Failed to save manager state: {e}")
+            logger.error("轮换状态保存失败: %s", type(e).__name__)
 
     def is_token_expired(self, credential_data: Dict) -> bool:
         """检查 token 是否过期。"""
@@ -406,7 +406,7 @@ class CodeBuddyTokenManager:
             except FileExistsError:
                 logger.debug("Credential filename collision, retrying: %s", candidate)
             except Exception as e:
-                logger.error(f"Failed to save credential: {e}")
+                logger.error("凭证保存失败: %s", type(e).__name__)
                 return False
 
     def delete_credential_by_index(self, index: int) -> bool:
@@ -431,7 +431,7 @@ class CodeBuddyTokenManager:
                 self.load_all_tokens()
                 return True
         except Exception as e:
-            logger.error(f"Failed to delete credential at index {index}: {e}")
+            logger.error("凭证删除失败: %s", type(e).__name__)
             return False
 
     def delete_credential_by_id(self, credential_id: str) -> bool:

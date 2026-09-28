@@ -33,7 +33,7 @@ class TokenExpiry:
 
             return is_expired
         except Exception as e:
-            logger.error(f"Error checking token expiry: {e}")
+            logger.error("凭证过期检查失败: %s", type(e).__name__)
             return False
 
 

@@ -693,13 +693,13 @@ class TokenParser:
                     user_info = {key: value for key, value in user_info.items() if value is not None}
                     logger.info("成功解析JWT")
                 except (json.JSONDecodeError, UnicodeDecodeError) as decode_error:
-                    logger.warning(f"JWT payload解码失败: {decode_error}")
+                    logger.warning("JWT payload解码失败: %s", type(decode_error).__name__)
                     user_id = TokenParser._fallback_user_id(bearer_token)
             else:
                 logger.warning("Bearer token为空或格式无效")
                 user_id = TokenParser._fallback_user_id(bearer_token)
         except Exception as e:
-            logger.error(f"JWT解析过程发生异常: {e}")
+            logger.error("JWT解析过程发生异常: %s", type(e).__name__)
             user_id = TokenParser._fallback_user_id(bearer_token)
 
         return user_id, user_info
@@ -765,7 +765,7 @@ class CodeBuddyTokenSaver:
 
             return success
         except Exception as e:
-            logger.error(f"保存CodeBuddy token失败: {e}")
+            logger.error("保存CodeBuddy token失败: %s", type(e).__name__)
             return False
 
 
