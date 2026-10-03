@@ -2,6 +2,13 @@
 
 本文档只记录长期有效、仅查看局部代码容易误判的项目约定与维护陷阱。可直接从代码、依赖清单或 CI 配置得出的实现细节不在此重复；新增内容也应遵循这一原则。
 
+## 文档目录
+
+- `doc/` 存放面向使用者的公开文档，例如接入、部署、协议兼容与迁移指南，纳入 Git 管理。README 应链接此处的使用文档；需要随 Release 提供的文档还须加入发行包文件清单。
+- `docs/` 存放面向维护者的研发资料，例如调查、设计、实施计划、审查记录、待办和改动说明。当前目录由 `.git/info/exclude` 排除，默认仅保留本地，不随提交或 Release 发布；若需要改变某份资料的版本控制或发布范围，须先明确确认，不能因“提交本轮修改”就直接强制加入被忽略的文件。
+- 公开 README 与使用指南不能依赖仅存在于本地 `docs/` 的链接；需要对外说明的部署要求与已知限制，应在 `doc/` 保留面向使用者的说明。
+- 文件目录 `docs/` 与 HTTP 路由 `/docs` 是两回事；后者是受管理会话保护的 Swagger 页面，不用于发布本地研发资料。
+
 ## 常用命令
 
 ```bash
@@ -61,6 +68,11 @@ docker compose run --rm codebuddy2api set-user <用户名>
 - `/docs`、`/redoc` 和 `/openapi.json` 只接受管理台会话 Cookie，API Key 不能替代；管理台 playground 路由不得暴露在 OpenAPI schema 中。
 
 ## HTTP、认证与浏览器安全
+
+- 管理台非安全方法（`/auth`、`/codebuddy/auth`、`/api/admin`）必须校验完整同源 Origin，缺失时才回退到 Referer；无来源、`null` 和同站异源均拒绝。管理 API 的集成测试也须显式携带来源，不能为兼容旧脚本放宽边界。playground 只接受 JSON；CORS 只应用于外部 API Key 协议入口。
+- `CODEBUDDY_PUBLIC_ORIGIN` 启用 HTTPS 公网模式并固定浏览器来源；必须配合精确 Host、有限并发、上游 TLS 验证及明确代理地址。Cookie 在此模式下强制 Secure，但不能用它替代代理正确覆盖转发头及 Uvicorn 的代理信任校验。
+- 请求体读取、上游聊天及流式发送均有总期限，SSE 单行、累计响应和错误体均有大小上限。并发名额须保持到最终响应结束或取消。Python 3.10 的 `asyncio.wait_for()` 在内部任务完成与外部取消竞争时可能吞掉取消；流读取和发送的总期限使用 AnyIO 取消作用域，`fail_after()` 在两个 Python 版本均抛出内置 `TimeoutError`，不要与 `asyncio.TimeoutError` 的兼容规则混淆。
+- 禁用 HTTPX/HTTPCore 传输日志；应用日志不记录原始异常正文或 traceback，避免 OAuth state、令牌及请求数据泄露。校验错误不得回显 input/context。文档脚本与许可证随前端构建同源发布，不通过放宽 CSP 恢复第三方 CDN 或内联脚本。
 
 - Web UI 使用 HttpOnly 滑动会话 Cookie；每个系统用户最多保留 10 个会话，超限时按创建时间淘汰最旧会话。外部 API 使用 `sk-...` Bearer Token；API Key 必须是 `sk-` 加 40 字节规范无填充 Base64URL，明文只在创建时返回，SQLite 仅保存带唯一索引的 SHA-256 摘要。
 - API Key 鉴权只计算一次 SHA-256 并按摘要索引查询。`last_used_at` 保存现实分钟起点的 Unix 时间戳，同一分钟最多实际更新一次，管理台仅显示到分钟。

@@ -13,8 +13,7 @@
   <a href="#开始使用">开始使用</a>
 </p>
 
-> [!WARNING]
-> 本仓库代码通过 AI 生成，未经过严格的人工代码审查或安全审计，不能保证公开环境部署的安全性。建议仅在本地、内网使用；如确需公网部署，建议使用反向代理鉴权、IP 白名单等额外保护。不建议将本服务直接暴露在公网。
+公网部署面向可信团队，请按[公网部署与安全配置](doc/公网部署与安全配置.md)完成正式账号初始化、关闭默认引导及 HTTPS 反向代理配置，不直接开放后端端口。
 
 ## 支持协议
 
@@ -272,7 +271,7 @@ docker compose up -d
 
 SQLite、系统账号与 CodeBuddy 凭证都保存在当前目录的 `data` 中。只读 `secrets` 挂载仅用于从旧版 `users.txt` 完成一次性迁移；迁移细节见 [账号系统迁移说明](doc/账号系统迁移.md)。
 
-若需要通过域名、服务器 IP 访问服务、配置反向代理或修改其他配置，可参考 [.env.example](.env.example) 创建 `.env` 并配置相关环境变量后再启动。
+Compose 默认只发布到宿主回环地址，并启用 `no-new-privileges`；公网访问请遵循[公网部署与安全配置](doc/公网部署与安全配置.md)。其他配置可参考 [.env.example](.env.example)，创建 `.env` 后再启动。
 
 ## 开始使用
 
@@ -482,20 +481,29 @@ OpenAPI 文档会展示外部 `/openai/v1/*` 和 `/anthropic/v1/*` 的请求体�
 | 环境变量                        | 默认值                | 说明                                                         |
 | ------------------------------- | --------------------- | ------------------------------------------------------------ |
 | `CODEBUDDY_ALLOWED_HOSTS`       | `localhost,127.0.0.1` | 允许访问本服务的 Host 头                                     |
-| `CODEBUDDY_ALLOWED_ORIGINS`     | 空                    | 允许跨域访问的浏览器 Origin；空表示不启用 CORS               |
+| `CODEBUDDY_PUBLIC_ORIGIN`      | 空                    | 公网浏览器唯一 HTTPS 来源；启用后强制校验安全配置并设置 Secure Cookie |
+| `FORWARDED_ALLOW_IPS`          | `127.0.0.1`           | 可信代理 IP/CIDR，须匹配实际连接来源；公网模式禁止通配或全地址范围 |
+| `CODEBUDDY_ALLOWED_ORIGINS`     | 空                    | 仅允许跨域访问外部 API Key 协议入口的 Origin；不放行管理台 |
 | `CODEBUDDY_CSP_FRAME_ANCESTORS` | `none`                | CSP 页面嵌入来源；支持 `self` 与空格分隔的 HTTP/HTTPS Origin |
+
+管理台写操作必须携带同源 Origin，缺失时才回退到同源 Referer；缺失来源、`null` 和同站异源均拒绝。playground 必须使用 `application/json`。外部 API Key 入口不要求浏览器来源。
 
 #### 登录与容量保护
 
 | 环境变量                                | 默认值     | 说明                                                         |
 | --------------------------------------- | ---------- | ------------------------------------------------------------ |
 | `CODEBUDDY_MAX_REQUEST_BODY_BYTES`      | `16777216` | 全局 HTTP 请求体上限；登录和改密接口另有固定 8 KiB 上限      |
+| `CODEBUDDY_REQUEST_BODY_TIMEOUT_SECONDS` | `30`     | 应用读取请求体的总期限，不主动读取端点未消费的流             |
+| `CODEBUDDY_UPSTREAM_TIMEOUT_SECONDS`   | `1800`     | 上游聊天总期限，覆盖重试、持续心跳及流式发送                 |
+| `CODEBUDDY_MAX_SSE_LINE_BYTES`         | `1048576`  | 单行 SSE 字节上限                                           |
+| `CODEBUDDY_MAX_UPSTREAM_RESPONSE_BYTES` | `33554432` | 累计上游响应字节上限                                       |
+| `CODEBUDDY_MAX_UPSTREAM_ERROR_BYTES`   | `65536`    | 上游错误响应体字节上限                                      |
 | `CODEBUDDY_LOGIN_RATE_WINDOW_SECONDS`   | `60`       | 登录/改密全局、IP、用户名三个独立速率桶共用的滑动窗口秒数    |
 | `CODEBUDDY_LOGIN_GLOBAL_MAX_ATTEMPTS`   | `60`       | 每个登录限流窗口允许的进程全局尝试数                         |
 | `CODEBUDDY_LOGIN_IP_MAX_ATTEMPTS`       | `10`       | 每个登录限流窗口允许的单一客户端 IP 尝试数                   |
 | `CODEBUDDY_LOGIN_USERNAME_MAX_ATTEMPTS` | `5`        | 每个登录限流窗口允许的单一用户名尝试数                       |
 | `CODEBUDDY_LOGIN_MAX_CONCURRENCY`       | `2`        | 同时进入线程池的登录/改密 PBKDF2 校验数；超限不排队          |
-| `CODEBUDDY_MAX_CONCURRENT_REQUESTS`     | 空         | Uvicorn 全局连接/任务并发上限；空表示不限制                  |
+| `CODEBUDDY_MAX_CONCURRENT_REQUESTS`     | 空         | Uvicorn 与应用完整响应生命周期并发上限；公网模式必须设置正整数 |
 
 `CODEBUDDY_API_ENDPOINT`、白名单 URL 或其他强类型配置无效时，服务会在启动阶段直接失败；不会回退到其他站点，也不会把真实 Token 转发到未明确授权的地址。
 

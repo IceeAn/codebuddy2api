@@ -40,6 +40,7 @@ REQUIRED_FILES = (
     "frontend/package.json",
     "doc/账号系统迁移.md",
     "doc/协议兼容性.md",
+    "doc/公网部署与安全配置.md",
 )
 
 REQUIRED_DIRS = (
