@@ -34,17 +34,11 @@ _APPLICATION_CONTENT_SECURITY_POLICY = (
     "font-src 'self'; "
     "img-src 'self' data:; "
 )
-_DOCUMENTATION_CONTENT_SECURITY_POLICY = _APPLICATION_CONTENT_SECURITY_POLICY
 
 
-def _content_security_policy(frame_ancestors: str, documentation: bool = False) -> str:
-    resource_policy = (
-        _DOCUMENTATION_CONTENT_SECURITY_POLICY
-        if documentation
-        else _APPLICATION_CONTENT_SECURITY_POLICY
-    )
+def _content_security_policy(frame_ancestors: str) -> str:
     return (
-        f"{_COMMON_CONTENT_SECURITY_POLICY}{resource_policy}"
+        f"{_COMMON_CONTENT_SECURITY_POLICY}{_APPLICATION_CONTENT_SECURITY_POLICY}"
         f"frame-ancestors {frame_ancestors}"
     )
 
@@ -55,10 +49,6 @@ class SecurityResponseHeadersMiddleware:
     def __init__(self, app: ASGIApp, frame_ancestors: str):
         self.app = app
         self.application_content_security_policy = _content_security_policy(frame_ancestors)
-        self.documentation_content_security_policy = _content_security_policy(
-            frame_ancestors,
-            documentation=True,
-        )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -69,9 +59,7 @@ class SecurityResponseHeadersMiddleware:
             if message["type"] == "http.response.start":
                 response_headers = MutableHeaders(scope=message)
                 response_headers["Content-Security-Policy"] = (
-                    self.documentation_content_security_policy
-                    if scope.get("path") in {"/docs", "/redoc"}
-                    else self.application_content_security_policy
+                    self.application_content_security_policy
                 )
                 response_headers["X-Frame-Options"] = "DENY"
                 response_headers["X-Content-Type-Options"] = "nosniff"

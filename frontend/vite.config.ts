@@ -1,37 +1,12 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
+import { resolve } from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import tailwindcss from '@tailwindcss/vite';
+import { usageDocsPlugin } from './tooling/usageDocsPlugin.ts';
 
 const THEME_INIT_SOURCE_URL = '/src/theme-init.js';
-
-function documentationAssetsPlugin(): Plugin {
-  const require = createRequire(import.meta.url);
-  return {
-    name: 'same-origin-api-documentation',
-    apply: 'build',
-    generateBundle() {
-      for (const [packagePath, fileName] of [
-        ['swagger-ui-dist/swagger-ui-bundle.js', 'swagger-ui-bundle.js'],
-        ['swagger-ui-dist/swagger-ui.css', 'swagger-ui.css'],
-        ['redoc/bundles/redoc.standalone.js', 'redoc.standalone.js'],
-        ['swagger-ui-dist/LICENSE', 'swagger-ui-LICENSE'],
-        ['swagger-ui-dist/NOTICE', 'swagger-ui-NOTICE'],
-        ['swagger-ui-dist/swagger-ui-bundle.js.LICENSE.txt', 'swagger-ui-bundle.js.LICENSE.txt'],
-        ['redoc/LICENSE', 'redoc-LICENSE'],
-        ['redoc/bundles/redoc.standalone.js.LICENSE.txt', 'redoc.standalone.js.LICENSE.txt'],
-      ]) {
-        this.emitFile({
-          type: 'asset',
-          fileName: `assets/api-docs/${fileName}`,
-          source: readFileSync(require.resolve(packagePath)),
-        });
-      }
-    },
-  };
-}
 
 export function createHashedAssetFileName(
   baseName: string,
@@ -84,7 +59,12 @@ function themeInitAssetPlugin(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [themeInitAssetPlugin(), documentationAssetsPlugin(), vue(), tailwindcss()],
+  plugins: [
+    themeInitAssetPlugin(),
+    usageDocsPlugin(resolve(import.meta.dirname, '..')),
+    vue(),
+    tailwindcss(),
+  ],
   server: {
     proxy: {
       '/auth': 'http://127.0.0.1:8001',
@@ -93,10 +73,6 @@ export default defineConfig({
       '/openai': 'http://127.0.0.1:8001',
       '/anthropic': 'http://127.0.0.1:8001',
       '/health': 'http://127.0.0.1:8001',
-      '/docs': 'http://127.0.0.1:8001',
-      '/redoc': 'http://127.0.0.1:8001',
-      '/openapi.json': 'http://127.0.0.1:8001',
-      '/assets/api-docs/': 'http://127.0.0.1:8001',
     },
   },
   build: {

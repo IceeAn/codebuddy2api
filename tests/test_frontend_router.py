@@ -102,6 +102,10 @@ class FrontendRouterTests(unittest.IsolatedAsyncioTestCase):
                 "font-DjKNqYRj.woff2",
                 "codebuddy2api-D9AGu9yF.svg",
                 "theme-init-0123456789ab.js",
+                "usage-0123456789ab.json",
+                "usage-0123456789ab.md",
+                "usage-0123456789ab.yml",
+                "usage-0123456789ab.example",
             ):
                 (dist_dir / "assets" / filename).write_bytes(b"asset")
 
@@ -112,6 +116,10 @@ class FrontendRouterTests(unittest.IsolatedAsyncioTestCase):
                     "font-DjKNqYRj.woff2",
                     "codebuddy2api-D9AGu9yF.svg",
                     "theme-init-0123456789ab.js",
+                    "usage-0123456789ab.json",
+                    "usage-0123456789ab.md",
+                    "usage-0123456789ab.yml",
+                    "usage-0123456789ab.example",
                 ):
                     with self.subTest(filename=filename):
                         response = await get_frontend_static_response(f"assets/{filename}")

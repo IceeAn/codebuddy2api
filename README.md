@@ -418,14 +418,15 @@ export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1
 | 外部客户端 | `/anthropic/v1/*`                  | `x-api-key` 或 Bearer   | 对外 Anthropic Messages 兼容入口 |
 | Web 管理台 | `/auth/*`                          | 公开状态或会话 Cookie   | 初始状态、登录、改密、会话、退出 |
 | Web 管理台 | `/api/admin/*`                     | 会话 Cookie             | 凭证、API Key、设置和状态管理    |
-| 开发文档   | `/docs`、`/redoc`、`/openapi.json` | 会话 Cookie             | Swagger、ReDoc 与 OpenAPI schema |
 | 监控系统   | `GET /health`                      | 无                      | 健康检查                         |
 
-登录管理台后，可从“开发文档”页面的按钮在新标签页打开 `/docs`；也可以在保持登录会话的浏览器中直接访问 `/docs` 或 `/redoc`。未登录请求会返回 401，`sk-...` API Key 不能代替管理台会话访问文档。
+登录管理台后，可从“使用文档”页面（`/#/usage-docs`）阅读本 README 与 `doc/` 中的公开指南。页面提供文档导航和章节目录，图片与配置示例随版本发布，无需连接 GitHub 即可浏览和下载。文档内容在前端构建时生成，修改源文件后需重新构建；开发服务器会自动同步文档变化。
+
+Release 发行包同时保留原始 `README.md` 与完整 `doc/` 目录，解压后无需启动服务即可查看文档和配置示例。
+
+所有环境均不提供 `/docs`、`/redoc` 和 `/openapi.json`，这些路径返回 404。接口调试请使用管理台“API 测试”页。
 
 一次性初始账号登录后只能访问首次改密所需的前端、`/health`、`/auth/bootstrap-status`、`/auth/login`、`/auth/session`、`/auth/change-password` 和 `/auth/logout`。其他 Cookie 管理接口在完成改密前返回 403；外部 API Key 请求不受影响。
-
-OpenAPI 文档会展示外部 `/openai/v1/*` 和 `/anthropic/v1/*` 的请求体与鉴权。使用 Swagger 调试外部接口时，仍需通过 Authorize 填写管理台生成的 `sk-...` API Key。管理台测试入口 `/api/admin/playground/<协议>/v1/*` 不会出现在 schema 中。
 
 ## 统计与隐私
 
@@ -564,7 +565,7 @@ python3 web.py
 
 前端开发和构建要求 Node.js 24.15+ 与 pnpm 10.29+。
 
-前端开发服务器会把 `/auth`、`/api`、`/codebuddy`、`/openai`、`/anthropic`、`/health`、`/docs`、`/redoc` 和 `/openapi.json` 代理到本地后端 `127.0.0.1:8001`。
+前端开发服务器会把 `/auth`、`/api`、`/codebuddy`、`/openai`、`/anthropic`和 `/health` 代理到本地后端 `127.0.0.1:8001`。
 
 ```bash
 cd frontend

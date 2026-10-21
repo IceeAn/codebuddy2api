@@ -273,8 +273,7 @@ class StatsApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.headers["Cache-Control"], "private, no-store")
 
     async def test_stats_query_schema_keeps_shared_and_route_specific_parameters(self):
-        response = await self._get("/openapi.json", session=True)
-        paths = response.json()["paths"]
+        paths = app.openapi()["paths"]
         common = {"start_at", "end_at", "timezone", "traffic", "model",
                   "api_key_id", "credential_id", "outcome"}
         extras = {
@@ -312,9 +311,7 @@ class StatsApiTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
                 )
 
     async def test_openapi_exposes_stats_as_session_protected_routes(self):
-        response = await self._get("/openapi.json", session=True)
-        self.assertEqual(response.status_code, 200)
-        paths = response.json()["paths"]
+        paths = app.openapi()["paths"]
         for path, operation in (
             ("/api/admin/stats/overview", "get"),
             ("/api/admin/stats/requests", "get"),

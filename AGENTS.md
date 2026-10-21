@@ -4,10 +4,10 @@
 
 ## 文档目录
 
-- `doc/` 存放面向使用者的公开文档，例如接入、部署、协议兼容与迁移指南，纳入 Git 管理。README 应链接此处的使用文档；需要随 Release 提供的文档还须加入发行包文件清单。
+- `doc/` 存放面向使用者的公开文档，例如接入、部署、协议兼容与迁移指南，纳入 Git 管理。README 应链接此处的使用文档；整个目录随 Release 自动收录。
 - `docs/` 存放面向维护者的研发资料，例如调查、设计、实施计划、审查记录、待办和改动说明。当前目录由 `.git/info/exclude` 排除，默认仅保留本地，不随提交或 Release 发布；若需要改变某份资料的版本控制或发布范围，须先明确确认，不能因“提交本轮修改”就直接强制加入被忽略的文件。
 - 公开 README 与使用指南不能依赖仅存在于本地 `docs/` 的链接；需要对外说明的部署要求与已知限制，应在 `doc/` 保留面向使用者的说明。
-- 文件目录 `docs/` 与 HTTP 路由 `/docs` 是两回事；后者是受管理会话保护的 Swagger 页面，不用于发布本地研发资料。
+- 管理台“使用文档”由构建插件从 README 与 `doc/` 生成，不维护正文副本；引用的根目录附件必须显式列为公开输入并同步 Docker 构建上下文。`docs/` 研发资料不得参与文档构建或发布。
 
 ## 常用命令
 
@@ -66,19 +66,19 @@ docker compose run --rm codebuddy2api set-user <用户名>
 - `CODEBUDDY_DATA_DIR` 的相对路径以 `config.py` 所在的应用根目录为基准。SQLite 和凭证路径必须由解析后的绝对数据目录派生，不能依赖进程工作目录。
 - 管理台设置、API Key、凭证、模型缓存和统计都按系统用户隔离。新增管理端缓存时，隔离维度必须包含用户名；涉及凭证的数据还必须使用稳定的 `credential_id`，不得依赖列表下标。
 - 管理 API 位于 `/api/admin/*`。外部协议入口遵循 `/<协议>/v1/*`，仅接受 API Key；管理台测试入口遵循 `/api/admin/playground/<协议>/v1/*`，仅接受会话 Cookie。两者复用协议处理逻辑，但不能互相接受对方的认证方式。
-- `/docs`、`/redoc` 和 `/openapi.json` 只接受管理台会话 Cookie，API Key 不能替代；管理台 playground 路由不得暴露在 OpenAPI schema 中。
+- 所有环境均不注册 `/docs`、`/redoc` 和 `/openapi.json`；schema 契约测试直接调用 `app.openapi()`，管理台 playground 路由仍不得出现在 schema 中。
 
 ## HTTP、认证与浏览器安全
 
 - 管理台非安全方法（`/auth`、`/codebuddy/auth`、`/api/admin`）必须校验完整同源 Origin，缺失时才回退到 Referer；无来源、`null` 和同站异源均拒绝。管理 API 的集成测试也须显式携带来源，不能为兼容旧脚本放宽边界。playground 只接受 JSON；CORS 只应用于外部 API Key 协议入口。
 - `CODEBUDDY_PUBLIC_ORIGIN` 启用 HTTPS 公网模式并固定浏览器来源；必须配合精确 Host、有限并发、上游 TLS 验证及明确代理地址。Cookie 在此模式下强制 Secure，但不能用它替代代理正确覆盖转发头及 Uvicorn 的代理信任校验。
 - 请求体读取、上游聊天及流式发送均有总期限，SSE 单行、累计响应和错误体均有大小上限。并发名额须保持到最终响应结束或取消。Python 3.10 的 `asyncio.wait_for()` 在内部任务完成与外部取消竞争时可能吞掉取消；流读取和发送的总期限使用 AnyIO 取消作用域，`fail_after()` 在两个 Python 版本均抛出内置 `TimeoutError`，不要与 `asyncio.TimeoutError` 的兼容规则混淆。
-- 禁用 HTTPX/HTTPCore 传输日志；应用日志不记录原始异常正文或 traceback，避免 OAuth state、令牌及请求数据泄露。校验错误不得回显 input/context。文档脚本与许可证随前端构建同源发布，不通过放宽 CSP 恢复第三方 CDN 或内联脚本。
+- 禁用 HTTPX/HTTPCore 传输日志；应用日志不记录原始异常正文或 traceback，避免 OAuth state、令牌及请求数据泄露。校验错误不得回显 input/context。使用文档与附件随前端构建同源发布，不通过放宽 CSP 加载第三方资源或执行文档中的脚本。
 
 - Web UI 使用 HttpOnly 滑动会话 Cookie；每个系统用户最多保留 10 个会话，超限时按创建时间淘汰最旧会话。外部 API 使用 `sk-...` Bearer Token；API Key 必须是 `sk-` 加 40 字节规范无填充 Base64URL，明文只在创建时返回，SQLite 仅保存带唯一索引的 SHA-256 摘要。
 - API Key 鉴权只计算一次 SHA-256 并按摘要索引查询。`last_used_at` 保存现实分钟起点的 Unix 时间戳，同一分钟最多实际更新一次，管理台仅显示到分钟。
 - Cookie 鉴权成功后的续期必须在最终 ASGI 响应层完成，以覆盖错误、重定向和流式响应。私有路由使用 `PrivateNoStoreRoute`；`Cache-Control: private, no-store` 由 `ServerErrorMiddleware` 外层的最终响应中间件统一覆盖，端点中注入的临时 `Response` 不能保证最终响应头。
-- 所有响应（包括 404 和未处理的 500）都由最外层 ASGI 中间件统一覆盖 CSP、`X-Frame-Options`、`X-Content-Type-Options` 和 `Referrer-Policy`，其中 `X-Frame-Options` 固定为 `DENY`。frame-ancestors 可由环境变量 `CODEBUDDY_CSP_FRAME_ANCESTORS` 配置，默认 `none`，仅允许由 `self` 和无路径的 HTTP(S) Origin 组成的列表；来源主机必须先规范化为 IDNA ASCII，再按合法 DNS 标签或 IPv6 字面量校验。CSP 来源必须在启动时严格校验，不能允许通配符、指令逃逸或不可编码的响应头字符；文档页所需的外部资源白名单与管理台同源策略分开维护。
+- 所有响应（包括 404 和未处理的 500）都由最外层 ASGI 中间件统一覆盖 CSP、`X-Frame-Options`、`X-Content-Type-Options` 和 `Referrer-Policy`，其中 `X-Frame-Options` 固定为 `DENY`。frame-ancestors 可由环境变量 `CODEBUDDY_CSP_FRAME_ANCESTORS` 配置，默认 `none`，仅允许由 `self` 和无路径的 HTTP(S) Origin 组成的列表；来源主机必须先规范化为 IDNA ASCII，再按合法 DNS 标签或 IPv6 字面量校验。CSP 来源必须在启动时严格校验，不能允许通配符、指令逃逸或不可编码的响应头字符；使用文档沿用管理台同源策略。
 - 请求体限制是“应用实际处理字节数”限制：先检查 `Content-Length`，再累计下游实际读取的流；不要为了验证无声明长度且端点本来不读取的请求体而主动消费整个流。登录请求使用更小的独立上限。
 - `CODEBUDDY_MAX_CONCURRENT_REQUESTS=N` 表示用户可用容量 N；传给当前固定版本 Uvicorn 时必须经 `to_uvicorn_limit_concurrency()` 转成 N+1，以补偿 Uvicorn 判断时已计入当前连接的语义。
 - 前端只把同时带 `WWW-Authenticate: Bearer` 的 401 视为本系统会话失效；上游 CodeBuddy 401 不得触发管理台登出。

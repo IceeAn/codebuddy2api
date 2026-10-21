@@ -6,12 +6,15 @@ ARG PYTHON_VERSION=3.12
 # 使用满足前端工具链最低版本要求的 Node 构建 Vue 管理台。
 FROM --platform=$BUILDPLATFORM node:${NODE_VERSION}-slim AS frontend-build
 
-WORKDIR /frontend
+WORKDIR /build/frontend
 
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
 RUN corepack enable && pnpm install --frozen-lockfile
 
 COPY frontend/ ./
+COPY README.md LICENSE LICENSING.md .env.example docker-compose.yml /build/
+COPY doc/ /build/doc/
+COPY src/tokenizer_catalog.json /build/src/tokenizer_catalog.json
 RUN pnpm run build
 
 # 分词数据在构建阶段锁定下载，运行时完全离线。
@@ -60,7 +63,7 @@ COPY --from=tokenizer-assets /download/src/tokenizer_assets ./src/tokenizer_asse
 COPY scripts/hash_password.py ./scripts/hash_password.py
 COPY scripts/manage_users.py ./scripts/manage_users.py
 COPY frontend/public ./frontend/public
-COPY --from=frontend-build /frontend/dist /app/frontend/dist
+COPY --from=frontend-build /build/frontend/dist /app/frontend/dist
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 
 # 创建运行用户、持久化目录和镜像内辅助命令。

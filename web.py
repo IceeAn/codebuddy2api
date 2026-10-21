@@ -16,10 +16,9 @@ _RELEASE_RUNTIME_LOCK = acquire_runtime_lock(
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import APIRouter, Depends, FastAPI, Request
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.openapi.docs import get_redoc_html
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from starlette.responses import PlainTextResponse
 from src.openai_errors import is_openai_path, openai_error_response
 from src.http_security import AdmissionMiddleware, ExternalCORSMiddleware, SessionOriginMiddleware
@@ -29,7 +28,6 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 # Import the routers
 from src.auth_router import router as service_auth_router
-from src.auth_router import require_session_user
 from src.auth_error_codes import AuthBusinessError, auth_business_error_response
 from src.admin_router import router as admin_router
 from src.anthropic_compat import SUPPORTED_ANTHROPIC_VERSION
@@ -50,7 +48,7 @@ from src.credential_quota import credential_quota_manager
 from src.credential_checkin import credential_checkin_manager
 from src.frontend_router import router as frontend_router
 from src.openai_router import external_openai_router, playground_openai_router
-from src.private_response import PRIVATE_NO_STORE_VALUE, PrivateNoStoreFastAPI, PrivateNoStoreRoute
+from src.private_response import PRIVATE_NO_STORE_VALUE, PrivateNoStoreFastAPI
 from src.request_limits import RequestBodyLimitMiddleware
 from src.tokenizer_router import external_tokenizer_router, playground_tokenizer_router, admin_tokenizer_router
 from src.tokenizer_store import verify_builtin
@@ -145,7 +143,6 @@ app.add_middleware(
 )
 app.add_middleware(SessionOriginMiddleware, public_origin=get_public_origin())
 app.add_middleware(AdmissionMiddleware, limit=get_max_concurrent_requests())
-docs_router = APIRouter(route_class=PrivateNoStoreRoute)
 
 
 @app.exception_handler(AnthropicAPIError)
@@ -261,37 +258,6 @@ async def unexpected_error_handler(request: Request, _error: Exception):
         ))
     return PlainTextResponse("Internal Server Error", status_code=500)
 
-
-@docs_router.get("/openapi.json", include_in_schema=False)
-async def protected_openapi(_user=Depends(require_session_user)):
-    """仅向已登录的管理台用户返回 OpenAPI schema。"""
-    return JSONResponse(app.openapi())
-
-
-@docs_router.get("/docs", include_in_schema=False)
-async def protected_swagger_ui(_user=Depends(require_session_user)):
-    """仅向已登录的管理台用户返回 Swagger UI。"""
-    return HTMLResponse('''<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CodeBuddy2API - Swagger UI</title>
-<link rel="stylesheet" href="/assets/api-docs/swagger-ui.css">
-<script defer src="/assets/api-docs/swagger-ui-bundle.js"></script>
-<script defer src="/assets/api-docs-init.js"></script>
-</head><body><div id="swagger-ui" data-schema-url="/openapi.json"></div></body></html>''')
-
-
-@docs_router.get("/redoc", include_in_schema=False)
-async def protected_redoc(_user=Depends(require_session_user)):
-    """仅向已登录的管理台用户返回 ReDoc。"""
-    return get_redoc_html(
-        openapi_url="/openapi.json", title=f"{app.title} - ReDoc",
-        redoc_js_url="/assets/api-docs/redoc.standalone.js",
-        redoc_favicon_url="/assets/codebuddy2api.svg", with_google_fonts=False,
-    )
-
-
-app.include_router(docs_router)
 
 # Host 头校验，公网部署时请通过 CODEBUDDY_ALLOWED_HOSTS 配置域名
 allowed_hosts = get_allowed_hosts()

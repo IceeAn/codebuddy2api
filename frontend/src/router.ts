@@ -6,7 +6,7 @@ const StatsView = () => import('./views/StatsView.vue');
 const CredentialsView = () => import('./views/CredentialsView.vue');
 const ApiKeysView = () => import('./views/ApiKeysView.vue');
 const ApiConsoleView = () => import('./views/ApiConsoleView.vue');
-const ApiDocsView = () => import('./views/ApiDocsView.vue');
+const UsageDocsView = () => import('./views/UsageDocsView.vue');
 const SettingsView = () => import('./views/SettingsView.vue');
 const NotFoundView = () => import('./views/NotFoundView.vue');
 
@@ -25,10 +25,10 @@ const router = createRouter({
     { path: '/api-keys', name: 'api-keys', component: ApiKeysView, meta: { title: 'API Key' } },
     { path: '/console', name: 'console', component: ApiConsoleView, meta: { title: 'API 测试' } },
     {
-      path: '/api-docs',
-      name: 'api-docs',
-      component: ApiDocsView,
-      meta: { title: '开发文档' },
+      path: '/usage-docs',
+      name: 'usage-docs',
+      component: UsageDocsView,
+      meta: { title: '使用文档' },
     },
     { path: '/settings', name: 'settings', component: SettingsView, meta: { title: '设置' } },
     {

@@ -29,7 +29,7 @@ REVALIDATE_ASSET_HEADERS = {
 }
 _HASHED_VITE_ASSET = re.compile(
     r"^assets/.+-(?:[A-Za-z0-9_-]{8}|[a-f0-9]{12})\."
-    r"(?:css|js|mjs|svg|woff|woff2|ttf|otf)$"
+    r"(?:css|js|mjs|svg|woff|woff2|ttf|otf|json|md|ya?ml|example|txt|png|jpe?g|webp|gif)$"
 )
 _ASCTIME_DATE = re.compile(
     r"(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) "

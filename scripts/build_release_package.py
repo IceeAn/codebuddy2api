@@ -38,15 +38,12 @@ REQUIRED_FILES = (
     "config.py",
     "web.py",
     "frontend/package.json",
-    "doc/账号系统迁移.md",
-    "doc/协议兼容性.md",
-    "doc/公网部署与安全配置.md",
-    "doc/分词与计数.md",
     "src/tokenizer_catalog.json",
     "src/tokenizer_prompts.json",
 )
 
 REQUIRED_DIRS = (
+    ("doc", None),
     ("src", frozenset({".py"})),
     ("src/tokenizer_assets", None),
     ("scripts", frozenset({".py"})),

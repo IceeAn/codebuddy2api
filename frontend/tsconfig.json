@@ -4,6 +4,7 @@
     "useDefineForClassFields": true,
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
     "strict": true,
     "jsx": "preserve",
     "resolveJsonModule": true,
@@ -14,6 +15,7 @@
     "types": ["vite/client", "vitest/globals", "node"]
   },
   "include": [
+    "tooling/**/*.ts",
     "src/**/*.ts",
     "src/**/*.vue",
     "e2e/**/*.ts",

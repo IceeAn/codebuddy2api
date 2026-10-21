@@ -6,7 +6,7 @@ const BUSINESS_ROUTE_NAMES = [
   'credentials',
   'api-keys',
   'console',
-  'api-docs',
+  'usage-docs',
   'settings',
   'not-found',
 ] as const;

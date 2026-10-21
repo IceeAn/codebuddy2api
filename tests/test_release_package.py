@@ -53,6 +53,9 @@ class ReleasePackageTests(unittest.TestCase):
             "doc/协议兼容性.md",
             "doc/公网部署与安全配置.md",
             "doc/分词与计数.md",
+            "doc/Codex接入.md",
+            "doc/Codex模型目录示例.json",
+            "doc/补充/新增指南.md",
             "src/tokenizer_catalog.json",
             "src/tokenizer_prompts.json",
             "src/tokenizer_assets/blobs/" + hashlib.sha256(b"placeholder").hexdigest(),
@@ -112,6 +115,9 @@ class ReleasePackageTests(unittest.TestCase):
         self.assertIn("codebuddy2api/doc/账号系统迁移.md", tar_names)
         self.assertIn("codebuddy2api/doc/公网部署与安全配置.md", tar_names)
         self.assertIn("codebuddy2api/doc/协议兼容性.md", tar_names)
+        self.assertIn("codebuddy2api/doc/Codex接入.md", tar_names)
+        self.assertIn("codebuddy2api/doc/Codex模型目录示例.json", tar_names)
+        self.assertIn("codebuddy2api/doc/补充/新增指南.md", tar_names)
         self.assertNotIn("codebuddy2api/secrets/users.txt.example", tar_names)
         self.assertNotIn("codebuddy2api/secrets/users.txt", tar_names)
         self.assertNotIn("codebuddy2api/data/codebuddy2api.sqlite3", tar_names)

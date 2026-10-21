@@ -297,14 +297,14 @@ describe('App', () => {
     expect(wrapper.text()).not.toContain('Console');
   });
 
-  it('开发文档菜单与页面标题使用中文名称', () => {
+  it('使用文档菜单与页面标题使用中文名称', () => {
     sessionMock.ready = true;
     sessionMock.authenticated = true;
-    routeMock.name = 'api-docs';
+    routeMock.name = 'usage-docs';
     const { wrapper } = mountApp();
 
-    expect(wrapper.find('nav[aria-label="主导航"]').text()).toContain('开发文档');
-    expect(wrapper.find('.topbar').text()).toContain('开发文档');
+    expect(wrapper.find('nav[aria-label="主导航"]').text()).toContain('使用文档');
+    expect(wrapper.find('.topbar').text()).toContain('使用文档');
   });
 
   it('统计菜单与页面标题使用中文名称', () => {

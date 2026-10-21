@@ -5,7 +5,7 @@ import re
 import unittest
 from pathlib import Path
 
-from scripts.build_release_package import REQUIRED_FILES
+from scripts.build_release_package import REQUIRED_FILES, REQUIRED_DIRS
 
 
 class SupplyChainTests(unittest.TestCase):
@@ -52,7 +52,8 @@ class SupplyChainTests(unittest.TestCase):
         })
 
     def test_release_includes_deployment_guide(self):
-        self.assertIn("doc/公网部署与安全配置.md", REQUIRED_FILES)
+        self.assertIn(("doc", None), REQUIRED_DIRS)
+        self.assertFalse(any(path == "docs" for path, _ in REQUIRED_DIRS))
         self.assertFalse(any(path.startswith("docs/") for path in REQUIRED_FILES))
 
     def test_readme_documents_public_boundary(self):

@@ -29,42 +29,16 @@ class ApiDocumentationTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
             return await client.get(path, headers=headers)
 
-    async def test_documentation_endpoints_require_session_cookie(self):
+    async def test_documentation_endpoints_are_removed_for_every_authentication(self):
         for path in ("/docs", "/redoc", "/openapi.json"):
-            with self.subTest(path=path):
-                response = await self._request(path)
-                self.assertEqual(response.status_code, 401)
-                self.assertEqual(response.headers["WWW-Authenticate"], "Bearer")
-                self.assertEqual(response.headers["Cache-Control"], "private, no-store")
-
-    async def test_api_key_cannot_replace_documentation_session(self):
-        for path in ("/docs", "/redoc", "/openapi.json"):
-            with self.subTest(path=path):
-                response = await self._request(path, api_key=True)
-                self.assertEqual(response.status_code, 401)
-
-    async def test_session_can_open_documentation_and_schema(self):
-        docs = await self._request("/docs", session=True)
-        redoc = await self._request("/redoc", session=True)
-        schema = await self._request("/openapi.json", session=True)
-
-        self.assertEqual(docs.status_code, 200)
-        self.assertIn('data-schema-url="/openapi.json"', docs.text)
-        self.assertEqual(redoc.status_code, 200)
-        self.assertIn('spec-url="/openapi.json"', redoc.text)
-        self.assertEqual(schema.status_code, 200)
-        self.assertEqual(schema.json()["info"]["title"], "CodeBuddy2API")
-        self.assertIn("/assets/api-docs/swagger-ui-bundle.js", docs.text)
-        self.assertIn("/assets/api-docs/redoc.standalone.js", redoc.text)
-        for document in (docs, redoc):
-            self.assertNotIn("https://", document.text)
-            self.assertNotIn("<script>", document.text)
-        for response in (docs, redoc, schema):
-            with self.subTest(content_type=response.headers["Content-Type"]):
-                self.assertEqual(response.headers["Cache-Control"], "private, no-store")
+            for authentication in ({}, {"session": True}, {"api_key": True}):
+                with self.subTest(path=path, authentication=authentication):
+                    response = await self._request(path, **authentication)
+                    self.assertEqual(response.status_code, 404)
+                    self.assertIn("script-src 'self'", response.headers["Content-Security-Policy"])
 
     async def test_schema_describes_external_api_authentication_and_chat_body(self):
-        schema = (await self._request("/openapi.json", session=True)).json()
+        schema = app.openapi()
 
         self.assertEqual(
             schema["components"]["securitySchemes"]["ApiKeyBearer"],
@@ -219,7 +193,7 @@ class ApiDocumentationTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_schema_contains_public_routes_and_hides_internal_routes(self):
-        paths = (await self._request("/openapi.json", session=True)).json()["paths"]
+        paths = app.openapi()["paths"]
 
         self.assertIn("/openai/v1/models", paths)
         self.assertIn("/anthropic/v1/models", paths)

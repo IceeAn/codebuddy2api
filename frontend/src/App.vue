@@ -40,7 +40,7 @@ const navItems = [
   { routeName: 'credentials', label: '凭证', icon: KeyRound },
   { routeName: 'api-keys', label: 'API Key', icon: ShieldCheck },
   { routeName: 'console', label: 'API 测试', icon: TerminalSquare },
-  { routeName: 'api-docs', label: '开发文档', icon: BookOpen },
+  { routeName: 'usage-docs', label: '使用文档', icon: BookOpen },
   { routeName: 'settings', label: '设置', icon: Settings },
 ];
 
@@ -50,8 +50,8 @@ const pageTitle = computed(
   () => navItems.find((item) => item.routeName === activeRoute.value)?.label || '总览',
 );
 const routeKey = computed(() =>
-  activeRoute.value === 'settings'
-    ? route.path || '/settings'
+  ['settings', 'usage-docs'].includes(activeRoute.value)
+    ? route.path || `/${activeRoute.value}`
     : route.fullPath || activeRoute.value,
 );
 
