@@ -292,6 +292,33 @@ class AnthropicRouteTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.assertGreater(stats.capture_request_bytes.call_args.args[0], 0)
 
     @mock.patch("src.anthropic_router.execute_codebuddy_chat", new_callable=mock.AsyncMock)
+    async def test_tool_addition_and_attribution_only_requests_fail_before_upstream(self, execute):
+        execute.return_value = {"type": "message"}
+        for path, headers in (
+            ("/anthropic/v1/messages", self._x_api_key()),
+            ("/api/admin/playground/anthropic/v1/messages", self._session()),
+        ):
+            for stream in (False, True):
+                with self.subTest(path=path, stream=stream):
+                    with mock.patch("src.anthropic_router.get_token_manager_for_user") as token_manager:
+                        response = await self._request("POST", path, headers=headers, json={
+                            "model": "deepseek-v4-flash", "max_tokens": 64, "stream": stream,
+                            "system": [{"type": "text", "text": (
+                                "x-anthropic-billing-header: cc_version=2.1.246; cc_entrypoint=cli;"
+                            )}],
+                            "tools": [{"name": "report", "input_schema": {"type": "object"}}],
+                            "messages": [{"role": "system", "content": [{
+                                "type": "tool_addition", "tool": {"type": "tool_reference", "name": "report"},
+                            }]}],
+                        })
+                    self.assertEqual(response.status_code, 400, response.text)
+                    self.assertEqual(response.json()["error"]["type"], "invalid_request_error")
+                    self.assertIn("messages must contain", response.json()["error"]["message"])
+                    self.assertEqual(response.json()["request_id"], response.headers["request-id"])
+                    token_manager.assert_not_called()
+        execute.assert_not_awaited()
+
+    @mock.patch("src.anthropic_router.execute_codebuddy_chat", new_callable=mock.AsyncMock)
     async def test_message_request_removes_claude_code_attribution_system_block(
             self,
             execute,

@@ -84,6 +84,53 @@ class TokenizerRouteTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(response.json(), {"input_tokens": 1})
 
+    async def test_anthropic_count_consumes_system_tool_addition_and_keeps_tool_definition(self):
+        headers = {"x-api-key": self.key, "anthropic-version": "2023-06-01"}
+        body = {"model": "custom", "tools": [{"name": "report", "input_schema": {"type": "object"}}],
+                "messages": [{"role": "user", "content": "hello"},
+                             {"role": "system", "content": [{"type": "text", "text": "工具已就绪"}]}]}
+        expected = await self.request("/anthropic/v1/messages/count_tokens", headers, body)
+        self.assertEqual(expected.status_code, 200, expected.text)
+        body["messages"][-1]["content"].append({
+            "type": "tool_addition", "tool": {"type": "tool_reference", "name": "report"},
+        })
+        response = await self.request("/anthropic/v1/messages/count_tokens", headers, body)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), expected.json())
+
+    async def test_tool_addition_and_attribution_only_count_requests_fail_before_tokenizer(self):
+        body = {
+            "model": "deepseek-v4-flash",
+            "system": [{"type": "text", "text": (
+                "x-anthropic-billing-header: cc_version=2.1.246; cc_entrypoint=cli;"
+            )}],
+            "tools": [{"name": "report", "input_schema": {"type": "object"}}],
+            "messages": [{"role": "system", "content": [{
+                "type": "tool_addition", "tool": {"type": "tool_reference", "name": "report"},
+            }]}],
+        }
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app, raise_app_exceptions=False), base_url="http://localhost",
+            headers={"Origin": "http://localhost"},
+        ) as client:
+            for path, headers in (
+                ("/anthropic/v1/messages/count_tokens", {"x-api-key": self.key}),
+                ("/api/admin/playground/anthropic/v1/messages/count_tokens",
+                 {"Cookie": f"{SESSION_COOKIE_NAME}={self.cookie}"}),
+            ):
+                with self.subTest(path=path), mock.patch(
+                    "src.tokenizer_service.tokenizer_runtime.execute", side_effect=IndexError("list index out of range"),
+                ) as execute, mock.patch("src.tokenizer_service.get_tokenizer_store") as store:
+                    response = await client.post(path, headers={
+                        **headers, "anthropic-version": "2023-06-01",
+                    }, json=body)
+                    self.assertEqual(response.status_code, 400, response.text)
+                    self.assertEqual(response.json()["error"]["type"], "invalid_request_error")
+                    self.assertIn("messages must contain", response.json()["error"]["message"])
+                    self.assertEqual(response.json()["request_id"], response.headers["request-id"])
+                    execute.assert_not_called()
+                    store.assert_not_called()
+
     async def test_visualization_requires_session_and_returns_byte_offsets(self):
         path = '/api/admin/tokenizers/encode'
         body = {'model': 'custom', 'text': 'hello  你好'}

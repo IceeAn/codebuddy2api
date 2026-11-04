@@ -395,6 +395,19 @@ class RequestProcessorPreparePayloadTests(ConfigIsolationMixin, unittest.TestCas
             {"role": "user", "content": attribution},
         ])
 
+    def test_request_policies_reject_messages_emptied_by_system_rewrite(self):
+        attribution = "x-anthropic-billing-header: cc_version=2.1.246; cc_entrypoint=cli;"
+        for content in (attribution, [{"type": "text", "text": attribution}]):
+            with self.subTest(content=content):
+                request_body = {"model": "lite", "messages": [{"role": "system", "content": content}]}
+                original = json.loads(json.dumps(request_body))
+                with self.assertRaises(HTTPException) as error:
+                    RequestProcessor.prepare_request(request_body)
+                self.assertEqual(error.exception.status_code, 400)
+                self.assertEqual(error.exception.param, "messages")
+                self.assertIn("messages must contain", error.exception.detail)
+                self.assertEqual(request_body, original)
+
     def test_prepare_payload_adds_default_system_message_for_single_user_message(self):
         payload = self._prepare_payload({
             "model": "lite",

@@ -111,6 +111,49 @@ class AnthropicSDKContractTests(TempConfigMixin, unittest.IsolatedAsyncioTestCas
             await client.close()
 
     @mock.patch("src.anthropic_router.create_usage_stats_context")
+    async def test_sdk_system_tool_addition_preserves_callable_tool_in_both_response_modes(self, _stats):
+        schema = {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}
+        self.fixture = [
+            sse({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_handback",
+                "type": "function", "function": {"name": "SubagentHandback", "arguments": '{"message":'}}]},
+                "finish_reason": None}]}),
+            sse({"choices": [{"delta": {"tool_calls": [{"index": 0,
+                "function": {"arguments": '"完成"}'}}]}, "finish_reason": "tool_calls"}]}),
+            sse({"choices": [], "usage": {"prompt_tokens": 12, "completion_tokens": 5}}), sse("[DONE]"),
+        ]
+        options = {
+            "model": "anthropic/codebuddy/deepseek-v4.1-flash", "max_tokens": 256,
+            "tools": [{"name": "SubagentHandback", "description": "返回报告", "input_schema": schema,
+                       "defer_loading": True}],
+            "messages": [
+                {"role": "user", "content": "完成后返回报告。"},
+                {"role": "system", "content": [
+                    {"type": "text", "text": "工具已就绪"},
+                    {"type": "tool_addition", "tool": {"type": "tool_reference", "name": "SubagentHandback"},
+                     "cache_control": {"type": "ephemeral"}},
+                ]},
+            ],
+        }
+        client, _ = self._client()
+        try:
+            with mock.patch("src.anthropic_router.execute_codebuddy_chat", side_effect=self._execute):
+                complete = await client.messages.create(**options)
+                self.assertEqual(self.last_payload["messages"][-1], {
+                    "role": "system", "content": [{"type": "text", "text": "工具已就绪"}],
+                })
+                async with client.messages.stream(**options) as stream:
+                    streamed = await stream.get_final_message()
+            self.assertEqual(self.last_payload["tools"], [{"type": "function", "function": {
+                "name": "SubagentHandback", "description": "返回报告", "parameters": schema,
+            }}])
+            for response in (complete, streamed):
+                self.assertEqual(response.stop_reason, "tool_use")
+                self.assertEqual(response.content[0].name, "SubagentHandback")
+                self.assertEqual(response.content[0].input, {"message": "完成"})
+        finally:
+            await client.close()
+
+    @mock.patch("src.anthropic_router.create_usage_stats_context")
     async def test_sdk_multimodal_tool_round_trip_and_playground(self, _stats):
         from src.auth_types import SESSION_COOKIE_NAME
         from src.session_store import session_store

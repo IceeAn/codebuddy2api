@@ -143,7 +143,13 @@ class ApiDocumentationTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.assertIn("strict", anthropic_schema["properties"]["tools"]["items"]["properties"])
         blocks = anthropic_schema["properties"]["messages"]["items"]["properties"]["content"]["anyOf"][1]["items"]["oneOf"]
         self.assertEqual({block["properties"]["type"]["const"] for block in blocks},
-                         {"text", "input_text", "image", "document", "tool_result", "tool_use", "thinking"})
+                         {"text", "input_text", "image", "document", "tool_result", "tool_use", "thinking", "tool_addition"})
+        addition = next(block for block in blocks if block["properties"]["type"]["const"] == "tool_addition")
+        self.assertEqual(addition["required"], ["type", "tool"])
+        reference = addition["properties"]["tool"]
+        self.assertEqual(reference["properties"]["type"], {"const": "tool_reference"})
+        self.assertEqual(reference["properties"]["name"], {"type": "string", "minLength": 1})
+        self.assertEqual(reference["required"], ["type", "name"])
         stop_schema = anthropic_schema["properties"]["stop_sequences"]
         self.assertEqual(stop_schema["type"], "array")
         self.assertEqual(stop_schema["items"], {"type": "string", "minLength": 1})

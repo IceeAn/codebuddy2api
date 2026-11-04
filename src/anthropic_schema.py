@@ -26,9 +26,12 @@ TOOL_RESULT_BLOCK = _block("tool_result", {
     "tool_use_id": STRING, "is_error": {"type": "boolean"},
     "content": {"anyOf": [{"type": "string"}, {"type": "array", "items": {"oneOf": INPUT_BLOCKS}}]},
 }, ["tool_use_id"])
-MESSAGE_CONTENT = {"description": "图片和文档仅支持 user 消息及其 tool_result；system 仅支持文本，assistant 支持文本、thinking 和 tool_use。",
+TOOL_ADDITION_BLOCK = _block("tool_addition", {
+    "tool": _block("tool_reference", {"name": STRING}, ["name"]),
+}, ["tool"])
+MESSAGE_CONTENT = {"description": "图片和文档仅支持 user 消息及其 tool_result；消息级 system 支持文本及引用顶层 tools 的 tool_addition；assistant 支持文本、thinking 和 tool_use。",
                    "anyOf": [STRING, {"type": "array", "minItems": 1, "items": {"oneOf": [
-                       *INPUT_BLOCKS, TOOL_RESULT_BLOCK,
+                       *INPUT_BLOCKS, TOOL_RESULT_BLOCK, TOOL_ADDITION_BLOCK,
                        _block("tool_use", {"id": STRING, "name": STRING, "input": {"type": "object"}}, ["id", "name", "input"]),
                        _block("thinking", {"thinking": STRING, "signature": STRING}, ["thinking", "signature"]),
                    ]}}]}

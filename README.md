@@ -363,6 +363,8 @@ Anthropic 请求必须携带 `anthropic-version: 2023-06-01`，并使用 `x-api-
 
 `stop_sequences` 接受非空字符串数组并映射为上游 `stop` 参数；缺省或空数组不发送该参数。实际停止行为由 CodeBuddy 决定，网关不额外验证或截断输出。响应沿用上游结束原因，`stop_sequence` 为 `null`，不推断命中的停止序列。
 
+`messages` 中的 `system` 消息支持文本及 `tool_addition` 工具引用块。引用必须使用 `tool_reference` 并指向顶层 `tools` 中的完整工具定义；校验后移除引用块，保留相邻文本与消息位置，仅含引用块的消息省略。所有工具继续统一转换为上游 function 工具，不实现原生延迟加载或缓存时序。内联 `tool_definition`、`tool_removal` 和无法解析的引用仍返回 400。
+
 工具没有输出时，`tool_result.content` 可以省略、传空字符串或空数组。模型列表中的 `created_at` 固定为 Unix epoch，表示网关无法获知 CodeBuddy 模型的真实发布时间。
 
 ```bash

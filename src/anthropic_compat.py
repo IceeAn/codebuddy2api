@@ -72,12 +72,25 @@ def _text_part(block: Any, path: str) -> Dict[str, str]:
     return {"type": "text", "text": _non_empty_string(block.get("text"), f"{path}.text")}
 
 
-def _text_content(value: Any, path: str) -> Any:
+def _text_content(value: Any, path: str, tool_names: Set[str]) -> Any:
+    """转换消息级 system 文本，并消费已声明工具的引用块。"""
     if isinstance(value, str):
         return _non_empty_string(value, path)
     if not isinstance(value, list) or not value:
         _fail(f"{path} must be a non-empty string or text block array")
-    return [_text_part(block, f"{path}[{index}]") for index, block in enumerate(value)]
+    parts: List[Dict[str, str]] = []
+    for index, block in enumerate(value):
+        block_path = f"{path}[{index}]"
+        if _is_object(block) and block.get("type") == "tool_addition":
+            reference = block.get("tool")
+            if not _is_object(reference) or reference.get("type") != "tool_reference":
+                _fail(f"{block_path}.tool must be a tool_reference object")
+            name = _non_empty_string(reference.get("name"), f"{block_path}.tool.name")
+            if name not in tool_names:
+                _fail(f"{block_path}.tool.name references an unknown tool")
+        else:
+            parts.append(_text_part(block, block_path))
+    return parts
 
 
 def _system_messages(value: Any) -> List[Dict[str, Any]]:
@@ -421,7 +434,7 @@ def _user_messages(content: Any, path: str, known_tool_ids: Set[str]) -> List[Di
     return messages
 
 
-def _translate_messages(value: Any) -> List[Dict[str, Any]]:
+def _translate_messages(value: Any, tool_names: Set[str]) -> List[Dict[str, Any]]:
     if not isinstance(value, list) or not value:
         _fail("messages must be a non-empty array")
     translated: List[Dict[str, Any]] = []
@@ -440,10 +453,9 @@ def _translate_messages(value: Any) -> List[Dict[str, Any]]:
         elif role == "user":
             translated.extend(_user_messages(message["content"], path, known_tool_ids))
         else:
-            translated.append({
-                "role": "system",
-                "content": _text_content(message["content"], f"{path}.content"),
-            })
+            content = _text_content(message["content"], f"{path}.content", tool_names)
+            if content:
+                translated.append({"role": "system", "content": content})
     return translated
 
 
@@ -465,9 +477,17 @@ def translate_anthropic_request(request_body: Any, *, for_count: bool = False) -
         translated["max_tokens"] = max_tokens
     translated.update(_translate_output_options(request_body))
 
-    messages = _translate_messages(request_body["messages"])
+    tool_names: Set[str] = set()
+    if "tools" in request_body:
+        tools, tool_names = _translate_tools(request_body["tools"])
+        if tools:
+            translated["tools"] = tools
+
+    messages = _translate_messages(request_body["messages"], tool_names)
     if "system" in request_body:
         messages = _system_messages(request_body["system"]) + messages
+    if not messages:
+        _fail("messages must contain text or conversational content")
     translated["messages"] = messages
 
     stream = request_body.get("stream")
@@ -496,11 +516,6 @@ def translate_anthropic_request(request_body: Any, *, for_count: bool = False) -
     if metadata is not None and not _is_object(metadata):
         _fail("metadata must be an object")
 
-    tool_names: Set[str] = set()
-    if "tools" in request_body:
-        tools, tool_names = _translate_tools(request_body["tools"])
-        if tools:
-            translated["tools"] = tools
     if "tool_choice" in request_body:
         translated.update(_translate_tool_choice(request_body["tool_choice"], tool_names))
     if "thinking" in request_body:

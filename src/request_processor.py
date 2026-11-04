@@ -116,6 +116,8 @@ def apply_request_policies(payload: Dict[str, Any], user: Any = None) -> None:
         payload["messages"] = [system_msg] + messages
 
     rewrite_system_prompt_messages(payload.get("messages", []))
+    if not payload.get("messages"):
+        raise OpenAIRequestError("messages must contain text or conversational content after request policies", "messages")
 
 
 def adapt_openai_payload_for_codebuddy(payload: Dict[str, Any]) -> None:

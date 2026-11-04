@@ -101,6 +101,73 @@ class AnthropicRequestTranslationTests(unittest.TestCase):
             },
         ])
 
+    def test_system_tool_addition_consumes_known_references_and_preserves_text_order(self):
+        tool = {"name": "SubagentHandback", "description": "返回报告", "defer_loading": True,
+                "input_schema": {"type": "object", "properties": {"message": {"type": "string"}}}}
+        addition = {"type": "tool_addition", "tool": {"type": "tool_reference", "name": tool["name"]},
+                    "cache_control": {"type": "ephemeral"}}
+        translated = self._translate(tools=[tool], messages=[
+            {"role": "user", "content": "开始"},
+            {"role": "system", "content": [
+                {"type": "text", "text": "工具已就绪"}, addition,
+                {"type": "input_text", "text": "使用工具返回报告"}, addition,
+            ]},
+            {"role": "assistant", "content": "收到"},
+        ])
+        self.assertEqual(translated["messages"], [
+            {"role": "user", "content": "开始"},
+            {"role": "system", "content": [{"type": "text", "text": "工具已就绪"},
+                                           {"type": "text", "text": "使用工具返回报告"}]},
+            {"role": "assistant", "content": "收到"},
+        ])
+        self.assertEqual(translated["tools"], [{"type": "function", "function": {
+            "name": tool["name"], "description": tool["description"], "parameters": tool["input_schema"],
+        }}])
+
+    def test_tool_addition_only_messages_are_omitted_without_losing_other_content(self):
+        tool = {"name": "report", "input_schema": {}}
+        message = {"role": "system", "content": [
+            {"type": "tool_addition", "tool": {"type": "tool_reference", "name": "report"}},
+        ]}
+        user = {"role": "user", "content": "开始"}
+        translated = self._translate(tools=[tool], messages=[message, user, message])
+        self.assertEqual(translated["messages"], [user])
+        with self.assertRaisesRegex(AnthropicProtocolError, "messages must contain"):
+            self._translate(tools=[tool], messages=[message])
+        with_system = self._translate(tools=[tool], messages=[message], system="保留系统规则")
+        self.assertEqual(with_system["messages"], [{"role": "system", "content": "保留系统规则"}])
+
+    def test_system_tool_addition_rejects_invalid_or_unresolved_references(self):
+        tool = {"name": "report", "input_schema": {}}
+        for reference in (None, [], {}, {"type": "tool_reference"},
+                          {"type": "tool_reference", "name": ""},
+                          {"type": "tool_reference", "name": 1},
+                          {"type": "tool_reference", "name": "missing"},
+                          {"type": "tool_definition", "definition": tool},
+                          {"type": "mcp_tool_reference", "server_name": "server", "name": "report"}):
+            with self.subTest(reference=reference), self.assertRaises(AnthropicProtocolError):
+                self._translate(tools=[tool], messages=[
+                    {"role": "system", "content": [{"type": "tool_addition", "tool": reference}]},
+                ])
+        addition = {"type": "tool_addition", "tool": {"type": "tool_reference", "name": "report"}}
+        for tools in (None, []):
+            overrides = {} if tools is None else {"tools": tools}
+            with self.subTest(tools=tools), self.assertRaises(AnthropicProtocolError):
+                self._translate(messages=[{"role": "system", "content": [addition]}], **overrides)
+
+    def test_tool_addition_is_only_accepted_in_message_level_system_content(self):
+        tool = {"name": "report", "input_schema": {}}
+        addition = {"type": "tool_addition", "tool": {"type": "tool_reference", "name": "report"}}
+        for role in ("user", "assistant"):
+            with self.subTest(role=role), self.assertRaises(AnthropicProtocolError):
+                self._translate(tools=[tool], messages=[{"role": role, "content": [addition]}])
+        for content in (None, [], 1, [1], [{"type": "tool_removal", "tool": addition["tool"]}],
+                        [{"type": "unknown"}]):
+            with self.subTest(content=content), self.assertRaises(AnthropicProtocolError):
+                self._translate(tools=[tool], messages=[{"role": "system", "content": content}])
+        with self.assertRaises(AnthropicProtocolError):
+            self._translate(tools=[tool], system=[addition])
+
     def test_tools_choice_examples_and_parallel_setting(self):
         translated = self._translate(
             tools=[{
