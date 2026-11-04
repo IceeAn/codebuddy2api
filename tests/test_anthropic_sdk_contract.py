@@ -81,6 +81,36 @@ class AnthropicSDKContractTests(TempConfigMixin, unittest.IsolatedAsyncioTestCas
         return client, http_client
 
     @mock.patch("src.anthropic_router.create_usage_stats_context")
+    async def test_sdk_auto_review_stop_sequences_reach_upstream_in_both_response_modes(self, _stats):
+        self.fixture = [
+            sse({"choices": [{"delta": {"content": "审查完成"}, "finish_reason": "stop"}]}),
+            sse({"choices": [], "usage": {"prompt_tokens": 12, "completion_tokens": 5}}),
+            sse("[DONE]"),
+        ]
+        options = {
+            "model": "anthropic/codebuddy/deepseek-v4.1-flash",
+            "max_tokens": 2112,
+            "messages": [{"role": "user", "content": "检查待执行操作。"}],
+            "stop_sequences": ["</block>"],
+        }
+        client, _ = self._client()
+        try:
+            with mock.patch("src.anthropic_router.execute_codebuddy_chat", side_effect=self._execute):
+                complete = await client.messages.create(**options)
+                self.assertEqual(self.last_payload["stop"], ["</block>"])
+                self.assertNotIn("stop_sequences", self.last_payload)
+                async with client.messages.stream(**options) as stream:
+                    streamed = await stream.get_final_message()
+                self.assertEqual(self.last_payload["stop"], ["</block>"])
+                self.assertTrue(self.last_payload["stream"])
+            for response in (complete, streamed):
+                self.assertEqual(response.content[0].text, "审查完成")
+                self.assertEqual(response.stop_reason, "end_turn")
+                self.assertIsNone(response.stop_sequence)
+        finally:
+            await client.close()
+
+    @mock.patch("src.anthropic_router.create_usage_stats_context")
     async def test_sdk_multimodal_tool_round_trip_and_playground(self, _stats):
         from src.auth_types import SESSION_COOKIE_NAME
         from src.session_store import session_store

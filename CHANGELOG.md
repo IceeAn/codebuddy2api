@@ -2,6 +2,7 @@
 
 ## 未发布
 
+- Anthropic 停止序列映射为上游 stop 参数，修复 Claude Code 自动审查请求返回 400 的问题。
 - 新增本地 Tokenizer 及 Anthropic 输入计数接口，提供固定官方资源、用户上传和模型映射。
 - 设置页新增 Tokenizer 标签，API 测试页新增纯文本及 Anthropic JSON 计数测试。
 - 发布产物自带离线分词数据；上传、执行和缓存限制支持启动环境变量配置。

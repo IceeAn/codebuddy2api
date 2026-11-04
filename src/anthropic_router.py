@@ -91,8 +91,8 @@ ANTHROPIC_MESSAGES_OPENAPI_REQUEST_BODY = {
                     "top_k": {"type": ["integer", "null"], "minimum": 0},
                     "stop_sequences": {
                         "type": "array",
-                        "maxItems": 0,
-                        "items": {"type": "string"},
+                        "items": {"type": "string", "minLength": 1},
+                        "description": "映射为上游 stop；实际停止行为由上游决定，不推断命中的停止序列。",
                     },
                     "tools": TOOLS,
                     "tool_choice": {"type": "object"},

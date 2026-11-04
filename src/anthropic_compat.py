@@ -490,7 +490,7 @@ def translate_anthropic_request(request_body: Any, *, for_count: bool = False) -
         ):
             _fail("stop_sequences must be an array of non-empty strings")
         if stop_sequences:
-            _fail("non-empty stop_sequences are not supported by the CodeBuddy gateway")
+            translated["stop"] = list(stop_sequences)
 
     metadata = request_body.get("metadata")
     if metadata is not None and not _is_object(metadata):

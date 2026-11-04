@@ -58,7 +58,7 @@ class TokenizerRouteTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(denied.status_code, 401)
 
-    async def test_anthropic_count_works_without_credentials_or_max_tokens(self):
+    async def test_anthropic_count_accepts_stop_sequences_without_credentials_or_max_tokens(self):
         headers = {"x-api-key": self.key, "anthropic-version": "2023-06-01"}
         response = await self.request(
             "/anthropic/v1/messages/count_tokens",
@@ -66,6 +66,7 @@ class TokenizerRouteTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
             {
                 "model": "anthropic/codebuddy/custom",
                 "messages": [{"role": "user", "content": "hello"}],
+                "stop_sequences": ["</block>"],
             },
         )
         self.assertEqual(response.status_code, 200, response.text)

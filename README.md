@@ -361,7 +361,9 @@ for chunk in stream:
 
 Anthropic 请求必须携带 `anthropic-version: 2023-06-01`，并使用 `x-api-key` 或 `Authorization: Bearer`。两种认证头同时提供时值必须一致。
 
-CodeBuddy 无法报告命中的自定义停止序列，因此非空 `stop_sequences` 会返回 400，避免把截断错误表示为自然结束；缺省或空数组可以正常使用。工具没有输出时，`tool_result.content` 可以省略、传空字符串或空数组。模型列表中的 `created_at` 固定为 Unix epoch，表示网关无法获知 CodeBuddy 模型的真实发布时间。
+`stop_sequences` 接受非空字符串数组并映射为上游 `stop` 参数；缺省或空数组不发送该参数。实际停止行为由 CodeBuddy 决定，网关不额外验证或截断输出。响应沿用上游结束原因，`stop_sequence` 为 `null`，不推断命中的停止序列。
+
+工具没有输出时，`tool_result.content` 可以省略、传空字符串或空数组。模型列表中的 `created_at` 固定为 Unix epoch，表示网关无法获知 CodeBuddy 模型的真实发布时间。
 
 ```bash
 curl "http://127.0.0.1:8001/anthropic/v1/messages" \

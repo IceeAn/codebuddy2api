@@ -33,12 +33,21 @@ class AnthropicRequestTranslationTests(unittest.TestCase):
         self.assertTrue(translated["stream"])
         self.assertNotIn("stop_sequences", translated)
 
-    def test_non_empty_stop_sequences_are_rejected_as_lossy(self):
-        with self.assertRaisesRegex(
-            AnthropicProtocolError,
-            "non-empty stop_sequences are not supported",
-        ):
-            self._translate(stop_sequences=["END"])
+    def test_stop_sequences_map_to_upstream_stop_without_mutating_input(self):
+        for sequences in (["</block>"], ["END", "结束", "\n\nHuman:"]):
+            with self.subTest(sequences=sequences):
+                translated = self._translate(stop_sequences=sequences)
+                self.assertEqual(translated["stop"], sequences)
+                self.assertNotIn("stop_sequences", translated)
+                translated["stop"].append("NEW")
+                self.assertNotIn("NEW", sequences)
+
+    def test_invalid_stop_sequences_remain_protocol_errors(self):
+        for sequences in (None, "END", True, {}, [""], [1], ["END", None]):
+            with self.subTest(sequences=sequences), self.assertRaisesRegex(
+                AnthropicProtocolError, "stop_sequences must be an array of non-empty strings",
+            ):
+                self._translate(stop_sequences=sequences)
 
     def test_system_blocks_and_ordered_text_parts(self):
         translated = self._translate(

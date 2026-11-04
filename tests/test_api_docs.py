@@ -144,10 +144,10 @@ class ApiDocumentationTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         blocks = anthropic_schema["properties"]["messages"]["items"]["properties"]["content"]["anyOf"][1]["items"]["oneOf"]
         self.assertEqual({block["properties"]["type"]["const"] for block in blocks},
                          {"text", "input_text", "image", "document", "tool_result", "tool_use", "thinking"})
-        self.assertEqual(
-            anthropic_schema["properties"]["stop_sequences"]["maxItems"],
-            0,
-        )
+        stop_schema = anthropic_schema["properties"]["stop_sequences"]
+        self.assertEqual(stop_schema["type"], "array")
+        self.assertEqual(stop_schema["items"], {"type": "string", "minLength": 1})
+        self.assertNotIn("maxItems", stop_schema)
         anthropic_message = anthropic_schema["properties"]["messages"]["items"]
         self.assertTrue(anthropic_message["additionalProperties"])
         self.assertEqual(
