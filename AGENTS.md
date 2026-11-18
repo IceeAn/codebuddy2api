@@ -102,6 +102,7 @@ docker compose run --rm codebuddy2api set-user <用户名>
 - OpenAI 客户端 `stream_options.include_usage` 必须独立于上游强制 include_usage 保存；统计消费原始事件，下游仅按客户端选项发送最终空 choices 的 usage 块，不补造缺失 usage。`max_completion_tokens` 在入口校验后映射为 `max_tokens`，双字段不同值必须返回 400。
 - 多模态字段可透传不等于上游支持。图片内容保持顺序，网关不下载或转码；未知请求扩展交由上游判断。音频非流式聚合必须先解码各 Base64 分块、拼接字节，再在最终响应统一编码，不能直接拼接带 padding 的字符串。标准响应聚合仅保证明确实现的字段，未知分片不得猜测合并规则。
 - 强制推理模型会覆盖为最大推理并启用 thinking，但 `clear_thinking` 等其他客户端 `thinking` 子项必须继续透传，不能用新对象整体替换；其他模型默认开启 thinking，但客户端显式禁用时必须尊重。`CODEBUDDY_FORCED_TEMPERATURE` 非空时覆盖客户端值；模型命名空间是否剥离由 `CODEBUDDY_STRIP_MODEL_NAMESPACE` 控制。修改请求转换时注意这些优先级。
+- Anthropic 兼容转换允许 `thinking.type=enabled` 时省略 `budget_tokens`，不能按原生手动思考的必填约束拒绝这类 CodeBuddy 客户端请求，也不能补造默认预算。显式预算仍按既有类型和范围校验后原样透传，显式 `null` 仍失败；聊天与本地计数共用此规则，effort 映射及强制推理优先级保持一致。
 - 全局上游 HTTP 客户端保持 `trust_env=False`，避免环境中的 SOCKS 代理在缺少 `socksio` 时破坏服务启动。
 - Anthropic 兼容面是 `/anthropic/v1/*` 下的 Messages wire protocol，不是 Anthropic 原生模型或 provider；不得增加 root `/v1/*`、伪造 Anthropic 计费/限流/cache 字段或把运行时改成多 provider 网关。模型、token usage 和账单语义始终来自 CodeBuddy。
 - Anthropic 请求转换以兼容为先：`anthropic-beta`、cache 控制和未知附加字段接受后忽略，不转发或记录；已知 `output_config.format/effort`、`top_k`、工具 `strict` 和 `stop_sequences` 仅映射参数，不保证上游执行约束。非空 `stop_sequences` 映射为上游 `stop`，不额外验证或截断输出；响应沿用上游结束原因，`stop_sequence` 为 `null`，不推断命中的停止序列。PDF/文件引用、原生 citations、服务端工具及原生 thinking signature 等无法转换的语义仍需失败。`messages/count_tokens` 复用转换和请求策略后在本地计数，不选择凭证、不调用上游、不写用量统计。缺失模板仅允许用户资源使用显式 `budget_v1`；缺失模型映射、无效模板和多模态计数不能猜测或悄悄回退。

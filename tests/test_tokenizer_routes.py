@@ -98,6 +98,30 @@ class TokenizerRouteTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json(), expected.json())
 
+    async def test_anthropic_count_accepts_missing_thinking_budget_and_validates_explicit_values(self):
+        body = {"model": "custom", "messages": [{"role": "user", "content": "hello"}],
+                "thinking": {"type": "enabled", "clear_thinking": False}, "output_config": {"effort": "high"}}
+        for path, auth in (
+            ("/anthropic/v1/messages/count_tokens", {"x-api-key": self.key}),
+            ("/api/admin/playground/anthropic/v1/messages/count_tokens",
+             {"Cookie": f"{SESSION_COOKIE_NAME}={self.cookie}"}),
+        ):
+            with self.subTest(path=path):
+                headers = {**auth, "anthropic-version": "2023-06-01"}
+                response = await self.request(path, headers, body)
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertGreater(response.json()["input_tokens"], 0)
+                for budget in (1024, 256000, None, 1023):
+                    with self.subTest(budget=budget):
+                        candidate = {**body, "thinking": {**body["thinking"], "budget_tokens": budget}}
+                        explicit = await self.request(path, headers, candidate)
+                        if budget is not None and budget >= 1024:
+                            self.assertEqual(explicit.status_code, 200, explicit.text)
+                            self.assertEqual(explicit.json(), response.json())
+                        else:
+                            self.assertEqual(explicit.status_code, 400, explicit.text)
+                            self.assertEqual(explicit.json()["error"]["type"], "invalid_request_error")
+
     async def test_tool_addition_and_attribution_only_count_requests_fail_before_tokenizer(self):
         body = {
             "model": "deepseek-v4-flash",

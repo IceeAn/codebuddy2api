@@ -361,6 +361,8 @@ for chunk in stream:
 
 Anthropic 请求必须携带 `anthropic-version: 2023-06-01`，并使用 `x-api-key` 或 `Authorization: Bearer`。两种认证头同时提供时值必须一致。
 
+`thinking.type="enabled"` 允许省略 `budget_tokens`，开启思考但不向上游补造预算。显式预算必须是至少 1024 的整数，聊天请求中还须小于 `max_tokens`，通过校验后原样放入上游 `thinking.budget_tokens`；显式 `null` 仍返回 400。`output_config.effort` 继续映射为 `reasoning_effort`，实际预算执行由 CodeBuddy 决定，现有强制推理策略仍优先。
+
 `stop_sequences` 接受非空字符串数组并映射为上游 `stop` 参数；缺省或空数组不发送该参数。实际停止行为由 CodeBuddy 决定，网关不额外验证或截断输出。响应沿用上游结束原因，`stop_sequence` 为 `null`，不推断命中的停止序列。
 
 `messages` 中的 `system` 消息支持文本及 `tool_addition` 工具引用块。引用必须使用 `tool_reference` 并指向顶层 `tools` 中的完整工具定义；校验后移除引用块，保留相邻文本与消息位置，仅含引用块的消息省略。所有工具继续统一转换为上游 function 工具，不实现原生延迟加载或缓存时序。内联 `tool_definition`、`tool_removal` 和无法解析的引用仍返回 400。

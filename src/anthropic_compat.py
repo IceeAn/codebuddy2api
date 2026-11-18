@@ -308,12 +308,14 @@ def _translate_thinking(value: Any, max_tokens: Optional[int]) -> Dict[str, Any]
             _fail("thinking.budget_tokens is not valid for disabled thinking")
         return {"thinking": {"type": "disabled", **options}, "enable_thinking": False}
     if thinking_type == "enabled":
-        if not _is_integer(budget) or budget < 1024:
-            _fail("thinking.budget_tokens must be an integer of at least 1024")
-        if max_tokens is not None and budget >= max_tokens:
-            _fail("thinking.budget_tokens must be less than max_tokens")
+        if "budget_tokens" in value:
+            if not _is_integer(budget) or budget < 1024:
+                _fail("thinking.budget_tokens must be an integer of at least 1024")
+            if max_tokens is not None and budget >= max_tokens:
+                _fail("thinking.budget_tokens must be less than max_tokens")
+            options["budget_tokens"] = budget
         return {
-            "thinking": {"type": "enabled", "budget_tokens": budget, **options},
+            "thinking": {"type": "enabled", **options},
             "enable_thinking": True,
         }
     _fail("thinking.type is not supported")

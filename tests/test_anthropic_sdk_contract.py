@@ -154,6 +154,41 @@ class AnthropicSDKContractTests(TempConfigMixin, unittest.IsolatedAsyncioTestCas
             await client.close()
 
     @mock.patch("src.anthropic_router.create_usage_stats_context")
+    async def test_sdk_enabled_thinking_preserves_optional_budget_and_policies(self, _stats):
+        self.fixture = [
+            sse({"choices": [{"delta": {"reasoning_content": "分析", "content": "完成"}, "finish_reason": "stop"}]}),
+            sse({"choices": [], "usage": {"prompt_tokens": 12, "completion_tokens": 5}}), sse("[DONE]"),
+        ]
+        client, _ = self._client()
+        try:
+            for forced in (False, True):
+                for budget in (None, 2048):
+                    thinking = {"type": "enabled", "clear_thinking": True}
+                    if budget is not None:
+                        thinking["budget_tokens"] = budget
+                    options = {
+                        "model": "deepseek-flash", "max_tokens": 256000,
+                        "messages": [{"role": "user", "content": "检查当前工作区路径"}],
+                        "thinking": thinking, "output_config": {"effort": "high"},
+                    }
+                    with (self.subTest(forced=forced, budget=budget),
+                          mock.patch("config.get_forced_reasoning_models", return_value=["deepseek-flash"] if forced else []),
+                          mock.patch("src.anthropic_router.execute_codebuddy_chat", side_effect=self._execute)):
+                        complete = await client.messages.create(**options, timeout=30.0)
+                        self.assertEqual(self.last_payload["thinking"], thinking)
+                        async with client.messages.stream(**options) as stream:
+                            streamed = await stream.get_final_message()
+                        self.assertEqual(self.last_payload["thinking"], thinking)
+                        self.assertEqual(self.last_payload["max_tokens"], 256000)
+                        self.assertEqual(self.last_payload["reasoning_effort"], "max" if forced else "high")
+                        self.assertEqual(self.last_payload.get("enable_thinking"), None if forced else True)
+                        for response in (complete, streamed):
+                            self.assertEqual(response.content[-1].text, "完成")
+                            self.assertEqual(response.stop_reason, "end_turn")
+        finally:
+            await client.close()
+
+    @mock.patch("src.anthropic_router.create_usage_stats_context")
     async def test_sdk_multimodal_tool_round_trip_and_playground(self, _stats):
         from src.auth_types import SESSION_COOKIE_NAME
         from src.session_store import session_store

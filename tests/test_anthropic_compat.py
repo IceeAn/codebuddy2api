@@ -270,6 +270,30 @@ class AnthropicRequestTranslationTests(unittest.TestCase):
         }])
         self.assertEqual(signed["messages"][0]["reasoning_content"], thinking)
 
+    def test_enabled_thinking_without_budget_preserves_effort_and_clear_thinking(self):
+        for maximum in (0, 1, 1024, 256000):
+            with self.subTest(max_tokens=maximum):
+                result = self._translate(
+                    max_tokens=maximum,
+                    thinking={"type": "enabled", "clear_thinking": False},
+                    output_config={"effort": "high"},
+                )
+                self.assertEqual(result["thinking"], {"type": "enabled", "clear_thinking": False})
+                self.assertTrue(result["enable_thinking"])
+                self.assertEqual(result["reasoning_effort"], "high")
+                self.assertEqual(result["max_tokens"], maximum)
+
+    def test_enabled_thinking_explicit_budget_keeps_validation_and_exact_value(self):
+        for budget in (None, True, False, "2048", 2048.0, [], {}, -1, 0, 1023):
+            with self.subTest(budget=budget), self.assertRaisesRegex(
+                AnthropicProtocolError, "thinking.budget_tokens must be an integer of at least 1024",
+            ):
+                self._translate(max_tokens=4096, thinking={"type": "enabled", "budget_tokens": budget})
+        for budget in (1024, 4095):
+            with self.subTest(budget=budget):
+                result = self._translate(max_tokens=4096, thinking={"type": "enabled", "budget_tokens": budget})
+                self.assertEqual(result["thinking"]["budget_tokens"], budget)
+
     def test_model_id_only_unwraps_the_reserved_synthetic_prefix(self):
         for model, expected in (
             ("vendor/model", "vendor/model"),
