@@ -14,16 +14,33 @@ _MAIN_BRANCH_FINGERPRINT = (
     "Main branch (you will usually use this for PRs):"
 )
 _ATTRIBUTION_HEADER_PREFIX = "x-anthropic-billing-header:"
+_DSH_IDENTITY = "You are an AI agent powered by DeepSeek Harness."
+_DSH_PATHS_FINGERPRINT = (
+    "Tokens prefixed with @ are paths the user explicitly referenced. "
+    "Relative paths resolve from the workspace root; absolute paths identify files or directories on the host."
+)
+_DSH_GUI_FINGERPRINT = (
+    "You are interacting with the user through the DeepSeek Harness Web GUI whose URL the runtime context names. "
+    'When the user refers to "this page", "this GUI", or "this app" without naming another target, they mean this GUI.'
+)
+_DSH_REWRITES = (
+    (_DSH_IDENTITY, "You are an AI agent, powered by DeepSeek Harness."),
+    (_DSH_PATHS_FINGERPRINT, _DSH_PATHS_FINGERPRINT.replace("referenced. Relative", "referenced.\nRelative")),
+    (_DSH_GUI_FINGERPRINT, _DSH_GUI_FINGERPRINT.replace("names. When", "names.\nWhen")),
+)
 
 
 def _rewrite_text(text: str) -> str:
-    return text.replace(
+    text = text.replace(
         _CLAUDE_CODE_IDENTITY,
         _NEUTRAL_CLI_IDENTITY,
     ).replace(
         _MAIN_BRANCH_FINGERPRINT,
         "Main branch:",
     )
+    for fingerprint, replacement in _DSH_REWRITES:
+        text = text.replace(fingerprint, replacement)
+    return text
 
 
 def _strip_attribution_header_line(text: str) -> tuple[str, bool]:

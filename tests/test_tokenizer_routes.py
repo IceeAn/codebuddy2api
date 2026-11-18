@@ -15,6 +15,7 @@ from src.session_store import session_store
 from src.tokenizer_store import get_tokenizer_store
 from tests.helpers import TempConfigMixin, configure_users_file
 from tests.test_tokenizer import tokenizer_files
+from tests.test_system_prompt_rewriter import DSH_PROMPT, REWRITTEN_DSH_PROMPT
 from web import app
 
 
@@ -121,6 +122,23 @@ class TokenizerRouteTests(TempConfigMixin, unittest.IsolatedAsyncioTestCase):
                         else:
                             self.assertEqual(explicit.status_code, 400, explicit.text)
                             self.assertEqual(explicit.json()["error"]["type"], "invalid_request_error")
+
+    async def test_anthropic_count_uses_the_same_exact_dsh_system_rewrite(self):
+        from src.tokenizer_runtime import tokenizer_runtime
+
+        body = {"model": "custom", "system": DSH_PROMPT,
+                "messages": [{"role": "user", "content": DSH_PROMPT}]}
+        with mock.patch("src.tokenizer_service.tokenizer_runtime.execute", wraps=tokenizer_runtime.execute) as execute:
+            response = await self.request("/anthropic/v1/messages/count_tokens", {
+                "x-api-key": self.key, "anthropic-version": "2023-06-01",
+            }, body)
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = execute.call_args.args[2]
+        self.assertEqual(payload["messages"], [
+            {"role": "system", "content": REWRITTEN_DSH_PROMPT},
+            {"role": "user", "content": DSH_PROMPT},
+        ])
+        self.assertEqual(body["system"], DSH_PROMPT)
 
     async def test_tool_addition_and_attribution_only_count_requests_fail_before_tokenizer(self):
         body = {
